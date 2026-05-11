@@ -35,6 +35,28 @@ Desktop, Claude Code (CLI + VS Code extension), VS Code GitHub Copilot agent
 mode, Cursor, the MCP Inspector, and the Python MCP SDK — plus a
 troubleshooting matrix.
 
+## Web chat UI (optional)
+
+A standalone, MCP-server-agnostic chat UI lives under
+**[chatbot/](chatbot/README.md)**. It pairs a FastAPI + LangGraph backend
+(OpenAI GPT-4o) with a Next.js 15 + Tailwind frontend. Features include:
+session memory, structured rendering (tables / Mermaid / code blocks), a
+configurable scope guardrail (`BOT_DOMAIN`), an externalised system prompt
+(`prompts/system.md`), and a tool allow/deny list — all driven from
+`chatbot/backend/.env`. The MCP server itself is untouched; the chatbot
+talks to it over SSE like any other MCP client.
+
+Launch the whole stack (MCP server + chat backend + UI) with:
+
+```powershell
+.\scripts\start-all.ps1
+```
+
+If you need to explain *why* the chatbot qualifies as agentic AI (vs. "a
+chat box wrapping APIs"), point readers at
+**[chatbot/AGENTIC_AI.md](chatbot/AGENTIC_AI.md)** — a single doc that
+maps the canonical agentic-AI components to specific files here.
+
 ## Run
 
 **stdio (local/dev, default):**

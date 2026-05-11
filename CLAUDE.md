@@ -152,3 +152,54 @@ table is in README.md. Two namespaces operators most often touch:
 - **`requirements.txt` uses `>=` not `==`.** Same — explicit user choice.
 - **`pytest`/`pytest-asyncio` are not in `requirements.txt`.** They live only
   in the dev `.venv`. If you change tests, document the install step.
+
+## The `chatbot/` subdirectory (separate stack)
+
+`chatbot/` is a self-contained web chat UI + agent backend that *uses* this
+MCP server over its SSE endpoint. It is **not** part of the MCP server and
+the MCP server does not depend on it. Treat them as two products in one
+repo. See `chatbot/README.md` for full docs.
+
+### Architecture summary
+- `chatbot/backend/` — FastAPI on `:8001`. LangGraph `create_react_agent`
+  with `MemorySaver` (per-`thread_id` in-process). Tools loaded via
+  `langchain-mcp-adapters.MultiServerMCPClient` pointed at `MCP_SSE_URL`.
+- `chatbot/frontend/` — Next.js 15 App Router, Tailwind, light theme. SSE
+  streaming from a Server Component proxy route.
+- `scripts/start-all.ps1` / `stop-all.ps1` — launchers that pre-flight
+  prereqs and spawn three terminal windows.
+
+### Hard rules when working in this repo
+- **Do not modify any file under `server/`, `mqacemcpserver.py`, or
+  `resources/` from chatbot work.** The MCP server is untouched by design;
+  the chatbot talks to it like any external client. If the chatbot needs
+  a new behaviour, change the chatbot, not the server.
+- **The frontend is MCP-server-agnostic.** No tool names, no MQ/ACE
+  strings. All UI customisation (header title/subtitle, scope hint,
+  empty-state) flows from backend `/api/health` → `lib/backend-info.ts`
+  → `app/page.tsx`.
+- **The backend's renderers (`renderers.py`) are tool-name-agnostic.**
+  Use shape detection (JSON list keys, `key:value` lines, mermaid
+  fences) — never branch on a tool name.
+
+### Configuration knobs (all live in `chatbot/backend/.env`)
+| Var | Purpose |
+| --- | --- |
+| `MCP_SSE_URL` | Which MCP server to talk to. |
+| `MCP_AUTH_USER` / `MCP_AUTH_PASSWORD` | Basic Auth for SSE. |
+| `MCP_HEADERS_JSON` | Bearer / custom headers (escape hatch). |
+| `HEADER_TITLE` / `HEADER_SUBTITLE` | UI title bar; subtitle override. |
+| `BOT_DOMAIN` | Scope guardrail; empty = unrestricted. |
+| `SYSTEM_PROMPT_FILE` | Override prompt file path. Default is `chatbot/backend/prompts/system.md`. |
+| `TOOL_ALLOWLIST` / `TOOL_DENYLIST` | Filter which MCP tools the agent sees. |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM. |
+
+### Where common changes go
+- Edit the system prompt → `chatbot/backend/prompts/system.md` (markdown,
+  uses `{scope_block}` and `{tool_catalog}` placeholders).
+- Add a new structured rendering rule → `chatbot/backend/renderers.py`
+  (a new detector, NOT a per-tool function).
+- Add a new wire-protocol event kind → `chatbot/backend/schemas.py` AND
+  `chatbot/frontend/lib/types.ts` AND `chatbot/frontend/components/chat/ChatPane.tsx`.
+- Change the theme → `chatbot/frontend/tailwind.config.ts` palette +
+  `chatbot/frontend/app/globals.css` body/markdown styles.

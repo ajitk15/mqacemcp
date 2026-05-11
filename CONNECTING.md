@@ -207,6 +207,44 @@ MQ/ACE creds the server needs.
 
 ---
 
+## Web chat UI (bundled, `chatbot/`)
+
+A standalone Next.js + FastAPI chat UI lives in `chatbot/`. It is itself an
+MCP client — it connects to the SSE endpoint just like Claude Desktop or
+the Inspector would. Use it when you want a brandable web chat surface for
+operators rather than a desktop client.
+
+```powershell
+.\scripts\start-all.ps1   # MCP server + chat backend + UI in 3 windows
+```
+
+The chat backend is configured via `chatbot/backend/.env`. The two values
+that connect it to the MCP server:
+
+```ini
+MCP_SSE_URL=http://localhost:8000/sse
+MCP_AUTH_USER=mcpadmin
+MCP_AUTH_PASSWORD=MyRealPassword
+```
+
+Other notable knobs (full list in `chatbot/README.md`):
+- `BOT_DOMAIN` — restrict the bot to an explicit topic (e.g. `IBM MQ and
+  IBM ACE`). Off-topic questions are refused without invoking any tool.
+- `HEADER_TITLE` / `HEADER_SUBTITLE` — UI title bar customisation.
+- `SYSTEM_PROMPT_FILE` — point at a custom system prompt markdown file.
+- `TOOL_ALLOWLIST` / `TOOL_DENYLIST` — limit which MCP tools the agent
+  is allowed to invoke.
+
+The frontend is MCP-server-agnostic — it never sees tool names directly.
+Verify connectivity:
+
+```powershell
+curl http://localhost:8001/api/health
+# tool_count, bot_domain, prompt_source, etc. should match your .env
+```
+
+---
+
 ## Programmatic MCP client (Python SDK)
 
 For the central team's orchestrator, or for integration tests:
