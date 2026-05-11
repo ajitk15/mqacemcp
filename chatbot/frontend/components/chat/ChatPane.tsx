@@ -126,6 +126,7 @@ export default function ChatPane({ info }: Props) {
           onClick={onReset}
           title="Start a new conversation"
           className="rounded-md p-2 text-muted hover:bg-panel hover:text-accent"
+          suppressHydrationWarning
         >
           <RotateCcw size={16} />
         </button>
@@ -140,11 +141,13 @@ export default function ChatPane({ info }: Props) {
           }
           className="flex-1 rounded-md border border-border bg-panel px-3 py-2 text-sm outline-none focus:border-accent"
           disabled={busy}
+          suppressHydrationWarning
         />
         <button
           type="submit"
           disabled={busy || !input.trim()}
           className="rounded-md bg-accent/80 px-3 py-2 text-sm text-white hover:bg-accent disabled:opacity-40"
+          suppressHydrationWarning
         >
           {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
         </button>
