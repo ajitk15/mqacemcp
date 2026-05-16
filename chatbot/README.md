@@ -51,13 +51,28 @@ Any MCP server over SSE
   `muted`/`accent`/`fg` color set in `tailwind.config.ts`. Component
   classes are stable, so retheming later is a single-file change.
 
+## Two interchangeable frontends
+
+The backend is fronted by **either** of these UIs — pick whichever you
+prefer. They have feature parity and both stay MCP-server-agnostic.
+
+| Frontend | Stack | Folder | Default port |
+| --- | --- | --- | --- |
+| Next.js (the original) | Next.js 15, Tailwind, React | `chatbot/frontend/` | 3000 |
+| Streamlit (alternative) | Streamlit + httpx | `chatbot/streamlit_frontend/` | 8501 |
+
+The same FastAPI backend powers both — no backend changes are needed
+when swapping. See `chatbot/streamlit_frontend/README.md` for the
+Streamlit-specific details.
+
 ## Run order
 
 You need three processes (in three terminals). One-liner once everything is
 installed:
 
 ```powershell
-.\scripts\start-all.ps1            # spawns 3 windows (MCP server, backend, UI)
+.\scripts\start-all.ps1            # MCP server + backend + Next.js UI
+.\scripts\start-streamlit.ps1      # MCP server + backend + Streamlit UI
 .\scripts\start-all.ps1 -SkipMcp   # use this if your MCP server runs elsewhere
 .\scripts\start-all.ps1 -CheckOnly # verify prerequisites without launching
 .\scripts\stop-all.ps1             # kill everything start-all started

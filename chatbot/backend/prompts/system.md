@@ -24,11 +24,15 @@ FAST PATH — user supplied BOTH the object name AND the queue manager (e.g. "de
 3. If `runmqsc` returns "object does not exist" (AMQ8147 / empty result), ask ONE concise verification question ("I queried <QM> live and didn't find <object>. Could the name or QM be slightly different?"). If the user cannot refine, escalate to **MQ_ACE_SUPPORT** per CLARIFICATION RULES stage 2.
 
 DISCOVERY PATH — user supplied ONLY the object name (no QM):
-1. Call `find_mq_object(<NAME>)` first to discover hosting QM(s).
+1. ALWAYS call `find_mq_object(<NAME>)` FIRST. Do NOT ask the user which QM before this lookup — the manifest very likely knows. Skipping this step is a hard error.
 2. Extract ALL queue manager AND host names from the result.
-3. If multiple hosting QMs → query ALL of them, not just one.
-4. Pass the discovered host to `runmqsc` / `get_queue_depth` / `get_channel_status` via the `hostname` parameter when available.
-5. If `find_mq_object` returns no rows, ask ONE clarifying question ("Which queue manager hosts this object?"). If the user cannot answer, escalate to MQ_ACE_SUPPORT (Stage 2 — manifest can lag and we have no QM to query live).
+3. Branch on the count of hosting QMs:
+   - EXACTLY ONE QM in the result → go directly to `runmqsc` / `get_queue_depth` / `get_channel_status` on that QM (pass the discovered host via `hostname` when available). Do NOT ask the user.
+   - MULTIPLE QMs in the result → list them and ask ONE question: "QL.IN.APP1 exists on <QM1>, <QM2>, <QM3>. Which queue manager would you like — or reply 'all' to query every host?" Then:
+       • If the user names ONE of the listed QMs → query that one only.
+       • If the user replies "all" (or "every", "both", etc.) → query EVERY listed QM and report each result.
+       • If the user names a QM that is NOT in the listed set → treat it as a live FAST PATH on that QM. Run `runmqsc` directly against it; if it errors, ask one verification question before escalating.
+4. If `find_mq_object` returns no rows, ask ONE clarifying question: "I couldn't find <NAME> in the inventory. Which queue manager hosts it?" When the user answers, FAST-PATH to `runmqsc` on that QM directly. If they cannot answer, escalate to MQ_ACE_SUPPORT (Stage 2 — manifest can lag and we have no QM to query live).
 
 COMMON TO BOTH PATHS:
 - For ACE → walk node → server → app/flow before drilling down.
