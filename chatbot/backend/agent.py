@@ -109,12 +109,18 @@ def _load_system_prompt_template() -> tuple[str, str]:
     return SYSTEM_PROMPT_TEMPLATE, "inline"
 
 
-def _render_system_prompt(template: str, scope_block: str, tool_catalog: str) -> str:
+def _render_system_prompt(
+    template: str,
+    scope_block: str,
+    tool_catalog: str,
+    support_team: str,
+) -> str:
     """Substitute placeholders without breaking on stray '{' in markdown."""
     return (
         template
         .replace("{scope_block}", scope_block)
         .replace("{tool_catalog}", tool_catalog)
+        .replace("{support_team}", support_team)
     )
 
 
@@ -130,12 +136,14 @@ def build_agent(tools: list[BaseTool]) -> tuple[object, MemorySaver]:
     scope_block = (
         SCOPE_BLOCK_TEMPLATE.format(bot_domain=bot_domain) if bot_domain else ""
     )
+    support_team = os.getenv("SUPPORT_TEAM", "").strip() or "MQ_ACE_SUPPORT"
 
     template, prompt_source = _load_system_prompt_template()
     system_prompt = _render_system_prompt(
         template,
         scope_block=scope_block,
         tool_catalog=_format_tool_catalog(tools),
+        support_team=support_team,
     )
 
     checkpointer = MemorySaver()

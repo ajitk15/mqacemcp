@@ -40,6 +40,22 @@ MCP_PORT: int = int(os.getenv("MCP_PORT", "8000"))
 MCP_AUTH_USER: str = os.getenv("MCP_AUTH_USER", "")
 MCP_AUTH_PASSWORD: str = os.getenv("MCP_AUTH_PASSWORD", "")
 
+# Optional TLS for the SSE endpoint. When both cert + key are set the server
+# binds with HTTPS; otherwise it falls back to plain HTTP. Paths support ~ and
+# $VAR expansion. MCP_TLS_KEY_PASSWORD is optional (encrypted private keys).
+def _expand_path(value: str) -> str:
+    return os.path.expandvars(os.path.expanduser(value.strip())) if value else ""
+
+
+MCP_TLS_CERT: str = _expand_path(os.getenv("MCP_TLS_CERT", ""))
+MCP_TLS_KEY: str = _expand_path(os.getenv("MCP_TLS_KEY", ""))
+MCP_TLS_KEY_PASSWORD: str = os.getenv("MCP_TLS_KEY_PASSWORD", "")
+
+
+def tls_enabled() -> bool:
+    """True when both cert and key paths are set (existence checked at boot)."""
+    return bool(MCP_TLS_CERT and MCP_TLS_KEY)
+
 LOG_LEVEL: str = os.getenv("MQACE_LOG_LEVEL", "INFO").upper()
 
 # Logging — file output, rotation, retention, and per-call query log toggle.
@@ -124,3 +140,22 @@ if MCP_TRANSPORT == "sse" and not (MCP_AUTH_USER and MCP_AUTH_PASSWORD):
         "SSE transport selected without MCP_AUTH_USER/MCP_AUTH_PASSWORD — "
         "the endpoint will be unauthenticated."
     )
+
+if MCP_TRANSPORT == "sse":
+    if tls_enabled():
+        for label, path in (("MCP_TLS_CERT", MCP_TLS_CERT), ("MCP_TLS_KEY", MCP_TLS_KEY)):
+            if not Path(path).is_file():
+                _bootstrap_logger.warning(
+                    "%s=%s does not exist — server will fail to start with TLS.",
+                    label, path,
+                )
+    elif MCP_TLS_CERT or MCP_TLS_KEY:
+        _bootstrap_logger.warning(
+            "MCP_TLS_CERT and MCP_TLS_KEY must BOTH be set to enable HTTPS; "
+            "falling back to plain HTTP."
+        )
+    else:
+        _bootstrap_logger.warning(
+            "SSE transport without TLS — set MCP_TLS_CERT and MCP_TLS_KEY in "
+            ".env to enable HTTPS."
+        )

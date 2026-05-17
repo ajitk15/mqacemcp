@@ -38,7 +38,7 @@ troubleshooting matrix.
 ## Web chat UI (optional)
 
 A standalone, MCP-server-agnostic chat UI lives under
-**[chatbot/](chatbot/README.md)**. It pairs a FastAPI + LangGraph backend
+**[chatbot/](../chatbot/README.md)**. It pairs a FastAPI + LangGraph backend
 (OpenAI GPT-4o) with a Next.js 15 + Tailwind frontend. Features include:
 session memory, structured rendering (tables / Mermaid / code blocks), a
 configurable scope guardrail (`BOT_DOMAIN`), an externalised system prompt
@@ -73,6 +73,14 @@ $env:MCP_AUTH_PASSWORD = "..."
 # endpoint: http://<MCP_HOST>:<MCP_PORT>/sse
 ```
 
+**SSE over HTTPS:** set `MCP_TLS_CERT` and `MCP_TLS_KEY` (both required) to
+PEM-encoded files; the endpoint is then served at
+`https://<MCP_HOST>:<MCP_PORT>/sse`. Set `MCP_TLS_KEY_PASSWORD` only if the
+private key is encrypted. Quick self-signed cert for dev:
+```powershell
+openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 -subj "/CN=localhost"
+```
+
 The same env vars can live in `.env` instead of being exported.
 
 ## Environment variables
@@ -83,6 +91,8 @@ The same env vars can live in `.env` instead of being exported.
 | `MCP_HOST` | `0.0.0.0` | Bind address (SSE) |
 | `MCP_PORT` | `8000` | Bind port (SSE) |
 | `MCP_AUTH_USER` / `MCP_AUTH_PASSWORD` | — | Optional HTTP Basic Auth on the SSE endpoint. Both must be set to enable. |
+| `MCP_TLS_CERT` / `MCP_TLS_KEY` | — | PEM cert + key paths for HTTPS on the SSE endpoint. Both must be set to enable. |
+| `MCP_TLS_KEY_PASSWORD` | — | Passphrase for an encrypted private key (rarely needed). |
 | `MQACE_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `LOG_DIR` | `./logs` | Directory for application + query logs |
 | `LOG_RETENTION_DAYS` | `30` | Old date-stamped log files are pruned at startup |

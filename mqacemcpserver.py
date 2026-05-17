@@ -26,10 +26,14 @@ from server.config import (
     MCP_AUTH_USER,
     MCP_HOST,
     MCP_PORT,
+    MCP_TLS_CERT,
+    MCP_TLS_KEY,
+    MCP_TLS_KEY_PASSWORD,
     MCP_TRANSPORT,
     QUERY_LOG_ENABLED,
     ace_configured,
     mq_configured,
+    tls_enabled,
 )
 from server.logger import get_logger
 
@@ -113,8 +117,9 @@ def main() -> None:
         "Logs: dir=%s, query_log_enabled=%s", LOG_DIR, QUERY_LOG_ENABLED
     )
     if MCP_TRANSPORT == "sse":
-        logger.info("MCP SSE endpoint: http://%s:%s/sse", MCP_HOST, MCP_PORT)
-        logger.info("Health check: http://%s:%s/healthz", MCP_HOST, MCP_PORT)
+        scheme = "https" if tls_enabled() else "http"
+        logger.info("MCP SSE endpoint: %s://%s:%s/sse", scheme, MCP_HOST, MCP_PORT)
+        logger.info("Health check: %s://%s:%s/healthz", scheme, MCP_HOST, MCP_PORT)
 
     try:
         asyncio.run(_startup_checks())
@@ -136,7 +141,17 @@ def main() -> None:
                     "SSE endpoint is UNAUTHENTICATED. Set MCP_AUTH_USER and "
                     "MCP_AUTH_PASSWORD in .env to enable Basic Auth."
                 )
-            uvicorn.run(app, host=MCP_HOST, port=MCP_PORT)
+            uvicorn_kwargs: dict = {"host": MCP_HOST, "port": MCP_PORT}
+            if tls_enabled():
+                uvicorn_kwargs["ssl_certfile"] = MCP_TLS_CERT
+                uvicorn_kwargs["ssl_keyfile"] = MCP_TLS_KEY
+                if MCP_TLS_KEY_PASSWORD:
+                    uvicorn_kwargs["ssl_keyfile_password"] = MCP_TLS_KEY_PASSWORD
+                logger.info(
+                    "SSE endpoint TLS enabled (cert=%s, key=%s)",
+                    MCP_TLS_CERT, MCP_TLS_KEY,
+                )
+            uvicorn.run(app, **uvicorn_kwargs)
         else:
             mcp.run(transport=MCP_TRANSPORT)
     finally:

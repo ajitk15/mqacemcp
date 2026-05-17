@@ -5,7 +5,7 @@
 .DESCRIPTION
     Reads scripts/.pids (written by start-all.ps1) and terminates each
     PowerShell window plus its child processes (python, node, npm). Safe
-    to run multiple times — missing PIDs are reported, not errored.
+    to run multiple times - missing PIDs are reported, not errored.
 #>
 [CmdletBinding()]
 param()
@@ -18,7 +18,7 @@ function Write-Ok($msg)   { Write-Host "  OK  $msg" -ForegroundColor Green }
 function Write-Bad($msg)  { Write-Host "  !!  $msg" -ForegroundColor Yellow }
 
 if (-not (Test-Path $PidFile)) {
-    Write-Bad "No .pids file at $PidFile — nothing to stop."
+    Write-Bad "No .pids file at $PidFile - nothing to stop."
     Write-Bad "If services are still running, kill them by closing their windows or via Task Manager."
     exit 0
 }
