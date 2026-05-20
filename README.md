@@ -5,6 +5,10 @@ tools for **IBM MQ** and **IBM App Connect Enterprise (ACE)**. Hand the central
 team one endpoint; their orchestrator/LLM picks the right tool from the unified
 tool list based on the user's question — no in-server routing required.
 
+> New to MQ / ACE or unsure where they fit in an enterprise middleware
+> stack? See **[documents/MIDDLEWARE_STACK.md](documents/MIDDLEWARE_STACK.md)**
+> for a short primer with ESB topology and layer-mapping diagrams.
+
 ## Setup
 
 ```powershell
