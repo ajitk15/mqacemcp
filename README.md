@@ -30,20 +30,22 @@ real deployment.
 
 ## Connect a client
 
-See **[CONNECTING.md](CONNECTING.md)** for copy-paste configs for Claude
-Desktop, Claude Code (CLI + VS Code extension), VS Code GitHub Copilot agent
-mode, Cursor, the MCP Inspector, and the Python MCP SDK — plus a
+See **[documents/CONNECTING.md](documents/CONNECTING.md)** for copy-paste configs for
+Claude Desktop, Claude Code (CLI + VS Code extension), VS Code GitHub Copilot
+agent mode, Cursor, the MCP Inspector, and the Python MCP SDK — plus a
 troubleshooting matrix.
 
 ## Web chat UI (optional)
 
 A standalone, MCP-server-agnostic chat UI lives under
-**[chatbot/](../chatbot/README.md)**. It pairs a FastAPI + LangGraph backend
-(OpenAI GPT-4o) with a Next.js 15 + Tailwind frontend. Features include:
-session memory, structured rendering (tables / Mermaid / code blocks), a
-configurable scope guardrail (`BOT_DOMAIN`), an externalised system prompt
-(`prompts/system.md`), and a tool allow/deny list — all driven from
-`chatbot/backend/.env`. The MCP server itself is untouched; the chatbot
+**[chatbot/](chatbot/README.md)**. It pairs a FastAPI + LangGraph backend
+(OpenAI GPT-4o) with two interchangeable frontends: the original Next.js 15
++ Tailwind UI in `chatbot/frontend/`, and an alternative Streamlit UI in
+`chatbot/streamlit_frontend/` — same backend, pick whichever you prefer.
+Features include: session memory, structured rendering (tables / Mermaid /
+code blocks), a configurable scope guardrail (`BOT_DOMAIN`), an externalised
+system prompt (`prompts/system.md`), and a tool allow/deny list — all driven
+from `chatbot/backend/.env`. The MCP server itself is untouched; the chatbot
 talks to it over SSE like any other MCP client.
 
 Launch the whole stack (MCP server + chat backend + UI) with:
@@ -54,8 +56,9 @@ Launch the whole stack (MCP server + chat backend + UI) with:
 
 If you need to explain *why* the chatbot qualifies as agentic AI (vs. "a
 chat box wrapping APIs"), point readers at
-**[chatbot/AGENTIC_AI.md](chatbot/AGENTIC_AI.md)** — a single doc that
-maps the canonical agentic-AI components to specific files here.
+**[chatbot/AGENTIC_AI.md](chatbot/AGENTIC_AI.md)** — a single doc that maps
+the canonical agentic-AI components to specific files here. Curated demo
+prompts live in **[chatbot/SAMPLE_QUESTIONS.md](chatbot/SAMPLE_QUESTIONS.md)**.
 
 ## Run
 
@@ -265,15 +268,29 @@ mqacemcp/
 │   ├── ace_helpers.py       # ACE HTTP client, node config / dump, REST helper
 │   └── ace_tools.py         # @mcp.tool wrappers for ACE
 ├── tests/                   # offline pytest suite
-├── logs/                    # app-*.log + queries-*.jsonl (created at runtime, gitignored)
+├── logs/                    # app-*.log + queries-*.jsonl (created at runtime, gitignored;
+│                            #   LOG_DIR in .env can redirect elsewhere, e.g. custom-logs/)
 ├── resources/
 │   ├── qmgr_dump.csv
 │   ├── node_config.csv
 │   └── node_dump.csv
+├── chatbot/                 # separate stack: FastAPI + LangGraph backend +
+│   ├── backend/             #   Next.js / Streamlit frontends (uses this MCP
+│   ├── frontend/            #   server over SSE like any external client).
+│   ├── streamlit_frontend/  #   See chatbot/README.md.
+│   ├── AGENTIC_AI.md
+│   ├── SAMPLE_QUESTIONS.md
+│   └── README.md
+├── scripts/                 # start-all.ps1 / stop-all.ps1 / start-streamlit.ps1 /
+│                            #   gen_basic_auth.py
+├── documents/               # supplementary docs: CONNECTING.md, EXECUTIVE_NARRATIVE.md,
+│                            #   executive deck (.pptx)
 ├── references/              # historical MQ-only and ACE-only servers (not used at runtime)
 ├── requirements.txt
+├── pytest.ini
 ├── .env.example
 ├── .gitignore
+├── CLAUDE.md                # repo-specific guidance for Claude Code
 └── README.md
 ```
 
