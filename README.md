@@ -156,6 +156,10 @@ The same env vars can live in `.env` instead of being exported.
 | `list_ace_message_flows` | List message flows on a given integration server (optionally scoped to an application). |
 | `search_ace_local_dump` | Offline-triage search across `node_dump.csv` (BIP messages incl. flow / app / server state). |
 
+For a detailed per-tool walkthrough — inputs, resolution chain,
+fallback behaviour, recorded endpoints — see
+**[documents/TOOLS.md](documents/TOOLS.md)**.
+
 ## How the orchestrator routes
 
 The orchestrator's LLM sees all 13 tools. Every MQ docstring starts with
