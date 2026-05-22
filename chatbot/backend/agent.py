@@ -22,15 +22,19 @@ _REQUIRED_PLACEHOLDERS = ("{scope_block}", "{tool_catalog}")
 
 SCOPE_BLOCK_TEMPLATE = """\
 SCOPE: You ONLY answer questions about {bot_domain}. If the user asks
-anything outside that scope (other products, general knowledge, weather,
-personal advice, unrelated code, small talk, etc.), do NOT call any tools.
-Reply with exactly:
+something clearly outside that scope (other products, general knowledge,
+weather, personal advice, unrelated code, small talk, etc.), do NOT call
+any tools. Reply with exactly:
 
   "I can only help with questions about {bot_domain}. Try asking about
-   queue depths, channel status, integration nodes, message flows, etc."
+   queue depths, channel status, integration nodes, message flows, etc.
+   For anything else, please reach out to the **{support_team}** team."
 
-When in doubt about whether a question is in scope, ask a brief clarifying
-question rather than guessing.
+When in doubt about whether a question is in scope, assume it IS in scope
+and proceed (call the relevant tool or ask one targeted clarifying
+question). Do NOT fire the refusal for IBM MQ / IBM ACE feature names
+(SSL key repository, channel, trigger, model queue, transmission queue,
+JMS, AMQP, BIP codes, etc.) — those are in scope.
 
 """
 
@@ -133,10 +137,14 @@ def build_agent(tools: list[BaseTool]) -> tuple[object, MemorySaver]:
     llm = ChatOpenAI(model=model_name, temperature=0, streaming=True)
 
     bot_domain = os.getenv("BOT_DOMAIN", "").strip()
-    scope_block = (
-        SCOPE_BLOCK_TEMPLATE.format(bot_domain=bot_domain) if bot_domain else ""
-    )
     support_team = os.getenv("SUPPORT_TEAM", "").strip() or "MQ_ACE_SUPPORT"
+    scope_block = (
+        SCOPE_BLOCK_TEMPLATE.format(
+            bot_domain=bot_domain, support_team=support_team
+        )
+        if bot_domain
+        else ""
+    )
 
     template, prompt_source = _load_system_prompt_template()
     system_prompt = _render_system_prompt(
