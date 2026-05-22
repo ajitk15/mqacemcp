@@ -292,7 +292,6 @@ mqacemcp/
 │                            #   gen_basic_auth.py
 ├── documents/               # supplementary docs: CONNECTING.md, EXECUTIVE_NARRATIVE.md,
 │                            #   executive deck (.pptx)
-├── references/              # historical MQ-only and ACE-only servers (not used at runtime)
 ├── requirements.txt
 ├── pytest.ini
 ├── .env.example

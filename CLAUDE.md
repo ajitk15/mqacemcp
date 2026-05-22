@@ -99,8 +99,6 @@ When adding a new code path that catches an exception, route it through
 are extracts produced by external jobs. Tools that read them (`find_mq_object`,
 `search_ace_local_dump`) say "OFFLINE" in their docstring — the freshness
 depends on the CSV's `extractedat`/`timestamp` columns, not on a live system.
-The `references/` directory holds the historical pre-merge servers and sample
-data; don't import from it at runtime.
 
 ### Two HTTP clients, one shutdown path
 `server/mq_helpers.py:get_http_client` and `server/ace_helpers.py:get_http_client`
