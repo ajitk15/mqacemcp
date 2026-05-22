@@ -15,6 +15,9 @@ env/
 .env
 .env.local
 
+# TLS certs (self-signed, local dev only)
+certs/
+
 # IDE
 .vscode/
 .idea/

@@ -11,10 +11,15 @@ import base64
 import json
 import logging
 import os
+import ssl
+from pathlib import Path
 from typing import Any
 
+import httpx
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+
+from mcp.shared._httpx_utils import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
 
 log = logging.getLogger("chatbot.mcp")
 
@@ -86,21 +91,60 @@ def _filter_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return kept
 
 
+def _resolve_ca_bundle() -> Path | None:
+    """Return the resolved path to MCP_TLS_CA_BUNDLE, or None if unset."""
+    raw = os.getenv("MCP_TLS_CA_BUNDLE", "").strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    if not p.is_absolute():
+        # Resolve relative to repo root (chatbot/backend/mcp_client.py -> ../../)
+        p = (Path(__file__).resolve().parent.parent.parent / p).resolve()
+    if not p.is_file():
+        raise RuntimeError(f"MCP_TLS_CA_BUNDLE={raw} not found at {p}")
+    return p
+
+
+def _make_pinned_factory(ca_path: Path):
+    """Return an httpx client factory that trusts only ``ca_path`` for TLS."""
+    ctx = ssl.create_default_context(cafile=str(ca_path))
+
+    def factory(
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.AsyncClient:
+        kwargs: dict[str, Any] = {"follow_redirects": True, "verify": ctx}
+        kwargs["timeout"] = timeout if timeout is not None else httpx.Timeout(
+            MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT
+        )
+        if headers:
+            kwargs["headers"] = headers
+        if auth is not None:
+            kwargs["auth"] = auth
+        return httpx.AsyncClient(**kwargs)
+
+    return factory
+
+
 def build_client() -> MultiServerMCPClient:
     """Construct a MultiServerMCPClient pointed at the configured SSE URL."""
     url = os.getenv("MCP_SSE_URL", "").strip()
     if not url:
         raise RuntimeError("MCP_SSE_URL is not set. See .env.example.")
 
-    config = {
-        _server_name(): {
-            "url": url,
-            "transport": "sse",
-            "headers": _build_headers(),
-        }
+    server_cfg: dict[str, Any] = {
+        "url": url,
+        "transport": "sse",
+        "headers": _build_headers(),
     }
+    ca_path = _resolve_ca_bundle()
+    if ca_path is not None:
+        log.info("Pinning MCP TLS to CA bundle: %s", ca_path)
+        server_cfg["httpx_client_factory"] = _make_pinned_factory(ca_path)
+
     log.info("Connecting to MCP server at %s", url)
-    return MultiServerMCPClient(config)
+    return MultiServerMCPClient({_server_name(): server_cfg})
 
 
 async def load_tools() -> list[BaseTool]:

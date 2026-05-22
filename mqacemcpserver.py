@@ -28,7 +28,6 @@ from server.config import (
     MCP_PORT,
     MCP_TLS_CERT,
     MCP_TLS_KEY,
-    MCP_TLS_KEY_PASSWORD,
     MCP_TRANSPORT,
     QUERY_LOG_ENABLED,
     ace_configured,
@@ -46,15 +45,6 @@ mcp = FastMCP("mqacemcpserver", host=MCP_HOST, port=MCP_PORT)
 
 mq_tools.register(mcp)
 ace_tools.register(mcp)
-
-
-async def _startup_checks() -> None:
-    """Best-effort connectivity probes to MQ and ACE; never raises."""
-    await asyncio.gather(
-        mq_helpers.verify_connectivity(),
-        ace_helpers.verify_connectivity(),
-        return_exceptions=True,
-    )
 
 
 async def _shutdown() -> None:
@@ -122,11 +112,6 @@ def main() -> None:
         logger.info("Health check: %s://%s:%s/healthz", scheme, MCP_HOST, MCP_PORT)
 
     try:
-        asyncio.run(_startup_checks())
-    except Exception:
-        logger.exception("Startup connectivity check failed (continuing)")
-
-    try:
         if MCP_TRANSPORT == "sse":
             import uvicorn
 
@@ -145,8 +130,6 @@ def main() -> None:
             if tls_enabled():
                 uvicorn_kwargs["ssl_certfile"] = MCP_TLS_CERT
                 uvicorn_kwargs["ssl_keyfile"] = MCP_TLS_KEY
-                if MCP_TLS_KEY_PASSWORD:
-                    uvicorn_kwargs["ssl_keyfile_password"] = MCP_TLS_KEY_PASSWORD
                 logger.info(
                     "SSE endpoint TLS enabled (cert=%s, key=%s)",
                     MCP_TLS_CERT, MCP_TLS_KEY,

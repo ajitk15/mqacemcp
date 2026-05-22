@@ -42,14 +42,13 @@ MCP_AUTH_PASSWORD: str = os.getenv("MCP_AUTH_PASSWORD", "")
 
 # Optional TLS for the SSE endpoint. When both cert + key are set the server
 # binds with HTTPS; otherwise it falls back to plain HTTP. Paths support ~ and
-# $VAR expansion. MCP_TLS_KEY_PASSWORD is optional (encrypted private keys).
+# $VAR expansion. Use unencrypted PEM-format files.
 def _expand_path(value: str) -> str:
     return os.path.expandvars(os.path.expanduser(value.strip())) if value else ""
 
 
 MCP_TLS_CERT: str = _expand_path(os.getenv("MCP_TLS_CERT", ""))
 MCP_TLS_KEY: str = _expand_path(os.getenv("MCP_TLS_KEY", ""))
-MCP_TLS_KEY_PASSWORD: str = os.getenv("MCP_TLS_KEY_PASSWORD", "")
 
 
 def tls_enabled() -> bool:
