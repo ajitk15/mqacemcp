@@ -60,8 +60,15 @@ def _load_node_dump_from_disk() -> pd.DataFrame:
             ACE_NODE_DUMP_PATH,
             delimiter="|",
             skipinitialspace=True,
-            header=None,
-            names=["timestamp", "host", "node", "status"],
+            header=0,
+        )
+        df.columns = [c.strip() for c in df.columns]
+        df = df.rename(
+            columns={
+                "extractedat": "timestamp",
+                "hostname": "host",
+                "resource": "status",
+            }
         )
         for col in df.columns:
             if df[col].dtype == "object":

@@ -1,3 +1,4 @@
+extractedat|hostname|node|resource
 2026-02-15 19:10:01|ACEHOST01|NODE01|BIP1286I: Integration server 'IS001' on integration node 'NODE01' is running.
 2026-02-15 19:10:01|ACEHOST01|NODE01|BIP1290I: Application 'snaplogic1' is deployed on integration server 'IS001'.
 2026-02-15 19:10:01|ACEHOST01|NODE01|BIP1288I: Message flow 'OrderFlow' in application 'snaplogic1' on integration server 'IS001' is running.
