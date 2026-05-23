@@ -9,6 +9,11 @@ Usage
     python clients/test_https_client.py            # full smoke test
     python clients/test_https_client.py --list     # just list tools and exit
     python clients/test_https_client.py --only find_mq_object   # single tool
+    python clients/test_https_client.py --no-endpoint           # skip backend URL lookup
+
+Each tool call prints the backend URL the server actually hit (read from
+the server's queries-YYYY-MM-DD.jsonl). Requires the client to be on the
+same filesystem as the server; pass --no-endpoint when running remote.
 
 Run the server first (in another shell), with SSE transport:
     $env:MCP_TRANSPORT="sse"
@@ -30,6 +35,8 @@ import json
 import os
 import ssl
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -55,6 +62,14 @@ _default_scheme = "https" if (MCP_TLS_CERT and MCP_TLS_KEY) else "http"
 SSE_URL = os.getenv(
     "MCP_REMOTE_SERVER_URL", f"{_default_scheme}://{MCP_HOST}:{MCP_PORT}/sse"
 )
+
+# LOG_DIR resolution mirrors server/config.py:63-69 so the client can tail the
+# server's query log to surface the backend endpoint per call.
+_LOG_DIR_RAW = (os.getenv("LOG_DIR") or "").strip()
+if _LOG_DIR_RAW:
+    LOG_DIR = Path(os.path.expandvars(os.path.expanduser(_LOG_DIR_RAW))).resolve()
+else:
+    LOG_DIR = (PROJECT_ROOT / "logs").resolve()
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -111,6 +126,62 @@ def _make_insecure_httpx_client(
     if auth is not None:
         kwargs["auth"] = auth
     return httpx.AsyncClient(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# QueryLogTail — reads the server's queries-YYYY-MM-DD.jsonl to surface the
+# backend URL for each tool call. Smoke runs are serial, so the latest record
+# with matching tool name maps unambiguously to the call we just made.
+# ---------------------------------------------------------------------------
+class QueryLogTail:
+    def __init__(self, log_dir: Path) -> None:
+        self.log_dir = log_dir
+        self.last_pos = 0
+        path = self._today_path()
+        if path.exists():
+            try:
+                self.last_pos = path.stat().st_size
+            except OSError:
+                self.last_pos = 0
+
+    def _today_path(self) -> Path:
+        return self.log_dir / f"queries-{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+
+    def latest_record_for(self, tool: str) -> dict | None:
+        for attempt in range(2):
+            path = self._today_path()
+            if not path.exists():
+                if attempt == 0:
+                    time.sleep(0.15)
+                    continue
+                return None
+            try:
+                with path.open("rb") as f:
+                    f.seek(self.last_pos)
+                    chunk = f.read()
+                    new_pos = f.tell()
+            except OSError:
+                return None
+            matched: dict | None = None
+            for line in chunk.decode("utf-8", errors="replace").splitlines():
+                s = line.strip()
+                if not s:
+                    continue
+                try:
+                    rec = json.loads(s)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("tool") == tool:
+                    matched = rec
+            if matched is not None:
+                self.last_pos = new_pos
+                return matched
+            if attempt == 0:
+                time.sleep(0.15)
+                continue
+            self.last_pos = new_pos
+            return None
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +332,11 @@ EXPECTED_TOOLS = {
 }
 
 
-async def run(only: str | None = None, list_only: bool = False) -> int:
+async def run(
+    only: str | None = None,
+    list_only: bool = False,
+    no_endpoint: bool = False,
+) -> int:
     try:
         from mcp import ClientSession
         from mcp.client.sse import sse_client
@@ -351,6 +426,17 @@ async def run(only: str | None = None, list_only: bool = False) -> int:
                 else:
                     warn("No CHANNEL row found in resources/qmgr_dump.csv; using fallback.")
                 table = build_tool_table(channel)
+
+                tail: QueryLogTail | None = None
+                if not no_endpoint:
+                    if LOG_DIR.exists():
+                        tail = QueryLogTail(LOG_DIR)
+                        info(f"Tailing query log: {LOG_DIR}")
+                    else:
+                        warn(
+                            f"LOG_DIR not found: {LOG_DIR} — backend endpoints "
+                            "will not be shown (use --no-endpoint to silence)."
+                        )
                 if only:
                     table = [row for row in table if row["name"] == only]
                     if not table:
@@ -371,6 +457,17 @@ async def run(only: str | None = None, list_only: bool = False) -> int:
                         else:
                             output = ""
                         preview(output)
+                        if tail is not None:
+                            rec = tail.latest_record_for(name)
+                            if rec is None:
+                                dim("→ backend: (no log record — QUERY_LOG_ENABLED off, or LOG_DIR mismatch)")
+                            else:
+                                endpoints = rec.get("endpoints") or []
+                                if not endpoints:
+                                    dim("→ backend: (none — offline tool)")
+                                else:
+                                    for url in endpoints:
+                                        print(f"  {CYAN}→ backend:{RESET} {url}")
                         outcome, reason = classify_output(output, mode)
                         results.append((name, outcome, reason))
                         if outcome == "pass":
@@ -412,9 +509,10 @@ async def run(only: str | None = None, list_only: bool = False) -> int:
         return 1
 
 
-def parse_args(argv: list[str]) -> tuple[str | None, bool]:
+def parse_args(argv: list[str]) -> tuple[str | None, bool, bool]:
     only: str | None = None
     list_only = False
+    no_endpoint = False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -423,6 +521,8 @@ def parse_args(argv: list[str]) -> tuple[str | None, bool]:
         elif a == "--only" and i + 1 < len(argv):
             only = argv[i + 1]
             i += 1
+        elif a == "--no-endpoint":
+            no_endpoint = True
         elif a in ("-h", "--help"):
             print(__doc__)
             sys.exit(0)
@@ -430,12 +530,12 @@ def parse_args(argv: list[str]) -> tuple[str | None, bool]:
             print(f"Unknown argument: {a!r}. Use --help for usage.")
             sys.exit(2)
         i += 1
-    return only, list_only
+    return only, list_only, no_endpoint
 
 
 if __name__ == "__main__":
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    only_arg, list_arg = parse_args(sys.argv[1:])
-    sys.exit(asyncio.run(run(only=only_arg, list_only=list_arg)))
+    only_arg, list_arg, no_endpoint_arg = parse_args(sys.argv[1:])
+    sys.exit(asyncio.run(run(only=only_arg, list_only=list_arg, no_endpoint=no_endpoint_arg)))
