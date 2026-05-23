@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(Start-Sleep -Seconds 6; try { $mcp = Invoke-RestMethod -Uri \"http://localhost:8000/healthz\" -TimeoutSec 5; Write-Host \"MCP /healthz: OK \\($\\($mcp | ConvertTo-Json -Compress\\)\\)\" } catch { Write-Host \"MCP /healthz: $\\($_.Exception.Message\\)\" }; try { $be = Invoke-RestMethod -Uri \"http://localhost:8001/api/health\" -TimeoutSec 5; Write-Host \"Backend /api/health: status=$\\($be.status\\) tools=$\\($be.tool_count\\) mcp=$\\($be.mcp_sse_url\\)\" } catch { Write-Host \"Backend /api/health: $\\($_.Exception.Message\\)\" })"
+      "PowerShell(Start-Sleep -Seconds 6; try { $mcp = Invoke-RestMethod -Uri \"http://localhost:8000/healthz\" -TimeoutSec 5; Write-Host \"MCP /healthz: OK \\($\\($mcp | ConvertTo-Json -Compress\\)\\)\" } catch { Write-Host \"MCP /healthz: $\\($_.Exception.Message\\)\" }; try { $be = Invoke-RestMethod -Uri \"http://localhost:8001/api/health\" -TimeoutSec 5; Write-Host \"Backend /api/health: status=$\\($be.status\\) tools=$\\($be.tool_count\\) mcp=$\\($be.mcp_sse_url\\)\" } catch { Write-Host \"Backend /api/health: $\\($_.Exception.Message\\)\" })",
+      "Bash(git -C /c/Workspace/hready/mqacemcp status --short)",
+      "Bash(git -C /c/Workspace/hready/mqacemcp ls-files documents/README.md README.md)",
+      "Bash(.venv/Scripts/python.exe -m pytest -q)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(python)"
     ]
   }
 }
