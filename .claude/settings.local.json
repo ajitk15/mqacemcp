@@ -6,7 +6,12 @@
       "Bash(git -C /c/Workspace/hready/mqacemcp ls-files documents/README.md README.md)",
       "Bash(.venv/Scripts/python.exe -m pytest -q)",
       "Bash(.venv/Scripts/python.exe *)",
-      "Bash(python)"
+      "Bash(python)",
+      "PowerShell(node --version; npm list -g pptxgenjs 2>$null; \\(Get-Command soffice -ErrorAction SilentlyContinue\\).Source; \\(Get-Command pdftoppm -ErrorAction SilentlyContinue\\).Source; python -m pip show markitdown 2>$null | Select-String \"^Name|^Version\")",
+      "PowerShell(npm install -g pptxgenjs 2>&1)",
+      "PowerShell($f = Get-Item \"C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\documents\\\\MQ_ACE_Platform_Story.pptx\"; \"$\\($f.Length\\) bytes\"; \"\"; $out = python -m markitdown \"C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\documents\\\\MQ_ACE_Platform_Story.pptx\" 2>&1; \\($out | Select-String -Pattern \"Slide number:\" | Measure-Object\\).Count; \"slides found\"; \"\"; $out | Select-String -Pattern \"Slide number:|From Console Chaos|The Invisible Backbone|A Day in the Life|From Zero to Thirteen|Next Layer: Agentic|How the Agentic AI Works|Engineering Rigour:\" | ForEach-Object { $_.Line.Trim\\(\\) })",
+      "PowerShell($tmp = \"C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\.tmp_ref\"; $zip = \"$tmp\\\\ref.zip\"; if \\(Test-Path $tmp\\) { Remove-Item -Recurse -Force $tmp }; New-Item -ItemType Directory -Path $tmp | Out-Null; Copy-Item \"C:\\\\Users\\\\ajitk\\\\Downloads\\\\Agentic_Platform_Intelligence_\\(4\\).pptx\" $zip; Expand-Archive -Path $zip -DestinationPath \"$tmp\\\\unpacked\"; Get-ChildItem -Recurse \"$tmp\\\\unpacked\\\\ppt\\\\media\" | Select-Object Name, Length | Sort-Object Length -Descending)",
+      "PowerShell($src = \"C:\\\\Users\\\\ajitk\\\\Downloads\\\\Agentic_Platform_Intelligence_\\(4\\).pptx\"; $dest = \"C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\documents\\\\_ref_unpack\"; if \\(Test-Path $dest\\) { Remove-Item -Recurse -Force $dest }; New-Item -ItemType Directory -Path $dest | Out-Null; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory\\($src, $dest\\); Get-ChildItem -Recurse \"$dest\\\\ppt\\\\media\" | Select-Object Name, Length)"
     ]
   }
 }
