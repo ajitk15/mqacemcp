@@ -30,7 +30,7 @@ def _tool(name: str):
 # ---------------------------------------------------------------------------
 # Tool catalogue
 # ---------------------------------------------------------------------------
-def test_exactly_six_tools_registered():
+def test_exactly_seven_tools_registered():
     expected = {
         "mq_queue_inspect",
         "mq_channel_inspect",
@@ -38,6 +38,7 @@ def test_exactly_six_tools_registered():
         "ace_node_overview",
         "ace_server_explore",
         "ace_search",
+        "get_cert_details",
     }
     actual = set(single_server.mcp._tool_manager._tools.keys())
     assert actual == expected, f"unexpected tool set: {sorted(actual)}"
@@ -57,6 +58,13 @@ def test_ace_tool_docstrings_open_with_routing_prefix():
         assert doc.lstrip().startswith("IBM ACE:"), (
             f"{name} docstring must open with 'IBM ACE:' for LLM routing"
         )
+
+
+def test_cert_tool_docstring_opens_with_routing_prefix():
+    doc = _tool("get_cert_details").__doc__ or ""
+    assert doc.lstrip().startswith("Certificate:"), (
+        "get_cert_details docstring must open with 'Certificate:' for LLM routing"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -195,3 +203,32 @@ def test_ace_server_explore_unknown_node():
     out = json.loads(asyncio.run(fn(node="NODE.DOES.NOT.EXIST", server="X")))
     assert out["node"] == "NODE.DOES.NOT.EXIST"
     assert out["server"] == "X"
+
+
+# ---------------------------------------------------------------------------
+# get_cert_details — OFFLINE certificate inventory lookup
+# ---------------------------------------------------------------------------
+def test_get_cert_details_no_match_returns_empty_results():
+    fn = _tool("get_cert_details")
+    out = json.loads(fn(search_string="no-such-cert-anywhere"))
+    assert out["status"] == "success"
+    assert out["results"] == []
+
+
+def test_get_cert_details_match_returns_expected_fields():
+    """The shared cert_dump.csv ships hostnames like lodmq01.example.com."""
+    fn = _tool("get_cert_details")
+    out = json.loads(fn(search_string="lodmq01"))
+    assert out["status"] == "success"
+    assert out["results"], out
+    row = out["results"][0]
+    for field in ("hostname", "alias", "cnname", "validfrom", "validuntil", "expiry"):
+        assert field in row, f"missing {field} in {row}"
+
+
+def test_get_cert_details_searches_all_fields():
+    """A substring that only appears in the alias column must still match."""
+    fn = _tool("get_cert_details")
+    out = json.loads(fn(search_string="mqweb-https"))
+    assert out["status"] == "success"
+    assert any(r["alias"] == "mqweb-https" for r in out["results"]), out

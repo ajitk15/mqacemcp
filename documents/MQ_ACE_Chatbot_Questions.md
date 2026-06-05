@@ -1,6 +1,6 @@
-# MQ & ACE Chatbot — 30 Test Questions
+# MQ & ACE Chatbot — 33 Test Questions
 
-Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`) and **node_dump.csv** (4 ACE integration nodes across `ACEHOST01–04`).
+Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_dump.csv** (4 ACE integration nodes across `ACEHOST01–04`), and **cert_dump.csv** (TLS/SSL certificate inventory).
 
 ---
 
@@ -252,6 +252,36 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`) and **no
 
 ---
 
+## Certificate Questions (31–33)
+
+### TLS/SSL Certificate Inventory
+
+**Q31 — Certificate expiry by host**
+> "When does the TLS certificate on lodmq01 expire?"
+
+*Expected answer area:* `get_cert_details("lodmq01")` returns the cert for
+`lodmq01.example.com` (alias `mq-ssl-2026`, CN `CN=lodmq01.example.com,…`) with
+`validfrom` Mon Jan 12 2026, `validuntil` Tue Jan 12 2027, and an `expiry` span
+of 365 days. (Offline inventory — `resources/cert_dump.csv`.)
+
+---
+
+**Q32 — Look up a certificate by alias**
+> "Show me the certificate details for alias mqweb-https."
+
+*Expected answer area:* matches `loqmq02.example.com` — the search spans all
+columns, so hostname, alias, and CN are all valid lookup keys.
+
+---
+
+**Q33 — Certificates for a domain**
+> "Which certificates are issued for example.com?"
+
+*Expected answer area:* a substring search on `example.com` returns every cert
+row whose CN/host contains it, each with its validity window and day-count span.
+
+---
+
 ## Question Category Summary
 
 | Category | Q# | Count |
@@ -264,4 +294,5 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`) and **no
 | ACE applications & flows | 20–25 | 6 |
 | ACE BIP codes & summaries | 26–28 | 3 |
 | Cross-system MQ + ACE | 29–30 | 2 |
-| **Total** | | **30** |
+| Certificate inventory | 31–33 | 3 |
+| **Total** | | **33** |

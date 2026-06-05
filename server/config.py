@@ -107,6 +107,7 @@ RESOURCES_DIR: Path = PROJECT_ROOT / "resources"
 MQ_QMGR_DUMP_PATH: Path = RESOURCES_DIR / "qmgr_dump.csv"
 ACE_NODE_DUMP_PATH: Path = RESOURCES_DIR / "node_dump.csv"
 ACE_NODE_CONFIG_PATH: Path = RESOURCES_DIR / "node_config.csv"
+CERT_DUMP_PATH: Path = RESOURCES_DIR / "cert_dump.csv"
 
 
 def mq_configured() -> bool:

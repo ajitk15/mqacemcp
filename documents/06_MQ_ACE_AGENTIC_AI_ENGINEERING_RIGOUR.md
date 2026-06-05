@@ -11,7 +11,7 @@
 | **CAPABILITIES** — what it can do | **CONTROLS** — how it's bounded | **CRAFT** — how it's built |
 |---|---|---|
 | Autonomous, multi-step reasoning across the whole estate | Read-only **by construction**, not by config | Single-route enforcement — every call goes through one pipeline |
-| 13 read-only diagnostic tools, plain-English interface | Defense-in-depth: 6 independent security layers | Decorator stack — logging, redaction, error sanitisation applied uniformly |
+| 14 read-only diagnostic tools, plain-English interface | Defense-in-depth: 6 independent security layers | Decorator stack — logging, redaction, error sanitisation applied uniformly |
 | 10 of 12 agentic-AI components implemented | Hostname allow-list — prod excluded by default | Per-call JSONL audit log, Power BI-ingestible |
 | Open protocol (MCP) — works with any compliant client | Scope refusal — off-topic Qs refused without touching any system | ContextVars for per-call state (no globals, no leaks across requests) |
 
@@ -54,7 +54,7 @@ flowchart LR
 
 ---
 
-## The 13 tools — what the agent can actually do
+## The 14 tools — what the agent can actually do
 
 | **IBM MQ tools (7)** | What it answers |
 |---|---|
@@ -74,6 +74,10 @@ flowchart LR
 | `list_ace_applications` | Apps deployed on a server |
 | `list_ace_message_flows` | Flows inside a server / app |
 | `search_ace_local_dump` | Grep BIP error codes in offline manifests |
+
+| **Certificate tool (1)** | What it answers |
+|---|---|
+| `get_cert_details` | TLS/SSL cert expiry, validity window, and CN — by host, alias, or CN (offline inventory) |
 
 Every tool is **GET-only** at the protocol layer. Modification verbs cannot be invoked — no destructive tool exists in the registry.
 
@@ -97,8 +101,8 @@ Every tool is **GET-only** at the protocol layer. Modification verbs cannot be i
 | # | Canonical component | This solution | Status |
 |---|---|---|---|
 | 1 | LLM reasoner | OpenAI GPT-4o via `langchain-openai` | ✅ |
-| 2 | Tool registry | 13 MCP tools auto-loaded | ✅ |
-| 3 | Tool selector | The LLM itself — guided by `IBM MQ:` / `IBM ACE:` docstring prefixes; **no dispatcher code** | ✅ |
+| 2 | Tool registry | 14 MCP tools auto-loaded | ✅ |
+| 3 | Tool selector | The LLM itself — guided by `IBM MQ:` / `IBM ACE:` / `Certificate:` docstring prefixes; **no dispatcher code** | ✅ |
 | 4 | Action loop (ReAct) | `langgraph.prebuilt.create_react_agent` | ✅ |
 | 5 | Short-term memory | LLM context across messages of one turn | ✅ |
 | 6 | Session memory | LangGraph `MemorySaver` keyed by `thread_id` | ✅ |

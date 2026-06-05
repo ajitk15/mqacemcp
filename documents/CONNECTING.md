@@ -193,7 +193,7 @@ Then in the UI:
 - **Custom Headers** → add: `Authorization: Basic bWNwYWRtaW46TXlSZWFsUGFzc3dvcmQ=`
 - Click **Connect**.
 
-You'll see all 13 tools in the left panel — call any of them with arbitrary
+You'll see all 14 tools in the left panel — call any of them with arbitrary
 arguments and inspect the response.
 
 ### As a stdio launcher (no server needed beforehand)

@@ -2,7 +2,7 @@
 
 A sibling MCP server for environments where the orchestrator/frontend can only
 invoke **one tool per user turn** — no parallel tool calls, no sequential
-ReAct-style chaining. Each of the six tools below is self-sufficient: it
+ReAct-style chaining. Each of the seven tools below is self-sufficient: it
 performs the full discovery-plus-execution workflow internally and returns one
 consolidated answer.
 
@@ -20,6 +20,7 @@ against the same upstream MQ / ACE infrastructure and the same CSV manifests.
 | `ace_node_overview` | `list_ace_nodes` + `get_ace_node_status` + `list_ace_servers` | "what's on node N1" |
 | `ace_server_explore` | `list_ace_applications` + `list_ace_message_flows` | "what's deployed on server X on N1" |
 | `ace_search` | `list_ace_nodes` (listing) + `search_ace_local_dump` | "find any ACE thing matching X (nodes / BIP log)" |
+| `get_cert_details` | (new — no root-server equivalent) | "when does the cert on host / alias / CN X expire" |
 
 Each tool keeps the same safety contract as the root server:
 
@@ -198,6 +199,30 @@ message dump, in one call.
 
 ---
 
+### 7. `get_cert_details`
+
+**Certificates.** OFFLINE lookup of TLS/SSL certificate details from
+`resources/cert_dump.csv` (shared with the root server), in one call.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `search_string` | `str` | yes | Hostname, alias, or CN substring to match (case-insensitive). Matches against ALL columns. |
+
+**What it does internally**
+- `search_certs(search_string)` → case-insensitive substring search across every
+  column of `cert_dump.csv`.
+- Returns a JSON envelope: `{status, message, results:[{hostname, alias, cnname,
+  validfrom, validuntil, expiry}]}`. `expiry` is the certificate's total validity
+  span in days (`validuntil − validfrom`). No live endpoint is inspected.
+
+**Sample user questions it answers in one call**
+- "When does the certificate on lodmq01 expire?"
+- "Show cert details for alias mqweb-https"
+- "Which certs are issued for example.com?"
+- "What's the CN on the lotace03 certificate?"
+
+---
+
 ## Internal function call graph
 
 For each composite tool, the helpers it invokes (in call order) and what
@@ -281,6 +306,12 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 
   6.3 `search_node_dump` : case-insensitive substring search across all string columns of `node_dump.csv` | in: `search_string` | out: `list[{timestamp, host, node, status}]`
 
+### 7. `get_cert_details` : OFFLINE certificate inventory lookup (no upstream HTTP)
+
+  7.1 `load_cert_dump` : cached read of `resources/cert_dump.csv` (used as an "empty / missing" check before searching) | in: none | out: pandas DataFrame with columns `hostname, alias, cnname, validfrom, validuntil, expiry`
+
+  7.2 `search_certs` : case-insensitive substring search across all columns of `cert_dump.csv` | in: `search_string` | out: `list[{hostname, alias, cnname, validfrom, validuntil, expiry}]`
+
 ---
 
 ## Layout
@@ -289,22 +320,23 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 mqacemcpserver-single/
 ├── single_server.py           # Entry point (stdio / SSE / Basic Auth / TLS / healthz)
 ├── server/
-│   ├── composite_tools.py     # The 6 composite tools (the only new code in this build)
+│   ├── composite_tools.py     # The 6 composite tools + get_cert_details (the only new code in this build)
 │   ├── config.py              # env loader, with RESOURCES_DIR override pointing at ../resources/
 │   ├── mq_helpers.py          # MQ REST client, qmgr_dump.csv reader, MQSC prettifiers
 │   ├── ace_helpers.py         # ACE Admin REST client, node CSVs, fetch_ace
+│   ├── cert_helpers.py        # cert_dump.csv reader + substring search
 │   ├── safety.py              # hostname allow-list + modification-MQSC guard
 │   ├── errors.py              # safe_error_message — sanitises every upstream exception
 │   ├── query_log.py           # @logged_tool decorator + per-call JSONL audit log
 │   ├── logger.py              # rotating app log
 │   └── auth.py                # SSE Basic Auth middleware
 ├── clients/
-│   └── smoke_test.py          # 32-case live SSE smoke client (see Testing → Online smoke)
+│   └── smoke_test.py          # 35-case live SSE smoke client (see Testing → Online smoke)
 ├── prompts/
 │   └── composite_system.md    # Reference system prompt for the orchestrator
 ├── tests/
 │   ├── conftest.py            # Sets temp LOG_DIR before importing server.*
-│   └── test_composite_tools.py # 17 offline tests
+│   └── test_composite_tools.py # 21 offline tests
 ├── requirements.txt           # Same as root: mcp, httpx, pandas, python-dotenv, uvicorn
 ├── .env.example               # Template; LOG_DIR=logs-single, MCP_PORT=8443 (or 8010)
 └── README.md
@@ -332,10 +364,10 @@ Copy-Item .env.example .env
 $env:MCP_TRANSPORT = "sse"
 .venv\Scripts\python.exe single_server.py
 
-# Smoke check — must print exactly 6 tool names
+# Smoke check — must print exactly 7 tool names
 .venv\Scripts\python.exe -c "import single_server as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
 
-# Live smoke test (32 cases via SSE) — see "Testing → Online smoke" below
+# Live smoke test (35 cases via SSE) — see "Testing → Online smoke" below
 .venv\Scripts\python.exe clients\smoke_test.py
 ```
 
@@ -359,7 +391,7 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
-# Expected: 17 passed in ~3s
+# Expected: 21 passed in ~3s
 ```
 
 ### Useful pytest invocations
@@ -383,27 +415,31 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 .venv\Scripts\python.exe -m pytest -s
 ```
 
-### What the 17 tests cover
+### What the 21 tests cover
 
 | # | Group | Test | What it asserts |
 | --- | --- | --- | --- |
-| 1 | catalogue | `test_exactly_six_tools_registered` | tool set == exactly the 6 composites (no missing, no extras) |
+| 1 | catalogue | `test_exactly_seven_tools_registered` | tool set == exactly the 7 tools (no missing, no extras) |
 | 2 | catalogue | `test_mq_tool_docstrings_open_with_routing_prefix` | every MQ tool's docstring starts with `IBM MQ:` |
 | 3 | catalogue | `test_ace_tool_docstrings_open_with_routing_prefix` | every ACE tool's docstring starts with `IBM ACE:` |
-| 4 | mq_queue_inspect | `test_mq_queue_inspect_not_in_manifest` | unknown queue → "not found in the manifest" hint |
-| 5 | mq_queue_inspect | `test_mq_queue_inspect_restricted_only` | manifest hit on a restricted host → "restricted" message |
-| 6 | mq_queue_inspect | `test_mq_queue_inspect_fast_path_rejects_disallowed_host` | FAST PATH + `hostname="evil-host"` → allow-list reject |
-| 7 | mq_channel_inspect | `test_mq_channel_inspect_not_in_manifest` | unknown channel → not-found hint |
-| 8 | mq_channel_inspect | `test_mq_channel_inspect_fast_path_rejects_disallowed_host` | FAST PATH + bad host → allow-list reject |
-| 9 | mq_host_overview | `test_mq_host_overview_blocks_modification_mqsc` | `mqsc_command="DEFINE QLOCAL(X)"` → `MODIFY_BLOCKED_MSG` |
-| 10 | mq_host_overview | `test_mq_host_overview_rejects_disallowed_host` | `hostname="evil-host"` → allow-list reject before HTTP |
-| 11 | mq_host_overview | `test_mq_host_overview_warns_when_mqsc_without_qmgr` | `mqsc_command` without `qmgr_name` → warning, not executed |
-| 12 | ace_search | `test_ace_search_rejects_unknown_scope` | `scope="bogus"` → error envelope |
-| 13 | ace_search | `test_ace_search_nodes_scope_lists_configured_nodes` | `scope="nodes"` returns rows from `node_config.csv` |
-| 14 | ace_search | `test_ace_search_dump_scope_filters_by_substring` | `scope="dump"` matches genuinely contain the substring |
-| 15 | ace_search | `test_ace_search_default_scope_returns_both_sections` | no scope ⇒ both `nodes` and `dump_matches` present |
-| 16 | ace_node_overview | `test_ace_node_overview_unknown_node` | unknown node → graceful envelope (no exception) |
-| 17 | ace_server_explore | `test_ace_server_explore_unknown_node` | unknown node → graceful envelope (no exception) |
+| 4 | catalogue | `test_cert_tool_docstring_opens_with_routing_prefix` | `get_cert_details` docstring starts with `Certificate:` |
+| 5 | mq_queue_inspect | `test_mq_queue_inspect_not_in_manifest` | unknown queue → "not found in the manifest" hint |
+| 6 | mq_queue_inspect | `test_mq_queue_inspect_restricted_only` | manifest hit on a restricted host → "restricted" message |
+| 7 | mq_queue_inspect | `test_mq_queue_inspect_fast_path_rejects_disallowed_host` | FAST PATH + `hostname="evil-host"` → allow-list reject |
+| 8 | mq_channel_inspect | `test_mq_channel_inspect_not_in_manifest` | unknown channel → not-found hint |
+| 9 | mq_channel_inspect | `test_mq_channel_inspect_fast_path_rejects_disallowed_host` | FAST PATH + bad host → allow-list reject |
+| 10 | mq_host_overview | `test_mq_host_overview_blocks_modification_mqsc` | `mqsc_command="DEFINE QLOCAL(X)"` → `MODIFY_BLOCKED_MSG` |
+| 11 | mq_host_overview | `test_mq_host_overview_rejects_disallowed_host` | `hostname="evil-host"` → allow-list reject before HTTP |
+| 12 | mq_host_overview | `test_mq_host_overview_warns_when_mqsc_without_qmgr` | `mqsc_command` without `qmgr_name` → warning, not executed |
+| 13 | ace_search | `test_ace_search_rejects_unknown_scope` | `scope="bogus"` → error envelope |
+| 14 | ace_search | `test_ace_search_nodes_scope_lists_configured_nodes` | `scope="nodes"` returns rows from `node_config.csv` |
+| 15 | ace_search | `test_ace_search_dump_scope_filters_by_substring` | `scope="dump"` matches genuinely contain the substring |
+| 16 | ace_search | `test_ace_search_default_scope_returns_both_sections` | no scope ⇒ both `nodes` and `dump_matches` present |
+| 17 | ace_node_overview | `test_ace_node_overview_unknown_node` | unknown node → graceful envelope (no exception) |
+| 18 | ace_server_explore | `test_ace_server_explore_unknown_node` | unknown node → graceful envelope (no exception) |
+| 19 | get_cert_details | `test_get_cert_details_no_match_returns_empty_results` | no-match → success envelope with empty `results` |
+| 20 | get_cert_details | `test_get_cert_details_match_returns_expected_fields` | match returns all six cert fields |
+| 21 | get_cert_details | `test_get_cert_details_searches_all_fields` | alias-only substring still matches (all-column search) |
 
 ### Test conventions
 
@@ -422,7 +458,7 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 ### Online smoke (clients/smoke_test.py)
 
 A separate live-deployment smoke client that opens an MCP SSE session,
-lists the catalogue, then drives **32 test cases** across the six composite
+lists the catalogue, then drives **35 test cases** across the seven
 tools. Unlike the offline pytest suite, this one requires the server to be
 running and (for `live` cases) the configured upstream MQ / ACE
 infrastructure to be reachable.
@@ -438,7 +474,7 @@ infrastructure to be reachable.
 ```powershell
 cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 .venv\Scripts\python.exe clients\smoke_test.py
-# Expected: pass=31  skip=1  fail=0  (skip = NODE4 unreachable, by design)
+# Expected: pass=34  skip=1  fail=0  (skip = NODE4 unreachable, by design)
 ```
 
 The exit code is `0` only when no case fails; live cases against an
@@ -476,7 +512,7 @@ classified outcome. The run ends with a column-aligned summary table:
 | `expect_warn_no_qmgr` | output contains "without \`qmgr_name\`" |
 | `expect_error_envelope` | top-level `{"status":"error"}`, or `⚠️/❌` prefix, or any `*_error` key in the JSON envelope |
 
-**The 32 cases at a glance**
+**The 35 cases at a glance**
 
 | Tool | # cases | Online | Offline | Coverage |
 | --- | --- | --- | --- | --- |
@@ -486,7 +522,8 @@ classified outcome. The run ends with a column-aligned summary table:
 | `ace_node_overview` | 4 | 3 | 1 | NODE2 live, NODE3 (empty servers edge), NODE4 (unreachable → skip), ghost-node graceful envelope |
 | `ace_server_explore` | 5 | 4 | 1 | NODE2/IS001, NODE2/IS002, NODE2/snaps, NODE2/IS001/snaplogic1 (scoped), ghost-server graceful envelope |
 | `ace_search` | 4 | 0 | 4 | nodes scope, dump scope, default `all` scope, invalid scope (`ace_search` is by design CSV-only — no live path) |
-| **Total** | **32** | **22** | **10** | |
+| `get_cert_details` | 3 | 0 | 3 | match by hostname, match by alias, no-match empty-results (CSV-only — no live path) |
+| **Total** | **35** | **22** | **13** | |
 
 **Adding or editing cases**
 
@@ -497,10 +534,11 @@ mode covers, add a branch to `classify()` further down the same file.
 
 ## Manifests are shared
 
-CSV manifests (`qmgr_dump.csv`, `node_dump.csv`, `node_config.csv`) are read
-from `../resources/` by default — the same files the root server reads. If
-your deployment puts them elsewhere, set `RESOURCES_DIR` (or the individual
-`MQ_QMGR_DUMP_PATH` / `ACE_NODE_*_PATH`) in `.env`.
+CSV manifests (`qmgr_dump.csv`, `node_dump.csv`, `node_config.csv`,
+`cert_dump.csv`) are read from `../resources/` by default — the same files the
+root server reads. If your deployment puts them elsewhere, set `RESOURCES_DIR`
+(or the individual `MQ_QMGR_DUMP_PATH` / `ACE_NODE_*_PATH` / `CERT_DUMP_PATH`)
+in `.env`.
 
 ## Logs are NOT shared
 

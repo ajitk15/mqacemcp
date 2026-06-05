@@ -782,7 +782,7 @@ function buildSlide6(I) {
 
   // 3 pillar cards
   const pillars = [
-    { tag: "Capabilities", icon: I.bigChip, sub: "Autonomous reasoning · 13 read-only tools · open MCP protocol" },
+    { tag: "Capabilities", icon: I.bigChip, sub: "Autonomous reasoning · 14 read-only tools · open MCP protocol" },
     { tag: "Controls",     icon: I.bigShield, sub: "Read-only by construction · 6-layer defence-in-depth" },
     { tag: "Craft",        icon: I.bigGear, sub: "Single-route enforcement · per-call audit · ContextVars" },
   ];

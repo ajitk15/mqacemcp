@@ -351,7 +351,7 @@ Draw four labelled boxes connected by rightward arrows:
 
 ```
 [User Chat UI]  →  [Agentic Backend]  →  [MCP Server]  →  [MQ & ACE APIs]
-(Next.js)          (FastAPI +             (13 read-only      (MQ REST API,
+(Next.js)          (FastAPI +             (14 read-only      (MQ REST API,
                     LangGraph               tools, Python)     ACE Admin REST,
                     ReAct loop,                               CSV inventories)
                     GPT-4o)
@@ -360,7 +360,7 @@ Draw four labelled boxes connected by rightward arrows:
 **Below each box — a one-line descriptor:**
 - Chat UI: "Streaming chat, tables, diagrams, session memory"
 - Agentic Backend: "LLM picks the next tool — no hard-coded routing"
-- MCP Server: "13 tools: 7 MQ + 6 ACE — all read-only"
+- MCP Server: "14 tools: 7 MQ + 6 ACE + 1 Certificate — all read-only"
 - MQ & ACE APIs: "Live data from platform REST endpoints"
 
 **Small label between Chat UI and Agentic Backend:** "SSE stream (real-time)"
@@ -512,7 +512,7 @@ Draw three rows with a left item (current state) and a rightward arrow and a rig
 > *"Every MQ and ACE question your team answers today, the agent can answer tomorrow."*
 
 ### Key Talking Points
-- Everything shown today is built and running. This is not a roadmap slide. The agent is live, connected to the MCP server, with 13 tools covering the full MQ and ACE diagnostic surface.
+- Everything shown today is built and running. This is not a roadmap slide. The agent is live, connected to the MCP server, with 14 tools covering the full MQ, ACE, and certificate diagnostic surface.
 - The three asks are not large investments — they are configuration changes, access grants, and a log-wiring exercise. No new infrastructure, no new platform.
 - The reuse story matters too: about 75% of what's been built — the agentic backend, the chat UI, the security framework, the observability stack — is reusable. The next domain (Kafka, Kubernetes, ServiceNow) replaces only the 25% that is MQ/ACE-specific. The chassis ships on day one.
 - We have a clear, measurable 30-day experiment: connect L1 and the app teams, measure how many tickets reach the admin team. We expect a material drop in the routine-diagnostic category that dominates the queue today.

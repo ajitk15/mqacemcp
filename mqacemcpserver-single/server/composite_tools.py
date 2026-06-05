@@ -7,7 +7,8 @@ answer the common MQ and ACE diagnostic intents end-to-end.
 Tool routing conventions preserved from the granular server:
 - Every MQ tool's docstring opens with `IBM MQ:`.
 - Every ACE tool's docstring opens with `IBM ACE:`.
-- Tool names start with `mq_` or `ace_`.
+- The certificate tool's docstring opens with `Certificate:`.
+- Tool names start with `mq_` or `ace_` (or are unambiguous, e.g. `get_cert_details`).
 
 Safety conventions preserved:
 - All HTTP via `mq_get`/`mq_post`/`fetch_ace` so endpoints land in the audit log.
@@ -29,6 +30,7 @@ from server.ace_helpers import (
     load_node_dump,
     search_node_dump,
 )
+from server.cert_helpers import load_cert_dump, search_certs
 from server.config import MQ_URL_BASE
 from server.logger import get_logger
 from server.mq_helpers import (
@@ -587,3 +589,55 @@ def register(mcp: FastMCP) -> None:
                 envelope["dump_matches"] = search_node_dump(search_string)
 
         return json.dumps(envelope, indent=2)
+
+    # ----- Certificates -------------------------------------------------------
+
+    @mcp.tool()
+    @logged_tool
+    def get_cert_details(search_string: str) -> str:
+        """Certificate: Look up TLS/SSL certificate details from the OFFLINE inventory (`resources/cert_dump.csv`).
+
+        Use this whenever a user asks about a certificate — its expiry,
+        validity dates, common name (CN), or alias — for a host or service.
+
+        This does NOT inspect a live certificate or endpoint; it searches the
+        cached inventory produced by the periodic extract job. Each match
+        returns: hostname, alias, cnname (the certificate's CN/subject),
+        validfrom and validuntil (the validity window, as date strings), and
+        expiry (the certificate's total validity span in days). The search
+        matches the given string (case-insensitive substring) against ALL
+        fields, so you can look up by hostname, alias, or CN.
+
+        Args:
+            search_string: Hostname, alias, or CN substring to match
+                (e.g. 'lodmq01', 'mqweb-https', 'example.com').
+        """
+        results = search_certs(search_string)
+        if not results:
+            # Distinguish "no inventory loaded" from "no matches".
+            if load_cert_dump().empty:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": "No certificate records found. cert_dump.csv may be empty or missing.",
+                        "details": {},
+                    },
+                    indent=2,
+                )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "message": f"'{search_string}' not found in the certificate inventory.",
+                    "results": [],
+                },
+                indent=2,
+            )
+
+        return json.dumps(
+            {
+                "status": "success",
+                "message": f"Found {len(results)} certificate(s) matching '{search_string}'.",
+                "results": results,
+            },
+            indent=2,
+        )

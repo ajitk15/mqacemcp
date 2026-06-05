@@ -116,8 +116,8 @@ A successful `/api/health` response now looks like:
 {
   "status": "ok",
   "mcp_sse_url": "http://localhost:8000/sse",
-  "tool_count": 13,
-  "tools": ["dspmq", "list_ace_nodes", "..."],
+  "tool_count": 14,
+  "tools": ["dspmq", "list_ace_nodes", "get_cert_details", "..."],
   "bot_domain": "IBM MQ and IBM ACE",
   "header_title": "IBM MQ and ACE assistant",
   "header_subtitle": "",

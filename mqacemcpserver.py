@@ -18,7 +18,7 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from server import ace_helpers, ace_tools, mq_helpers, mq_tools, query_log
+from server import ace_helpers, ace_tools, cert_tools, mq_helpers, mq_tools, query_log
 from server.auth import BasicAuthMiddleware
 from server.config import (
     LOG_DIR,
@@ -45,6 +45,7 @@ mcp = FastMCP("mqacemcpserver", host=MCP_HOST, port=MCP_PORT)
 
 mq_tools.register(mcp)
 ace_tools.register(mcp)
+cert_tools.register(mcp)
 
 
 async def _shutdown() -> None:

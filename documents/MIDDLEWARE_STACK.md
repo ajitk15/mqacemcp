@@ -234,6 +234,7 @@ visibility — into both halves of that stack:
 |---|---|
 | Integration layer (ACE) | `list_ace_nodes`, `get_ace_node_status`, `list_ace_servers`, `list_ace_applications`, `list_ace_message_flows`, `search_ace_local_dump` |
 | Messaging / Transport (MQ) | `find_mq_object`, `dspmq`, `dspmqver`, `runmqsc`, `run_mqsc_for_object`, `get_queue_depth`, `get_channel_status` |
+| Security / TLS (Certificates) | `get_cert_details` |
 
 An orchestrator's LLM can answer *"why is the claims feed slow tonight?"*
 by walking from the integration layer (which ACE flow? is it running?)

@@ -70,8 +70,8 @@ when reviewing whether something qualifies.
 | # | Component | This solution | File / line | Status |
 |---|---|---|---|---|
 | 1 | LLM reasoner | OpenAI GPT-4o via `langchain-openai` | `chatbot/backend/agent.py` (`ChatOpenAI(model=…)`) | ✅ |
-| 2 | Tool registry | 13 read-only IBM MQ + ACE tools loaded over MCP | `chatbot/backend/mcp_client.py` (`load_tools` → `MultiServerMCPClient.get_tools`) | ✅ |
-| 3 | Tool selector | The LLM itself, guided by tool docstrings (`IBM MQ:` / `IBM ACE:` prefix). No dispatcher code. | tool descriptions in `server/mq_tools.py`, `server/ace_tools.py`; auto-formatted into the system prompt by `_format_tool_catalog` in `agent.py` | ✅ |
+| 2 | Tool registry | 14 read-only IBM MQ + ACE + certificate tools loaded over MCP | `chatbot/backend/mcp_client.py` (`load_tools` → `MultiServerMCPClient.get_tools`) | ✅ |
+| 3 | Tool selector | The LLM itself, guided by tool docstrings (`IBM MQ:` / `IBM ACE:` / `Certificate:` prefix). No dispatcher code. | tool descriptions in `server/mq_tools.py`, `server/ace_tools.py`, `server/cert_tools.py`; auto-formatted into the system prompt by `_format_tool_catalog` in `agent.py` | ✅ |
 | 4 | Action loop | `langgraph.prebuilt.create_react_agent` — full ReAct loop (think → tool call → observe → repeat) | `chatbot/backend/agent.py` (`create_react_agent(...)`) | ✅ |
 | 5 | Short-term memory | LLM context window across the messages of one turn | implicit (LangGraph passes the full message list each step) | ✅ |
 | 6 | Session memory | LangGraph `MemorySaver` checkpointer, keyed by `thread_id` from frontend `localStorage` | `chatbot/backend/agent.py` (`checkpointer=MemorySaver()`); `chatbot/frontend/lib/session.ts` (`getOrCreateThreadId`) | ✅ in-process (deliberately; v1) |
@@ -143,7 +143,7 @@ reflection critic.
 |---|---|---|
 | Pattern family | **Agent** (not Workflow) | Control flow is LLM-decided. There is no `if intent == "mq" else …` anywhere. |
 | Loop variant | **ReAct** | Tool calls and observations are interleaved one at a time, not pre-planned. |
-| Agent count | **Single** | One catalog, 13 tools — splitting into MQ-agent + ACE-agent would add coordination overhead with no gain. |
+| Agent count | **Single** | One catalog, 14 tools — splitting into MQ-agent + ACE-agent would add coordination overhead with no gain. |
 | Statefulness | **Stateful** (session memory via `MemorySaver`) | "Now show its channels" follow-ups need carry-over context. |
 | Initiation | **Reactive** (user-driven) | Not autonomous/scheduled. The loop only runs in response to a user turn. |
 | Action class | **Read-only / advisory** | Every MCP tool is `GET`-only or modification-blocked, so no approval gate is needed. |
@@ -307,7 +307,7 @@ solution would look like for the same use case.
 | Capability | Non-agentic version | This system |
 |---|---|---|
 | Routing user intent to MQ vs ACE | Hand-written if/else on keywords | LLM picks tool from descriptions |
-| Choosing the right tool for an MQ question | Switch statement on intent label from a classifier | LLM evaluates 13 tools, picks one |
+| Choosing the right tool for an MQ question | Switch statement on intent label from a classifier | LLM evaluates 14 tools, picks one |
 | Calling multiple tools to answer one question | Pre-defined workflow per intent | LLM calls another tool after observing the first result if needed |
 | Carrying context to follow-up questions | Per-intent slot filling | LLM reads prior turns from session memory |
 | Adapting to a renamed/added tool | Code change in router | Zero code change — just restart so the new tool catalog reaches the LLM |
@@ -363,8 +363,8 @@ pre-coded logic.
 ## TL;DR (for the next time someone asks)
 
 > "It's agentic AI because at runtime the LLM is the decision-maker, not
-> the code. Every turn it picks which of the 13 IBM MQ / ACE tools to
-> call, in what order, with what arguments, and when to stop — guided
+> the code. Every turn it picks which of the 14 IBM MQ / ACE / certificate
+> tools to call, in what order, with what arguments, and when to stop — guided
 > only by tool descriptions and the conversation so far. The pattern is
 > **stateful ReAct, single agent, conversational** — Anthropic's
 > 'Agent' category, not 'Workflow'. The code around it is just plumbing:
