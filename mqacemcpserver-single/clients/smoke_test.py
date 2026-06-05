@@ -1,7 +1,7 @@
 """SSE smoke-test client for mqacemcpserver-single.
 
 Connects to the composites-only server, lists tools, then exercises each of
-the six composite tools. Mirrors the conventions of the root project's
+the seven tools. Mirrors the conventions of the root project's
 clients/test_https_client.py but the call table is tuned to this server.
 """
 from __future__ import annotations
@@ -61,6 +61,7 @@ def preview(text, limit=12):
 EXPECTED_TOOLS = {
     "mq_queue_inspect", "mq_channel_inspect", "mq_host_overview",
     "ace_node_overview", "ace_server_explore", "ace_search",
+    "get_cert_details",
 }
 
 CALLS = [
@@ -107,6 +108,11 @@ CALLS = [
     ("ace_search", {"search_string": "BIP", "scope": "dump"}, "offline"),
     ("ace_search", {"search_string": ""}, "offline"),                                              # default scope = all
     ("ace_search", {"search_string": "x", "scope": "bogus"}, "expect_error_envelope"),
+
+    # --- get_cert_details (3) -------------------------------------------------
+    ("get_cert_details", {"search_string": "lodmq01"}, "offline"),                                  # match by hostname
+    ("get_cert_details", {"search_string": "mqweb-https"}, "offline"),                              # match by alias
+    ("get_cert_details", {"search_string": "no-such-cert-anywhere"}, "offline"),                    # success, empty results
 ]
 
 
@@ -232,7 +238,7 @@ async def main():
             if extra:
                 print(f"  FAIL: unexpected tools: {sorted(extra)}")
                 return 1
-            print("  OK: catalogue == 6 expected composites")
+            print("  OK: catalogue == 7 expected tools")
 
             results = []
             for i, (name, args, mode) in enumerate(CALLS, start=1):

@@ -26,7 +26,7 @@ pip install -r requirements.txt
 $env:MCP_TRANSPORT = "sse"
 .venv\Scripts\python.exe mqacemcpserver.py
 
-# Smoke check that all 13 tools register
+# Smoke check that all 14 tools register
 .venv\Scripts\python.exe -c "import mqacemcpserver as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
 
 # Tests (pytest + pytest-asyncio installed in .venv, NOT in requirements.txt)
@@ -43,8 +43,10 @@ is imported. Do not move that fixture out of `conftest.py`, and do not import fr
 ## Big-picture architecture
 
 ### Tool routing without a dispatcher
-Every MQ tool's docstring opens with `IBM MQ:`, every ACE tool's with `IBM ACE:`.
-Tool **names** are also disambiguated (`dspmq`, `runmqsc`, `list_ace_nodes`, …).
+Every MQ tool's docstring opens with `IBM MQ:`, every ACE tool's with `IBM ACE:`,
+and the certificate tool's with `Certificate:`.
+Tool **names** are also disambiguated (`dspmq`, `runmqsc`, `list_ace_nodes`,
+`get_cert_details`, …).
 The orchestrator's LLM uses these to route — preserve both conventions whenever
 adding or renaming a tool, otherwise routing degrades silently.
 
@@ -95,10 +97,11 @@ When adding a new code path that catches an exception, route it through
   check (SSE only). Populates the `caller` field in JSONL.
 
 ### CSV manifests are offline
-`resources/qmgr_dump.csv`, `resources/node_dump.csv`, and `resources/node_config.csv`
-are extracts produced by external jobs. Tools that read them (`find_mq_object`,
-`search_ace_local_dump`) say "OFFLINE" in their docstring — the freshness
-depends on the CSV's `extractedat`/`timestamp` columns, not on a live system.
+`resources/qmgr_dump.csv`, `resources/node_dump.csv`, `resources/node_config.csv`,
+and `resources/cert_dump.csv` are extracts produced by external jobs. Tools that
+read them (`find_mq_object`, `search_ace_local_dump`, `get_cert_details`) say
+"OFFLINE" in their docstring — the freshness depends on the CSV's
+`extractedat`/`timestamp` columns (or the extract's run time), not on a live system.
 
 ### Two HTTP clients, one shutdown path
 `server/mq_helpers.py:get_http_client` and `server/ace_helpers.py:get_http_client`

@@ -11,6 +11,7 @@ Tested objects:
 - Channels: `MQQMGR2.TO.MQQMGR1`
 - ACE nodes: `NODE1`, `NODE2`, `NODE3`, `NODE4`
 - ACE server / app / flow: `IS001` / `snaplogic1` / `OrderFlow`
+- Certificates: `lodmq01` (host), `mqweb-https` (alias), `example.com` (CN) — from `resources/cert_dump.csv`
 
 ---
 
@@ -92,6 +93,12 @@ Tested objects:
 - Any past BIP errors mentioning `InvoiceFlow`?
 - Find `snaplogic1` in the ACE local dump.
 - Look up `BIP1288I` in the dump.
+
+### 14. `get_cert_details` — offline certificate inventory lookup
+- When does the certificate on `lodmq01` expire?
+- Show cert details for alias `mqweb-https`.
+- Which certificates are issued for `example.com`?
+- What's the CN and validity window on the `lotace03` certificate?
 
 ---
 

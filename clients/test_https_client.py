@@ -2,7 +2,8 @@
 SSE smoke-test client for the unified MQ + ACE MCP server (mqacemcpserver).
 
 Modelled on mqmcp/clients/test_https_client.py — same connection pattern,
-extended to call every tool the server registers (7 MQ + 6 ACE = 13 total).
+extended to call every tool the server registers
+(7 MQ + 6 ACE + 1 Certificate = 14 total).
 
 Usage
 -----
@@ -196,6 +197,7 @@ SAMPLE_ACE_NODE_LIVE = "NODE2"   # NODE2 has IS001+snaplogic1 in seed data
 SAMPLE_ACE_SERVER = "IS001"
 SAMPLE_ACE_APP = "snaplogic1"
 SAMPLE_BIP_TOKEN = "BIP"
+SAMPLE_CERT_SEARCH = "lodmq01"   # matches a hostname row in resources/cert_dump.csv
 
 
 def discover_channel_name() -> str | None:
@@ -269,6 +271,9 @@ def build_tool_table(channel_name: str | None) -> list[dict]:
         {"name": "search_ace_local_dump",
          "args": {"search_string": SAMPLE_BIP_TOKEN},
          "mode": "offline"},
+        {"name": "get_cert_details",
+         "args": {"search_string": SAMPLE_CERT_SEARCH},
+         "mode": "offline"},
     ]
     return table
 
@@ -329,6 +334,8 @@ EXPECTED_TOOLS = {
     # ACE
     "list_ace_nodes", "get_ace_node_status", "list_ace_servers",
     "list_ace_applications", "list_ace_message_flows", "search_ace_local_dump",
+    # Certificates
+    "get_cert_details",
 }
 
 

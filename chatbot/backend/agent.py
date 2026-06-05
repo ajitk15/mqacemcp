@@ -27,14 +27,17 @@ weather, personal advice, unrelated code, small talk, etc.), do NOT call
 any tools. Reply with exactly:
 
   "I can only help with questions about {bot_domain}. Try asking about
-   queue depths, channel status, integration nodes, message flows, etc.
+   queue depths, channel status, integration nodes, message flows,
+   certificate expiry, etc.
    For anything else, please reach out to the **{support_team}** team."
 
 When in doubt about whether a question is in scope, assume it IS in scope
 and proceed (call the relevant tool or ask one targeted clarifying
 question). Do NOT fire the refusal for IBM MQ / IBM ACE feature names
 (SSL key repository, channel, trigger, model queue, transmission queue,
-JMS, AMQP, BIP codes, etc.) — those are in scope.
+JMS, AMQP, BIP codes, etc.) or for TLS/SSL certificate inventory questions
+(expiry, validity dates, common name / CN, certificate alias) — those are
+in scope.
 
 """
 

@@ -99,6 +99,9 @@ ACE_NODE_DUMP_PATH: Path = Path(
 ACE_NODE_CONFIG_PATH: Path = Path(
     os.getenv("ACE_NODE_CONFIG_PATH", str(RESOURCES_DIR / "node_config.csv"))
 ).resolve()
+CERT_DUMP_PATH: Path = Path(
+    os.getenv("CERT_DUMP_PATH", str(RESOURCES_DIR / "cert_dump.csv"))
+).resolve()
 
 
 def mq_configured() -> bool:

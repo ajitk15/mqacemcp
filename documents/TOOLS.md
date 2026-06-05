@@ -370,6 +370,36 @@ flowchart TD
 
 ---
 
+## `get_cert_details` — OFFLINE certificate-inventory search
+
+```mermaid
+flowchart TD
+  A([get_cert_details<br/>search_string]):::input
+  A --> B[/Load cert_dump.csv/]:::http
+  B --> C[Substring match across all columns<br/>hostname, alias, cnname, validfrom,<br/>validuntil, expiry]:::http
+  C --> D{Any matches?}:::decision
+  D -->|yes| OK[/✅ JSON: results=[{...6 fields}]/]:::ok
+  D -->|no| E{cert_dump.csv<br/>actually loaded?}:::decision
+  E -->|no — missing/empty| X1[/❌ JSON: 'cert_dump.csv empty or missing'/]:::user
+  E -->|yes| X2[/✅ JSON: success, results=[]/]:::ok
+
+  classDef input fill:#eef2ff,stroke:#3730a3
+  classDef decision fill:#fff7ed,stroke:#9a3412
+  classDef http fill:#dbeafe,stroke:#1d4ed8
+  classDef ok fill:#dcfce7,stroke:#15803d
+  classDef user fill:#fee2e2,stroke:#b91c1c
+```
+
+Returns one row per matching certificate with `hostname`, `alias`, `cnname`
+(the CN/subject), `validfrom`, `validuntil`, and `expiry` (the validity span in
+days = `validuntil − validfrom`). The search matches the string against ALL
+columns, so a user can look up by hostname, alias, or CN. No live endpoint is
+inspected — freshness depends on the extract that produced `cert_dump.csv`.
+
+**Endpoints recorded:** none (CSV-only).
+
+---
+
 # Recovery — turning a `⚠️ … (ref <id>)` back into a root cause
 
 ```mermaid

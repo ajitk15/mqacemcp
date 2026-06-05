@@ -64,7 +64,7 @@
 
 `scripts\start-all.ps1` launches the entire stack. Components:
 
-1. **Unified MCP Server** (Python) — 13 read-only tools (7 MQ + 6 ACE) behind one endpoint.
+1. **Unified MCP Server** (Python) — 14 read-only tools (7 MQ + 6 ACE + 1 Certificate) behind one endpoint.
 2. **Agentic Backend** (FastAPI + LangGraph + GPT-4o) — the reasoning loop.
 3. **Web Chat UI** (Next.js + Tailwind) — operator interface with streaming tool steps, tables, Mermaid diagrams, session memory.
 
@@ -83,7 +83,7 @@ Mapped to the canonical agentic-AI checklist (10 of 12 components implemented):
 | Capability | How it shows up |
 |---|---|
 | **LLM reasoner** | GPT-4o picks the next step every turn |
-| **Tool registry** | 13 MQ + ACE tools auto-loaded over MCP |
+| **Tool registry** | 14 MQ + ACE + certificate tools auto-loaded over MCP |
 | **Tool selector** | The LLM itself — guided by tool docstrings, zero dispatcher code |
 | **ReAct action loop** | Think → call tool → observe → repeat, until done |
 | **Session memory** | "Now show *its* channels" works — `MemorySaver` keyed by `thread_id` |

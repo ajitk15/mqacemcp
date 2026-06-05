@@ -159,15 +159,22 @@ The same env vars can live in `.env` instead of being exported.
 | `list_ace_message_flows` | List message flows on a given integration server (optionally scoped to an application). |
 | `search_ace_local_dump` | Offline-triage search across `node_dump.csv` (BIP messages incl. flow / app / server state). |
 
+### Certificates (1 tool, all read-only)
+
+| Name | What it does |
+| --- | --- |
+| `get_cert_details` | Offline lookup of TLS/SSL certificate details from `cert_dump.csv` (hostname, alias, CN, valid-from/until, validity span in days). Searches by hostname, alias, or CN. |
+
 For a detailed per-tool walkthrough — inputs, resolution chain,
 fallback behaviour, recorded endpoints — see
 **[documents/TOOLS.md](documents/TOOLS.md)**.
 
 ## How the orchestrator routes
 
-The orchestrator's LLM sees all 13 tools. Every MQ docstring starts with
-`IBM MQ:` and every ACE docstring with `IBM ACE:`. Tool names also encode the
-product (`dspmq`, `runmqsc`, `list_ace_nodes`, etc.). When a user asks
+The orchestrator's LLM sees all 14 tools. Every MQ docstring starts with
+`IBM MQ:`, every ACE docstring with `IBM ACE:`, and the certificate docstring
+with `Certificate:`. Tool names also encode the
+product (`dspmq`, `runmqsc`, `list_ace_nodes`, `get_cert_details`, etc.). When a user asks
 *"what queues are on QM1"* the LLM picks an MQ tool; when they ask
 *"what integration servers are on NODE01"* it picks an ACE tool. No dispatcher
 inside the server.
@@ -225,7 +232,7 @@ direct ingestion into Power BI's "From Folder" connector. Schema:
 | `caller` | string \| null | SSE Basic Auth username when set; `null` otherwise |
 | `tool` | string | Tool name (`dspmq`, `runmqsc`, `list_ace_servers`, …) |
 | `args` | object | Sanitized kwargs. Keys containing `password`/`secret`/`token`/`auth`/`pwd`/`key`/`credential` are replaced with `"[REDACTED]"` |
-| `endpoints` | string[] | Ordered list of remote URLs the tool actually hit (MQ REST or ACE Admin URLs). Empty for local-only tools (`find_mq_object`, `search_ace_local_dump`, `list_ace_nodes`) and for calls short-circuited by the allow-list |
+| `endpoints` | string[] | Ordered list of remote URLs the tool actually hit (MQ REST or ACE Admin URLs). Empty for local-only tools (`find_mq_object`, `search_ace_local_dump`, `list_ace_nodes`, `get_cert_details`) and for calls short-circuited by the allow-list |
 | `outcome` | string | `success` or `error` |
 | `error` | string \| null | `TypeName: message` on failure |
 | `latency_ms` | int | End-to-end wall time |
@@ -310,9 +317,9 @@ After install:
 
 Should print:
 ```
-['dspmq', 'dspmqver', 'find_mq_object', 'get_ace_node_status', 'get_channel_status',
- 'get_queue_depth', 'list_ace_applications', 'list_ace_message_flows', 'list_ace_nodes',
- 'list_ace_servers', 'run_mqsc_for_object', 'runmqsc', 'search_ace_local_dump']
+['dspmq', 'dspmqver', 'find_mq_object', 'get_ace_node_status', 'get_cert_details',
+ 'get_channel_status', 'get_queue_depth', 'list_ace_applications', 'list_ace_message_flows',
+ 'list_ace_nodes', 'list_ace_servers', 'run_mqsc_for_object', 'runmqsc', 'search_ace_local_dump']
 ```
 
 Inspect interactively with the MCP Inspector (no network needed for offline tools):
