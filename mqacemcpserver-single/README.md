@@ -329,7 +329,7 @@ mqacemcpserver-single/
 │   ├── config.py              # env loader, with RESOURCES_DIR override pointing at ../resources/
 │   ├── mq_helpers.py          # MQ REST client, qmgr_dump.csv reader, MQSC prettifiers
 │   ├── ace_helpers.py         # ACE Admin REST client, node CSVs, fetch_ace
-│   ├── cert_helpers.py        # cert_dump.csv reader + substring search
+│   ├── cert_helpers.py        # cert_dump.csv reader + substring search + live expiry-days
 │   ├── safety.py              # hostname allow-list + modification-MQSC guard
 │   ├── errors.py              # safe_error_message — sanitises every upstream exception
 │   ├── query_log.py           # @logged_tool decorator + per-call JSONL audit log
@@ -338,14 +338,38 @@ mqacemcpserver-single/
 ├── clients/
 │   └── smoke_test.py          # 35-case live SSE smoke client (see Testing → Online smoke)
 ├── prompts/
-│   └── composite_system.md    # Reference system prompt for the orchestrator
+│   └── composite_system.md    # Reference system prompt ({scope_block}/{tool_catalog} placeholders) — see "System prompt"
 ├── tests/
 │   ├── conftest.py            # Sets temp LOG_DIR before importing server.*
-│   └── test_composite_tools.py # 21 offline tests
+│   └── test_composite_tools.py # 24 offline tests
 ├── requirements.txt           # Same as root: mcp, httpx, pandas, python-dotenv, uvicorn
 ├── .env.example               # Template; LOG_DIR=logs-single, MCP_PORT=8443 (or 8010)
 └── README.md
 ```
+
+## System prompt (`prompts/composite_system.md`)
+
+`composite_system.md` is a **reference** system prompt for whatever orchestrator
+drives this server's tools. **The MCP server itself never reads it** — this build
+is a pure tool server with no LLM. It is provided so a host can adopt the same
+routing/rendering guidance the tools were designed for.
+
+It carries two substitution placeholders (the same contract the bundled chatbot
+uses — see `chatbot/backend/agent.py`):
+
+| Placeholder | Replaced with |
+| --- | --- |
+| `{scope_block}` | A domain-guardrail block when `BOT_DOMAIN` is set (the assistant refuses out-of-scope questions and points to a support team); an **empty string** when `BOT_DOMAIN` is unset. It's the on/off switch for the scope guardrail, keeping the refusal wording centralised in the host rather than hard-coded in the prompt. |
+| `{tool_catalog}` | The bullet list of currently exposed tools, generated from the live catalogue. |
+
+Contract notes:
+- A consumer must perform the substitution before sending the prompt to the LLM.
+  The chatbot's loader (`agent.py`) **validates both placeholders are present and
+  skips any prompt file missing them**, so keep both if you point a host at this
+  file via `SYSTEM_PROMPT_FILE`.
+- If your orchestrator feeds the markdown to the model **without** substitution,
+  the literal `{scope_block}` would leak into the prompt — delete that line or
+  replace it with your own static scope instructions.
 
 ## Quickstart (Windows / PowerShell)
 
@@ -420,7 +444,7 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 .venv\Scripts\python.exe -m pytest -s
 ```
 
-### What the 21 tests cover
+### What the 24 tests cover
 
 | # | Group | Test | What it asserts |
 | --- | --- | --- | --- |
@@ -445,6 +469,9 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 | 19 | get_cert_details | `test_get_cert_details_no_match_returns_empty_results` | no-match → success envelope with empty `results` |
 | 20 | get_cert_details | `test_get_cert_details_match_returns_expected_fields` | match returns all six cert fields |
 | 21 | get_cert_details | `test_get_cert_details_searches_all_fields` | alias-only substring still matches (all-column search) |
+| 22 | ace_search | `test_ace_search_dump_pivots_cert_host_to_node` | a cert hostname (`lodace01.example.com`) resolves to its node (`NODE01`) via the aligned `node_dump.csv` |
+| 23 | get_cert_details | `test_get_cert_details_exposes_expirydays` | every match carries an integer-parseable `expirydays` (computed live) |
+| 24 | get_cert_details | `test_get_cert_details_includes_ace_nodes` | result includes `ace_nodes` — `["NODE01"]` for an ACE host, `[]` for a pure-MQ host |
 
 ### Test conventions
 
@@ -484,6 +511,26 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 
 The exit code is `0` only when no case fails; live cases against an
 unreachable upstream count as `skip`, not `fail`.
+
+**Filtering and verbosity**
+
+Positional args select a category (`mq` / `ace` / `cert`) or a tool name
+substring; dash-prefixed args control how much of each tool's output is printed
+(default: first **12** lines, then a `... (N more lines)` marker):
+
+```powershell
+# Only the certificate tool, full untruncated output
+.venv\Scripts\python.exe clients\smoke_test.py cert --full
+
+# First 30 lines of each ACE-tool result
+.venv\Scripts\python.exe clients\smoke_test.py ace --lines=30
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--full` / `-f` | Print every line of each tool's output (no truncation). |
+| `--lines=N` | Print the first `N` lines of each output. |
+| _(none)_ | Default — first 12 lines per output. |
 
 **Output format**
 
