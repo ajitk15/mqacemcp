@@ -1,6 +1,6 @@
 # MQ & ACE Chatbot — 33 Test Questions
 
-Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_dump.csv** (4 ACE integration nodes across `ACEHOST01–04`), and **cert_dump.csv** (TLS/SSL certificate inventory).
+Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_dump.csv** (4 ACE integration nodes across `lodace01`/`loqace02`/`lotace03`/`loqace04.example.com`), and **cert_dump.csv** (TLS/SSL certificate inventory).
 
 ---
 
@@ -126,7 +126,7 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_
 **Q16 — Integration node overview**
 > "List all integration nodes and their host machines."
 
-*Expected answer area:* `NODE01` on `ACEHOST01`, `NODE02` on `ACEHOST02`, `NODE03` on `ACEHOST03`, `NODE04` on `ACEHOST04`.
+*Expected answer area:* `NODE01` on `lodace01.example.com`, `NODE02` on `loqace02.example.com`, `NODE03` on `lotace03.example.com`, `NODE04` on `loqace04.example.com`.
 
 ---
 
@@ -134,9 +134,9 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_
 > "Which integration servers are currently stopped across all nodes?"
 
 *Expected answer area:*
-- `IS003` on `NODE01` (ACEHOST01) — stopped
-- `IS012` on `NODE02` (ACEHOST02) — stopped
-- `IS031` on `NODE04` (ACEHOST04) — stopped
+- `IS003` on `NODE01` (lodace01.example.com) — stopped
+- `IS012` on `NODE02` (loqace02.example.com) — stopped
+- `IS031` on `NODE04` (loqace04.example.com) — stopped
 
 ---
 
@@ -150,7 +150,7 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_
 **Q19 — Single server status**
 > "Is integration server IS011 on NODE02 running?"
 
-*Expected answer area:* Yes — `IS011` on `NODE02` (ACEHOST02) is running with application `fraud_detection` deployed.
+*Expected answer area:* Yes — `IS011` on `NODE02` (loqace02.example.com) is running with application `fraud_detection` deployed.
 
 ---
 
@@ -178,30 +178,30 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_
 > "On which nodes and servers is the application 'snaplogic1' deployed?"
 
 *Expected answer area:*
-- `IS001` on `NODE01` (ACEHOST01) — OrderFlow running, InvoiceFlow stopped
-- `IS001` on `NODE02` (ACEHOST02) — main flow running
-- `IS0033` on `NODE04` (ACEHOST04) — OrderFlow running, InvoiceFlow stopped
+- `IS001` on `NODE01` (lodace01.example.com) — OrderFlow running, InvoiceFlow stopped
+- `IS001` on `NODE02` (loqace02.example.com) — main flow running
+- `IS0033` on `NODE04` (loqace04.example.com) — OrderFlow running, InvoiceFlow stopped
 
 ---
 
 **Q23 — Specific flow status**
 > "What is the status of the FraudCheckFlow message flow?"
 
-*Expected answer area:* `FraudCheckFlow` in application `fraud_detection` on `IS011` / `NODE02` (ACEHOST02) is **running**.
+*Expected answer area:* `FraudCheckFlow` in application `fraud_detection` on `IS011` / `NODE02` (loqace02.example.com) is **running**.
 
 ---
 
 **Q24 — Notification application flows**
 > "What message flows are deployed under the notification_app application, and are they running?"
 
-*Expected answer area:* `notification_app` is on `IS032` / `NODE04` (ACEHOST04). Flows: `EmailNotifyFlow` — running, `SMSNotifyFlow` — running. Both are active.
+*Expected answer area:* `notification_app` is on `IS032` / `NODE04` (loqace04.example.com). Flows: `EmailNotifyFlow` — running, `SMSNotifyFlow` — running. Both are active.
 
 ---
 
 **Q25 — Inactive flow investigation**
 > "The InventoryPushFlow is inactive. Which server and node is it on, and what application does it belong to?"
 
-*Expected answer area:* `InventoryPushFlow` belongs to `inventory_sync`, deployed on `IS022` which is running on `NODE03` (ACEHOST03). The flow status is **inactive** — the server is up but the flow itself has been individually deactivated.
+*Expected answer area:* `InventoryPushFlow` belongs to `inventory_sync`, deployed on `IS022` which is running on `NODE03` (lotace03.example.com). The flow status is **inactive** — the server is up but the flow itself has been individually deactivated.
 
 ---
 
@@ -224,9 +224,9 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_
 ---
 
 **Q28 — Flow count per node**
-> "How many message flows are running on ACEHOST02?"
+> "How many message flows are running on loqace02.example.com?"
 
-*Expected answer area:* 2 running flows on NODE02 (ACEHOST02): `main` (snaplogic1 / IS001) and `FraudCheckFlow` (fraud_detection / IS011).
+*Expected answer area:* 2 running flows on NODE02 (loqace02.example.com): `main` (snaplogic1 / IS001) and `FraudCheckFlow` (fraud_detection / IS011).
 
 ---
 
@@ -261,8 +261,11 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_
 
 *Expected answer area:* `get_cert_details("lodmq01")` returns the cert for
 `lodmq01.example.com` (alias `mq-ssl-2026`, CN `CN=lodmq01.example.com,…`) with
-`validfrom` Mon Jan 12 2026 and `validuntil` (the expiry date) Tue Jan 12 2027.
-(Offline inventory — `resources/cert_dump.csv`.)
+`valid_from` Mon Jan 12 2026 and `valid_until` (the expiry date) Tue Jan 12
+2027. `expirydays` is computed live (days until expiry; negative if expired),
+and `ace_nodes` is empty here because `lodmq01` is a pure-MQ host. (For an ACE
+host such as `lodace01`, `ace_nodes` lists the node — e.g. `NODE01` — running
+there.) Offline inventory — `resources/cert_dump.csv` + `resources/node_dump.csv`.
 
 ---
 

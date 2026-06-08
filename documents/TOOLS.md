@@ -376,9 +376,10 @@ flowchart TD
 flowchart TD
   A([get_cert_details<br/>search_string]):::input
   A --> B[/Load cert_dump.csv/]:::http
-  B --> C[Substring match across all columns<br/>alias, cnname, validfrom,<br/>validuntil, hostname]:::http
+  B --> C[Substring match across all columns<br/>hostname, alias, cn_name,<br/>valid_from, valid_until, expirydays]:::http
   C --> D{Any matches?}:::decision
-  D -->|yes| OK[/✅ JSON: results=[{...5 fields}]/]:::ok
+  D -->|yes| N[Per match: recompute expirydays live<br/>+ add ace_nodes from node_dump.csv]:::http
+  N --> OK[/✅ JSON: results=[{...+ace_nodes}]/]:::ok
   D -->|no| E{cert_dump.csv<br/>actually loaded?}:::decision
   E -->|no — missing/empty| X1[/❌ JSON: 'cert_dump.csv empty or missing'/]:::user
   E -->|yes| X2[/✅ JSON: success, results=[]/]:::ok
@@ -390,11 +391,15 @@ flowchart TD
   classDef user fill:#fee2e2,stroke:#b91c1c
 ```
 
-Returns one row per matching certificate with `alias`, `cnname`
-(the CN/subject), `validfrom`, `validuntil` (the expiry date), and `hostname`.
-The search matches the string against ALL
-columns, so a user can look up by hostname, alias, or CN. No live endpoint is
-inspected — freshness depends on the extract that produced `cert_dump.csv`.
+Returns one row per matching certificate with `hostname`, `alias`, `cn_name`
+(the CN/subject), `valid_from`, `valid_until` (the expiry date), `expirydays`
+(whole days until expiry — recomputed live against today's date, so it stays
+accurate regardless of when the extract ran; negative means already expired),
+and `ace_nodes` (the ACE integration node(s) running on that hostname, looked up
+in `node_dump.csv` — empty for a pure-MQ host with no ACE node). The search
+matches the string against ALL columns, so a user can look up by hostname,
+alias, or CN. No live endpoint is inspected — cert/node freshness depends on the
+extracts that produced `cert_dump.csv` / `node_dump.csv`.
 
 **Endpoints recorded:** none (CSV-only).
 

@@ -238,6 +238,26 @@ def search_node_dump(search_string: str) -> list[dict]:
     return results
 
 
+def nodes_on_host(hostname: str) -> list[str]:
+    """Return the distinct ACE integration node names seen on `hostname`.
+
+    Exact (case-insensitive) match against the `host` column of the OFFLINE
+    node_dump.csv. Used to pivot a certificate's hostname to the node(s)
+    running there. Returns an empty list for a host with no ACE node (e.g. a
+    pure MQ host) or when the dump is empty/missing.
+    """
+    if not hostname:
+        return []
+    df = load_node_dump()
+    if df.empty:
+        return []
+    target = hostname.strip().lower()
+    matches = df[df["host"].astype(str).str.strip().str.lower() == target]
+    return sorted(
+        {str(n).strip() for n in matches["node"] if str(n).strip()}
+    )
+
+
 async def verify_connectivity() -> None:
     """Ping every configured ACE node once at startup; log result. Never raises."""
     df = load_node_config()

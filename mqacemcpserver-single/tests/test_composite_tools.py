@@ -177,6 +177,17 @@ def test_ace_search_dump_scope_filters_by_substring():
         assert "bip" in haystack
 
 
+def test_ace_search_dump_pivots_cert_host_to_node():
+    """A cert hostname (from get_cert_details) must resolve to its ACE node via
+    the shared node_dump.csv — the hostname columns are aligned across the
+    manifests so this cross-tool pivot works."""
+    fn = _tool("ace_search")
+    out = json.loads(fn(search_string="lodace01.example.com", scope="dump"))
+    assert out["status"] == "success"
+    assert out["dump_matches"], out
+    assert any(r["node"] == "NODE01" for r in out["dump_matches"]), out
+
+
 def test_ace_search_default_scope_returns_both_sections():
     fn = _tool("ace_search")
     out = json.loads(fn(search_string="NODE"))
@@ -222,7 +233,14 @@ def test_get_cert_details_match_returns_expected_fields():
     assert out["status"] == "success"
     assert out["results"], out
     row = out["results"][0]
-    for field in ("alias", "cnname", "validfrom", "validuntil", "hostname"):
+    for field in (
+        "hostname",
+        "alias",
+        "cn_name",
+        "valid_from",
+        "valid_until",
+        "expirydays",
+    ):
         assert field in row, f"missing {field} in {row}"
 
 
@@ -232,3 +250,21 @@ def test_get_cert_details_searches_all_fields():
     out = json.loads(fn(search_string="mqweb-https"))
     assert out["status"] == "success"
     assert any(r["alias"] == "mqweb-https" for r in out["results"]), out
+
+
+def test_get_cert_details_exposes_expirydays():
+    """expirydays must round-trip as an integer-parseable string per match."""
+    fn = _tool("get_cert_details")
+    out = json.loads(fn(search_string="lodmq01"))
+    row = out["results"][0]
+    assert "expirydays" in row
+    int(row["expirydays"])  # raises if not an integer string
+
+
+def test_get_cert_details_includes_ace_nodes():
+    """A cert result surfaces the ACE node on its host (empty for an MQ host)."""
+    fn = _tool("get_cert_details")
+    ace = json.loads(fn(search_string="lodace01"))["results"][0]
+    assert ace["ace_nodes"] == ["NODE01"], ace
+    mq = json.loads(fn(search_string="lodmq01"))["results"][0]
+    assert mq["ace_nodes"] == [], mq

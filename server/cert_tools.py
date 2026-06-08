@@ -13,6 +13,7 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
+from server.ace_helpers import nodes_on_host
 from server.cert_helpers import load_cert_dump, search_certs
 from server.logger import get_logger
 from server.query_log import logged_tool
@@ -33,9 +34,12 @@ def register(mcp: FastMCP) -> None:
 
         This does NOT inspect a live certificate or endpoint; it searches the
         cached inventory produced by the periodic extract job. Each match
-        returns: alias, cnname (the certificate's CN/subject), validfrom and
-        validuntil (the validity window, as date strings; validuntil is the
-        expiry date), and hostname.
+        returns: hostname, alias, cn_name (the certificate's CN/subject),
+        valid_from and valid_until (the validity window, as date strings;
+        valid_until is the expiry date), expirydays (whole days until expiry,
+        computed live against today — negative means already expired), and
+        ace_nodes (the ACE integration node(s) running on that hostname per the
+        offline node dump; empty for a pure-MQ host with no ACE node).
 
         The search matches the given string (case-insensitive substring)
         against ALL fields, so you can look up by hostname, alias, or CN.
@@ -45,6 +49,8 @@ def register(mcp: FastMCP) -> None:
                 (e.g. 'lodmq01', 'mqweb-https', 'example.com').
         """
         results = search_certs(search_string)
+        for row in results:
+            row["ace_nodes"] = nodes_on_host(row.get("hostname", ""))
         if not results:
             # Distinguish "no inventory loaded" from "no matches".
             if load_cert_dump().empty:

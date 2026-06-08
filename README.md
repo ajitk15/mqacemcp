@@ -163,7 +163,7 @@ The same env vars can live in `.env` instead of being exported.
 
 | Name | What it does |
 | --- | --- |
-| `get_cert_details` | Offline lookup of TLS/SSL certificate details from `cert_dump.csv` (alias, CN, valid-from/until, hostname; validuntil is the expiry date). Searches by hostname, alias, or CN. |
+| `get_cert_details` | Offline lookup of TLS/SSL certificate details from `cert_dump.csv` (hostname, alias, cn_name, valid_from/valid_until, expirydays, ace_nodes). `valid_until` is the expiry date; `expirydays` is computed live (days until expiry, negative if expired); `ace_nodes` lists the ACE node(s) running on that host (empty for a pure-MQ host). Searches by hostname, alias, or CN. |
 
 For a detailed per-tool walkthrough — inputs, resolution chain,
 fallback behaviour, recorded endpoints — see

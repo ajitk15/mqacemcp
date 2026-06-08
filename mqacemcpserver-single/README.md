@@ -190,7 +190,7 @@ message dump, in one call.
 
 **Sample user questions it answers in one call**
 - "List all integration nodes" → `search_string="", scope="nodes"`
-- "Find any node matching ACEHOST01" → `scope="nodes"`
+- "Find any node matching lodace01.example.com" → `scope="nodes"`
 - "Any BIP errors mentioning OrderFlow?" → `scope="dump"`
 - "Find BIP1290 messages" → `scope="dump"`
 - "Search every ACE source for 'snaplogic1'" → `scope="all"` (default)
@@ -211,9 +211,12 @@ message dump, in one call.
 **What it does internally**
 - `search_certs(search_string)` → case-insensitive substring search across every
   column of `cert_dump.csv`.
-- Returns a JSON envelope: `{status, message, results:[{alias, cnname,
-  validfrom, validuntil, hostname}]}`. `validuntil` is the certificate's expiry
-  date. No live endpoint is inspected.
+- Returns a JSON envelope: `{status, message, results:[{hostname, alias,
+  cn_name, valid_from, valid_until, expirydays, ace_nodes}]}`. `valid_until` is
+  the certificate's expiry date; `expirydays` is the whole-day count until it,
+  recomputed live against today (negative if already expired); `ace_nodes` is
+  the ACE node(s) running on that hostname per `node_dump.csv` (empty for a
+  pure-MQ host). No live endpoint is inspected.
 
 **Sample user questions it answers in one call**
 - "When does the certificate on lodmq01 expire?"
@@ -308,9 +311,11 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 
 ### 7. `get_cert_details` : OFFLINE certificate inventory lookup (no upstream HTTP)
 
-  7.1 `load_cert_dump` : cached read of `resources/cert_dump.csv` (used as an "empty / missing" check before searching) | in: none | out: pandas DataFrame with columns `alias, cnname, validfrom, validuntil, hostname`
+  7.1 `load_cert_dump` : cached read of `resources/cert_dump.csv` (used as an "empty / missing" check before searching) | in: none | out: pandas DataFrame with columns `hostname, alias, cn_name, valid_from, valid_until, expirydays`
 
-  7.2 `search_certs` : case-insensitive substring search across all columns of `cert_dump.csv` | in: `search_string` | out: `list[{alias, cnname, validfrom, validuntil, hostname}]`
+  7.2 `search_certs` : case-insensitive substring search across all columns of `cert_dump.csv`; recomputes `expirydays` live from `valid_until` | in: `search_string` | out: `list[{hostname, alias, cn_name, valid_from, valid_until, expirydays}]`
+
+  7.3 `nodes_on_host` (from `ace_helpers`) : distinct ACE node names on a hostname (exact match against `node_dump.csv`), used to add `ace_nodes` to each cert result | in: `hostname` | out: `list[str]`
 
 ---
 
