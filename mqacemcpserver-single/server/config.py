@@ -21,6 +21,13 @@ load_dotenv(dotenv_path=ENV_PATH)
 
 _bootstrap_logger = logging.getLogger("mqacemcpserver.config")
 
+# A standalone deployment ships its own resources/ next to the server code;
+# the mono-repo layout shares the parent repo's resources/. Detect which we're
+# in once, and base the default resource + log locations on it. Explicit env
+# overrides (RESOURCES_DIR, *_PATH, LOG_DIR) always win over these defaults.
+_STANDALONE: bool = (PROJECT_ROOT / "resources").is_dir()
+_BASE_DIR: Path = PROJECT_ROOT if _STANDALONE else PROJECT_ROOT.parent
+
 
 def _split_csv(value: str | None) -> list[str]:
     return [p.strip() for p in (value or "").split(",") if p.strip()]
@@ -54,9 +61,10 @@ if _LOG_DIR_RAW:
         os.path.expandvars(os.path.expanduser(_LOG_DIR_RAW))
     ).resolve()
 else:
-    # Default to a sibling dir of this folder so query logs don't collide with
-    # the granular-tools server. Override via LOG_DIR in .env.
-    LOG_DIR = (PROJECT_ROOT.parent / "logs-single").resolve()
+    # Default to a sibling dir so query logs don't collide with the
+    # granular-tools server. Lives next to the build for a standalone deploy,
+    # or in the parent repo for the mono-repo layout. Override via LOG_DIR.
+    LOG_DIR = (_BASE_DIR / "logs-single").resolve()
 
 LOG_RETENTION_DAYS: int = int(os.getenv("LOG_RETENTION_DAYS", "30"))
 QUERY_LOG_ENABLED: bool = os.getenv("QUERY_LOG_ENABLED", "true").strip().lower() in {
@@ -83,10 +91,11 @@ ACE_ALLOWED_HOSTNAME_PREFIXES: list[str] = _split_csv(
     os.getenv("ACE_ALLOWED_HOSTNAME_PREFIXES", "lod,loq,lot")
 )
 
-# Resource files (CSV manifests). Default to the sibling repo's resources/
-# folder so the external extract jobs feed both servers from one location.
-# Override individual paths in .env if the deployment splits them.
-_DEFAULT_RESOURCES_DIR = (PROJECT_ROOT.parent / "resources").resolve()
+# Resource files (CSV manifests). Default to the local resources/ folder for a
+# standalone deploy, else the parent repo's resources/ so the external extract
+# jobs feed both servers from one location. Override individual paths in .env
+# if the deployment splits them.
+_DEFAULT_RESOURCES_DIR = (_BASE_DIR / "resources").resolve()
 RESOURCES_DIR: Path = Path(
     os.getenv("RESOURCES_DIR", str(_DEFAULT_RESOURCES_DIR))
 ).resolve()
