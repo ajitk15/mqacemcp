@@ -187,12 +187,31 @@ even when the rest of the endpoint is gated.
 
 ```
 $ curl http://<MCP_HOST>:<MCP_PORT>/healthz
-{"status":"ok","service":"mqacemcpserver","transport":"sse","mq_configured":true,"ace_configured":true}
+{"status":"ok","service":"mqacemcpserver","transport":"sse","mq_configured":true,"ace_configured":true,
+ "manifests":[{"name":"Certificate inventory","file":"cert_dump.csv","exists":true,"rows":10,
+               "file_mtime":"2026-06-08T18:07:07","loaded_at":"2026-06-08T20:32:10","stale":false}, ...]}
 ```
 
 The `mq_configured` / `ace_configured` flags reflect whether the relevant
 env vars and CSVs are present — they do **not** ping the upstream MQ/ACE
 hosts (use the per-call query log for upstream observability).
+
+The `manifests` array reports each offline CSV's freshness: `rows` currently in
+memory, `file_mtime` (on disk), `loaded_at` (when it was last read into memory),
+and `stale` (the file changed on disk and a reload is pending on next access).
+`rows`/`loaded_at` are `null` until a tool first reads that manifest.
+
+## Data freshness (auto-reload, no restart)
+
+The four CSV manifests are replaced by a daily extract job. Each loader goes
+through `server/csv_cache.py:CsvCache`, which checks the file's `(mtime, size)`
+on every access and **reloads only when it changed** — so a daily swap is picked
+up on the next tool call **with no restart**, at the cost of one `os.stat` per
+call. If a read lands while the file is mid-write (loader fails), the cache keeps
+serving the previously-loaded data and retries on the next call.
+
+> **Ops note:** have the extract job write to a temp file and **atomically rename**
+> it into place (e.g. `os.replace`), so a reader never sees a half-written CSV.
 
 ## Tests
 

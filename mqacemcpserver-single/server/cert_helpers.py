@@ -16,6 +16,7 @@ from datetime import date, datetime
 import pandas as pd
 
 from server.config import CERT_DUMP_PATH
+from server.csv_cache import CsvCache
 from server.logger import get_logger
 
 logger = get_logger("mqacemcpserver-single.cert")
@@ -31,15 +32,12 @@ CERT_COLUMNS = [
 ]
 
 # ---------------------------------------------------------------------------
-# cert_dump.csv (offline inventory) — cached at module level
+# cert_dump.csv (offline inventory) — auto-reloads when the file changes
 # ---------------------------------------------------------------------------
-_CERT_DUMP_CACHE: pd.DataFrame | None = None
-
-
-def _load_cert_dump_from_disk() -> pd.DataFrame:
+def _load_cert_dump_from_disk() -> pd.DataFrame | None:
     if not CERT_DUMP_PATH.exists():
         logger.warning("Certificate inventory not found at %s", CERT_DUMP_PATH)
-        return pd.DataFrame()
+        return None
 
     try:
         df = pd.read_csv(
@@ -59,15 +57,17 @@ def _load_cert_dump_from_disk() -> pd.DataFrame:
         return df
     except Exception:
         logger.exception("ERROR loading certificate inventory")
-        return pd.DataFrame()
+        return None
+
+
+_cert_dump_cache = CsvCache(
+    CERT_DUMP_PATH, _load_cert_dump_from_disk, logger, "Certificate inventory"
+)
 
 
 def load_cert_dump() -> pd.DataFrame:
-    """Return the cached certificate inventory, loading from disk on first call."""
-    global _CERT_DUMP_CACHE
-    if _CERT_DUMP_CACHE is None:
-        _CERT_DUMP_CACHE = _load_cert_dump_from_disk()
-    return _CERT_DUMP_CACHE
+    """Return the certificate inventory, reloading if the CSV changed on disk."""
+    return _cert_dump_cache.get()
 
 
 # ---------------------------------------------------------------------------

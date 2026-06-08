@@ -284,7 +284,7 @@ pass headers when constructing the SSE transport.
 | Path | Auth | Purpose |
 | --- | --- | --- |
 | `GET /sse` | Basic Auth (when configured) | The MCP SSE endpoint — every client points here |
-| `GET /healthz` | None — auth is bypassed by design | Liveness/readiness for load balancers and monitors |
+| `GET /healthz` | None — auth is bypassed by design | Liveness/readiness for load balancers and monitors; also reports each CSV manifest's freshness under `"manifests"` (`rows`, `file_mtime`, `loaded_at`, `stale`) |
 
 Headers expected on `/sse`:
 ```

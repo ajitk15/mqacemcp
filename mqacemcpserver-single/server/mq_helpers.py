@@ -20,6 +20,7 @@ from server.config import (
     MQ_USER_NAME,
 )
 from server.errors import safe_error_message
+from server.csv_cache import CsvCache
 from server.logger import get_logger
 from server.query_log import record_endpoint
 from server.safety import is_hostname_allowed
@@ -58,13 +59,10 @@ async def mq_post(url: str, **kwargs):
     return await get_http_client().post(url, **kwargs)
 
 
-_CSV_CACHE: pd.DataFrame | None = None
-
-
-def _load_csv_from_disk() -> pd.DataFrame:
+def _load_csv_from_disk() -> pd.DataFrame | None:
     if not MQ_QMGR_DUMP_PATH.exists():
         logger.warning("MQ manifest not found at %s", MQ_QMGR_DUMP_PATH)
-        return pd.DataFrame()
+        return None
 
     try:
         df = pd.read_csv(
@@ -90,15 +88,15 @@ def _load_csv_from_disk() -> pd.DataFrame:
         return df
     except Exception:
         logger.exception("ERROR loading MQ manifest")
-        return pd.DataFrame()
+        return None
+
+
+_csv_cache = CsvCache(MQ_QMGR_DUMP_PATH, _load_csv_from_disk, logger, "MQ manifest")
 
 
 def load_csv() -> pd.DataFrame:
-    """Return the cached MQ manifest dataframe, loading from disk on first call."""
-    global _CSV_CACHE
-    if _CSV_CACHE is None:
-        _CSV_CACHE = _load_csv_from_disk()
-    return _CSV_CACHE
+    """Return the MQ manifest dataframe, reloading if the CSV changed on disk."""
+    return _csv_cache.get()
 
 
 def build_url(target_hostname: str, path: str) -> str:

@@ -19,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 
 from server import ace_helpers, composite_tools, mq_helpers, query_log
 from server.auth import BasicAuthMiddleware
+from server.csv_cache import all_status as manifest_status
 from server.config import (
     LOG_DIR,
     MCP_AUTH_PASSWORD,
@@ -64,6 +65,7 @@ async def _healthz_app(scope, receive, send) -> None:
         "transport": MCP_TRANSPORT,
         "mq_configured": mq_configured(),
         "ace_configured": ace_configured(),
+        "manifests": manifest_status(),
     }
     body = json.dumps(payload).encode("utf-8")
     await send(

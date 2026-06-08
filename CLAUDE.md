@@ -96,12 +96,22 @@ When adding a new code path that catches an exception, route it through
 - `_current_caller` — set by `BasicAuthMiddleware` after a successful Basic Auth
   check (SSE only). Populates the `caller` field in JSONL.
 
-### CSV manifests are offline
+### CSV manifests are offline (and auto-reload on change)
 `resources/qmgr_dump.csv`, `resources/node_dump.csv`, `resources/node_config.csv`,
 and `resources/cert_dump.csv` are extracts produced by external jobs. Tools that
 read them (`find_mq_object`, `search_ace_local_dump`, `get_cert_details`) say
 "OFFLINE" in their docstring — the freshness depends on the CSV's
 `extractedat`/`timestamp` columns (or the extract's run time), not on a live system.
+
+These are replaced by a daily extract job, so the loaders **must not** cache
+load-once-forever. Every `load_*` goes through `server/csv_cache.py:CsvCache`,
+which `stat()`s the file on each access and reloads only when `(mtime, size)`
+changed — the daily swap is picked up on the next call **with no restart**. When
+adding a manifest, wrap its `_load_*_from_disk` (which returns `None` on
+missing/parse-error so the cache keeps last-good) in a `CsvCache` and keep the
+public `load_*()` returning `cache.get()`. Do **not** reintroduce a
+`if _CACHE is None` global. `/healthz` exposes per-manifest freshness via
+`csv_cache.all_status()`.
 
 ### Two HTTP clients, one shutdown path
 `server/mq_helpers.py:get_http_client` and `server/ace_helpers.py:get_http_client`

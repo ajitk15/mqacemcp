@@ -14,6 +14,7 @@ from server.config import (
     ACE_PASSWORD,
     ACE_USER_NAME,
 )
+from server.csv_cache import CsvCache
 from server.errors import safe_error_message
 from server.logger import get_logger
 from server.query_log import record_endpoint
@@ -45,15 +46,12 @@ async def aclose_http_client() -> None:
 
 
 # ---------------------------------------------------------------------------
-# node_dump.csv (offline inventory) — cached
+# node_dump.csv (offline inventory) — auto-reloads when the file changes
 # ---------------------------------------------------------------------------
-_NODE_DUMP_CACHE: pd.DataFrame | None = None
-
-
-def _load_node_dump_from_disk() -> pd.DataFrame:
+def _load_node_dump_from_disk() -> pd.DataFrame | None:
     if not ACE_NODE_DUMP_PATH.exists():
         logger.warning("ACE node dump not found at %s", ACE_NODE_DUMP_PATH)
-        return pd.DataFrame()
+        return None
 
     try:
         df = pd.read_csv(
@@ -81,26 +79,25 @@ def _load_node_dump_from_disk() -> pd.DataFrame:
         return df
     except Exception:
         logger.exception("ERROR loading ACE node dump")
-        return pd.DataFrame()
+        return None
+
+
+_node_dump_cache = CsvCache(
+    ACE_NODE_DUMP_PATH, _load_node_dump_from_disk, logger, "ACE node dump"
+)
 
 
 def load_node_dump() -> pd.DataFrame:
-    global _NODE_DUMP_CACHE
-    if _NODE_DUMP_CACHE is None:
-        _NODE_DUMP_CACHE = _load_node_dump_from_disk()
-    return _NODE_DUMP_CACHE
+    return _node_dump_cache.get()
 
 
 # ---------------------------------------------------------------------------
-# node_config.csv (node → host:port mapping) — cached
+# node_config.csv (node → host:port mapping) — auto-reloads when file changes
 # ---------------------------------------------------------------------------
-_NODE_CONFIG_CACHE: pd.DataFrame | None = None
-
-
-def _load_node_config_from_disk() -> pd.DataFrame:
+def _load_node_config_from_disk() -> pd.DataFrame | None:
     if not ACE_NODE_CONFIG_PATH.exists():
         logger.warning("ACE node config not found at %s", ACE_NODE_CONFIG_PATH)
-        return pd.DataFrame()
+        return None
 
     try:
         df = pd.read_csv(
@@ -121,14 +118,16 @@ def _load_node_config_from_disk() -> pd.DataFrame:
         return df
     except Exception:
         logger.exception("ERROR loading ACE node config")
-        return pd.DataFrame()
+        return None
+
+
+_node_config_cache = CsvCache(
+    ACE_NODE_CONFIG_PATH, _load_node_config_from_disk, logger, "ACE node config"
+)
 
 
 def load_node_config() -> pd.DataFrame:
-    global _NODE_CONFIG_CACHE
-    if _NODE_CONFIG_CACHE is None:
-        _NODE_CONFIG_CACHE = _load_node_config_from_disk()
-    return _NODE_CONFIG_CACHE
+    return _node_config_cache.get()
 
 
 def get_node_endpoint(node: str) -> tuple[str, int]:

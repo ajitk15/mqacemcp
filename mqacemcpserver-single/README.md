@@ -330,6 +330,7 @@ mqacemcpserver-single/
 │   ├── mq_helpers.py          # MQ REST client, qmgr_dump.csv reader, MQSC prettifiers
 │   ├── ace_helpers.py         # ACE Admin REST client, node CSVs, fetch_ace
 │   ├── cert_helpers.py        # cert_dump.csv reader + substring search + live expiry-days
+│   ├── csv_cache.py           # mtime-based auto-reload cache for all CSV manifests (+ /healthz freshness)
 │   ├── safety.py              # hostname allow-list + modification-MQSC guard
 │   ├── errors.py              # safe_error_message — sanitises every upstream exception
 │   ├── query_log.py           # @logged_tool decorator + per-call JSONL audit log
@@ -341,7 +342,8 @@ mqacemcpserver-single/
 │   └── composite_system.md    # Reference system prompt ({scope_block}/{tool_catalog} placeholders) — see "System prompt"
 ├── tests/
 │   ├── conftest.py            # Sets temp LOG_DIR before importing server.*
-│   └── test_composite_tools.py # 24 offline tests
+│   ├── test_composite_tools.py # 24 offline tests
+│   └── test_csv_cache.py      # 4 tests — manifest auto-reload + freshness
 ├── requirements.txt           # Same as root: mcp, httpx, pandas, python-dotenv, uvicorn
 ├── .env.example               # Template; LOG_DIR=logs-single, MCP_PORT=8443 (or 8010)
 └── README.md
@@ -591,6 +593,20 @@ CSV manifests (`qmgr_dump.csv`, `node_dump.csv`, `node_config.csv`,
 root server reads. If your deployment puts them elsewhere, set `RESOURCES_DIR`
 (or the individual `MQ_QMGR_DUMP_PATH` / `ACE_NODE_*_PATH` / `CERT_DUMP_PATH`)
 in `.env`.
+
+### Auto-reload (no restart)
+
+The manifests are replaced by a daily extract job. Each loader goes through
+`server/csv_cache.py:CsvCache`, which checks the file's `(mtime, size)` on every
+access and **reloads only when it changed** — so the daily swap is reflected on
+the next tool call **without restarting the server** (one `os.stat` per access;
+re-parsed only when the file actually changes). A read that lands mid-write keeps
+serving the previously-loaded data and retries next call. `GET /healthz` exposes
+per-manifest freshness under `"manifests"` (`rows`, `file_mtime`, `loaded_at`,
+`stale`).
+
+> **Ops note:** have the extract job write a temp file and **atomically rename**
+> it into place (e.g. `os.replace`) so readers never see a half-written CSV.
 
 ## Logs are NOT shared
 
