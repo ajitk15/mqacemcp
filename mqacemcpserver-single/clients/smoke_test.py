@@ -51,10 +51,12 @@ def heading(text):
 
 
 def preview(text, limit=12):
+    """Print an indented preview of `text`. `limit=None` prints every line."""
     lines = text.split("\n")
-    for line in lines[:limit]:
+    shown = lines if limit is None else lines[:limit]
+    for line in shown:
         print(f"    {line}")
-    if len(lines) > limit:
+    if limit is not None and len(lines) > limit:
         print(f"    ... ({len(lines) - limit} more lines)")
 
 
@@ -267,6 +269,18 @@ async def main():
             print("  OK: catalogue == 7 expected tools")
 
             selectors = [a for a in sys.argv[1:] if not a.startswith("-")]
+            flags = [a for a in sys.argv[1:] if a.startswith("-")]
+            # Preview verbosity: default 12 lines; --full shows everything,
+            # --lines=N shows N lines.
+            preview_limit = 12
+            for f in flags:
+                if f in ("--full", "-f"):
+                    preview_limit = None
+                elif f.startswith("--lines="):
+                    try:
+                        preview_limit = int(f.split("=", 1)[1])
+                    except ValueError:
+                        pass
             calls = select_calls(CALLS, selectors)
             if selectors:
                 print(f"\n[Filter: {selectors} -> {len(calls)}/{len(CALLS)} calls]")
@@ -281,7 +295,7 @@ async def main():
                 try:
                     res = await session.call_tool(name, args)
                     text = res.content[0].text if res.content and getattr(res.content[0], "text", None) else ""
-                    preview(text)
+                    preview(text, preview_limit)
                     outcome, reason = classify(text, mode)
                     results.append((i, name, mode, outcome, reason))
                     print(f"  -> {outcome}{(' (' + reason + ')') if reason else ''}")
