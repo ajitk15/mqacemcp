@@ -20,7 +20,7 @@ from server.logger import get_logger
 logger = get_logger("mqacemcpserver.cert")
 
 # Column order as produced by the extract job (used to key result rows).
-CERT_COLUMNS = ["hostname", "alias", "cnname", "validfrom", "validuntil", "expiry"]
+CERT_COLUMNS = ["alias", "cnname", "validfrom", "validuntil", "hostname"]
 
 # ---------------------------------------------------------------------------
 # cert_dump.csv (offline inventory) — cached at module level

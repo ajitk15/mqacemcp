@@ -602,11 +602,11 @@ def register(mcp: FastMCP) -> None:
 
         This does NOT inspect a live certificate or endpoint; it searches the
         cached inventory produced by the periodic extract job. Each match
-        returns: hostname, alias, cnname (the certificate's CN/subject),
-        validfrom and validuntil (the validity window, as date strings), and
-        expiry (the certificate's total validity span in days). The search
-        matches the given string (case-insensitive substring) against ALL
-        fields, so you can look up by hostname, alias, or CN.
+        returns: alias, cnname (the certificate's CN/subject), validfrom and
+        validuntil (the validity window, as date strings; validuntil is the
+        expiry date), and hostname. The search matches the given string
+        (case-insensitive substring) against ALL fields, so you can look up by
+        hostname, alias, or CN.
 
         Args:
             search_string: Hostname, alias, or CN substring to match

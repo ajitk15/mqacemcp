@@ -222,7 +222,7 @@ def test_get_cert_details_match_returns_expected_fields():
     assert out["status"] == "success"
     assert out["results"], out
     row = out["results"][0]
-    for field in ("hostname", "alias", "cnname", "validfrom", "validuntil", "expiry"):
+    for field in ("alias", "cnname", "validfrom", "validuntil", "hostname"):
         assert field in row, f"missing {field} in {row}"
 
 

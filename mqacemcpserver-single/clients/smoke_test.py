@@ -116,6 +116,32 @@ CALLS = [
 ]
 
 
+# Category selectors for the optional CLI filter (see select_calls).
+_CATEGORY = {
+    "mq": lambda n: n.startswith("mq_"),
+    "ace": lambda n: n.startswith("ace_"),
+    "cert": lambda n: "cert" in n,
+}
+
+
+def select_calls(calls, selectors):
+    """Filter CALLS by CLI selectors.
+
+    Each selector is either a category keyword ('mq', 'ace', 'cert') or an
+    exact / substring tool name (e.g. 'mq_queue_inspect', 'overview'). A call
+    is kept if it matches ANY selector. Empty selectors -> run everything.
+    """
+    if not selectors:
+        return list(calls)
+
+    def matches(name, sel):
+        if sel in _CATEGORY:
+            return _CATEGORY[sel](name)
+        return sel == name or sel in name
+
+    return [c for c in calls if any(matches(c[0], s) for s in selectors)]
+
+
 def classify(text, mode):
     s = text.lstrip()
     is_warn = s.startswith("⚠️") or s.startswith("⚠")
@@ -240,8 +266,17 @@ async def main():
                 return 1
             print("  OK: catalogue == 7 expected tools")
 
+            selectors = [a for a in sys.argv[1:] if not a.startswith("-")]
+            calls = select_calls(CALLS, selectors)
+            if selectors:
+                print(f"\n[Filter: {selectors} -> {len(calls)}/{len(CALLS)} calls]")
+                if not calls:
+                    print(f"  No calls match {selectors}. "
+                          f"Use a category (mq/ace/cert) or a tool name.")
+                    return 1
+
             results = []
-            for i, (name, args, mode) in enumerate(CALLS, start=1):
+            for i, (name, args, mode) in enumerate(calls, start=1):
                 heading(f"[{i}] {name}  ({mode})  args={json.dumps(args)}")
                 try:
                     res = await session.call_tool(name, args)

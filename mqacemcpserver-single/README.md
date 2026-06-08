@@ -211,9 +211,9 @@ message dump, in one call.
 **What it does internally**
 - `search_certs(search_string)` → case-insensitive substring search across every
   column of `cert_dump.csv`.
-- Returns a JSON envelope: `{status, message, results:[{hostname, alias, cnname,
-  validfrom, validuntil, expiry}]}`. `expiry` is the certificate's total validity
-  span in days (`validuntil − validfrom`). No live endpoint is inspected.
+- Returns a JSON envelope: `{status, message, results:[{alias, cnname,
+  validfrom, validuntil, hostname}]}`. `validuntil` is the certificate's expiry
+  date. No live endpoint is inspected.
 
 **Sample user questions it answers in one call**
 - "When does the certificate on lodmq01 expire?"
@@ -308,9 +308,9 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 
 ### 7. `get_cert_details` : OFFLINE certificate inventory lookup (no upstream HTTP)
 
-  7.1 `load_cert_dump` : cached read of `resources/cert_dump.csv` (used as an "empty / missing" check before searching) | in: none | out: pandas DataFrame with columns `hostname, alias, cnname, validfrom, validuntil, expiry`
+  7.1 `load_cert_dump` : cached read of `resources/cert_dump.csv` (used as an "empty / missing" check before searching) | in: none | out: pandas DataFrame with columns `alias, cnname, validfrom, validuntil, hostname`
 
-  7.2 `search_certs` : case-insensitive substring search across all columns of `cert_dump.csv` | in: `search_string` | out: `list[{hostname, alias, cnname, validfrom, validuntil, expiry}]`
+  7.2 `search_certs` : case-insensitive substring search across all columns of `cert_dump.csv` | in: `search_string` | out: `list[{alias, cnname, validfrom, validuntil, hostname}]`
 
 ---
 

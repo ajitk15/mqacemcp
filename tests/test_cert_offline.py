@@ -5,7 +5,7 @@ No real HTTP — `get_cert_details` is a pure OFFLINE lookup over
 - Tool registration + the `Certificate:` routing prefix.
 - Substring search across hostname / alias / CN columns.
 - The JSON-envelope contract (success-with-results, success-empty, and the
-  six expected columns per row).
+  five expected columns per row).
 
 The shared `resources/cert_dump.csv` ships rows like `lodmq01.example.com`
 with alias `mq-ssl-2026` — those are load-bearing for the assertions below.
@@ -17,7 +17,7 @@ import json
 import mqacemcpserver  # noqa: F401 — importing registers the tools
 from server import cert_helpers
 
-CERT_FIELDS = ("hostname", "alias", "cnname", "validfrom", "validuntil", "expiry")
+CERT_FIELDS = ("alias", "cnname", "validfrom", "validuntil", "hostname")
 
 
 def _tool(name: str):

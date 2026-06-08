@@ -261,8 +261,8 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_
 
 *Expected answer area:* `get_cert_details("lodmq01")` returns the cert for
 `lodmq01.example.com` (alias `mq-ssl-2026`, CN `CN=lodmq01.example.com,…`) with
-`validfrom` Mon Jan 12 2026, `validuntil` Tue Jan 12 2027, and an `expiry` span
-of 365 days. (Offline inventory — `resources/cert_dump.csv`.)
+`validfrom` Mon Jan 12 2026 and `validuntil` (the expiry date) Tue Jan 12 2027.
+(Offline inventory — `resources/cert_dump.csv`.)
 
 ---
 
