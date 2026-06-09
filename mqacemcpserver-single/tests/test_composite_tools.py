@@ -92,6 +92,26 @@ def test_mq_queue_inspect_fast_path_rejects_disallowed_host():
     assert "not in the allowed list" in result, result
 
 
+def test_mq_queue_inspect_local_queue_displays_all_attributes(monkeypatch):
+    """A local-queue inspect must fetch the FULL attribute set (DISPLAY QLOCAL
+    ... ALL) so property questions (persistence, MAXMSGL, CRDATE, …) can be
+    answered — not just the old fixed CURDEPTH/MAXDEPTH/... subset."""
+    from server import composite_tools
+
+    captured: list[str] = []
+
+    async def fake_run_mqsc_raw(qmgr, mqsc, hostname):
+        captured.append(mqsc)
+        return f"[stub] {mqsc}"
+
+    monkeypatch.setattr(composite_tools, "run_mqsc_raw", fake_run_mqsc_raw)
+    fn = _tool("mq_queue_inspect")
+    # FAST PATH on an allow-listed host so we reach the MQSC call.
+    asyncio.run(fn(queue_name="QL.TEST", qmgr_name="QMTEST", hostname="loq-mq01"))
+
+    assert any("DISPLAY QLOCAL(QL.TEST) ALL" in m for m in captured), captured
+
+
 # ---------------------------------------------------------------------------
 # mq_channel_inspect — discovery + allow-list branches
 # ---------------------------------------------------------------------------

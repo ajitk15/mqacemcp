@@ -36,7 +36,9 @@ Each tool keeps the same safety contract as the root server:
 ### 1. `mq_queue_inspect`
 
 **IBM MQ.** Inspect a queue end-to-end in a single call. Bundles manifest
-discovery + alias resolution + depth and key-attribute fetch.
+discovery + alias resolution + a **full attribute fetch** (`DISPLAY QLOCAL … ALL`),
+so it answers any queue-property question (depth, persistence `DEFPSIST`,
+`MAXMSGL`, priority, get/put, triggering, creation / last-altered dates, …).
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -45,9 +47,9 @@ discovery + alias resolution + depth and key-attribute fetch.
 | `hostname` | `str` | no | Explicit host. Wins over manifest lookup when both are present. |
 
 **What it does internally**
-- If `qmgr_name` is supplied → resolves host, allow-list check, runs `DISPLAY QLOCAL` / `QALIAS` / `QREMOTE` (chosen by prefix or `object_type`) on that QM only.
+- If `qmgr_name` is supplied → resolves host, allow-list check, runs `DISPLAY QLOCAL(<Q>) ALL` / `QALIAS` / `QREMOTE(<Q>) ALL` (chosen by prefix or `object_type`) on that QM only.
 - Otherwise → searches `qmgr_dump.csv`, branches on count of hosting QMs, runs the inspection per accessible QM.
-- For `QA.*` aliases: runs `DISPLAY QALIAS(<Q>)`, parses `TARGET(...)`, then runs `DISPLAY QLOCAL(<target>) CURDEPTH MAXDEPTH IPPROCS OPPROCS TRIGGER TRIGTYPE`.
+- For `QA.*` aliases: runs `DISPLAY QALIAS(<Q>)`, parses `TARGET(...)`, then runs `DISPLAY QLOCAL(<target>) ALL` (the target's full attribute set).
 - Restricted hosts are surfaced explicitly (never "does not exist").
 
 **Sample user questions it answers in one call**
@@ -55,6 +57,8 @@ discovery + alias resolution + depth and key-attribute fetch.
 - "Depth of QL.ORDERS on MQQMGR1"
 - "Where is QL.IN.APP1 hosted?"
 - "Is QL.IN.APP1 triggered?"
+- "What is the persistence of QL.IN.APP1?" (reads `DEFPSIST` from the full attrs)
+- "When was QL.IN.APP1 created / last altered?" (`CRDATE CRTIME` / `ALTDATE ALTTIME`)
 - "Open handles / IPPROCS / OPPROCS on QL.ORDERS on QM1"
 - "What's the max depth of QL.ORDERS?"
 - "Resolve alias QA.IN.APP1 and give me its target's depth"
@@ -235,7 +239,7 @@ Helpers prefixed with `_` are private to `server/composite_tools.py`. All
 others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 `server/safety.py`, or `server/errors.py`.
 
-### 1. `mq_queue_inspect` : inspect a queue end-to-end (manifest discovery + alias resolution + depth/attrs)
+### 1. `mq_queue_inspect` : inspect a queue end-to-end (manifest discovery + alias resolution + full attrs via `DISPLAY QLOCAL … ALL`)
 
   1.1 `_resolve_target_host` : look up the hostname for a known QM (FAST PATH only) | in: `qmgr_name`, optional `explicit_hostname` | out: `(hostname: str | None, error_message: str | None)`
 
@@ -337,12 +341,12 @@ mqacemcpserver-single/
 │   ├── logger.py              # rotating app log
 │   └── auth.py                # SSE Basic Auth middleware
 ├── clients/
-│   └── smoke_test.py          # 35-case live SSE smoke client (see Testing → Online smoke)
+│   └── smoke_test.py          # 37-case live SSE smoke client (see Testing → Online smoke)
 ├── prompts/
 │   └── composite_system.md    # Reference system prompt ({scope_block}/{tool_catalog} placeholders) — see "System prompt"
 ├── tests/
 │   ├── conftest.py            # Sets temp LOG_DIR before importing server.*
-│   ├── test_composite_tools.py # 24 offline tests
+│   ├── test_composite_tools.py # 25 offline tests
 │   └── test_csv_cache.py      # 4 tests — manifest auto-reload + freshness
 ├── requirements.txt           # Same as root: mcp, httpx, pandas, python-dotenv, uvicorn
 ├── .env.example               # Template; LOG_DIR=logs-single, MCP_PORT=8443 (or 8010)
@@ -398,7 +402,7 @@ $env:MCP_TRANSPORT = "sse"
 # Smoke check — must print exactly 7 tool names
 .venv\Scripts\python.exe -c "import single_server as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
 
-# Live smoke test (35 cases via SSE) — see "Testing → Online smoke" below
+# Live smoke test (37 cases via SSE) — see "Testing → Online smoke" below
 .venv\Scripts\python.exe clients\smoke_test.py
 ```
 
@@ -446,7 +450,7 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 .venv\Scripts\python.exe -m pytest -s
 ```
 
-### What the 24 tests cover
+### What the 25 tests cover
 
 | # | Group | Test | What it asserts |
 | --- | --- | --- | --- |
@@ -474,6 +478,7 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 | 22 | ace_search | `test_ace_search_dump_pivots_cert_host_to_node` | a cert hostname (`lodace01.example.com`) resolves to its node (`NODE01`) via the aligned `node_dump.csv` |
 | 23 | get_cert_details | `test_get_cert_details_exposes_expirydays` | every match carries an integer-parseable `expirydays` (computed live) |
 | 24 | get_cert_details | `test_get_cert_details_includes_ace_nodes` | result includes `ace_nodes` — `["NODE01"]` for an ACE host, `[]` for a pure-MQ host |
+| 25 | mq_queue_inspect | `test_mq_queue_inspect_local_queue_displays_all_attributes` | a local-queue inspect issues `DISPLAY QLOCAL(<Q>) ALL` (full attribute set, not the old fixed subset) |
 
 ### Test conventions
 
@@ -492,7 +497,7 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 ### Online smoke (clients/smoke_test.py)
 
 A separate live-deployment smoke client that opens an MCP SSE session,
-lists the catalogue, then drives **35 test cases** across the seven
+lists the catalogue, then drives **37 test cases** across the seven
 tools. Unlike the offline pytest suite, this one requires the server to be
 running and (for `live` cases) the configured upstream MQ / ACE
 infrastructure to be reachable.
@@ -508,7 +513,7 @@ infrastructure to be reachable.
 ```powershell
 cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 .venv\Scripts\python.exe clients\smoke_test.py
-# Expected: pass=34  skip=1  fail=0  (skip = NODE4 unreachable, by design)
+# Expected: pass=36  skip=1  fail=0  (skip = NODE4 unreachable, by design)
 ```
 
 The exit code is `0` only when no case fails; live cases against an
@@ -566,18 +571,18 @@ classified outcome. The run ends with a column-aligned summary table:
 | `expect_warn_no_qmgr` | output contains "without \`qmgr_name\`" |
 | `expect_error_envelope` | top-level `{"status":"error"}`, or `⚠️/❌` prefix, or any `*_error` key in the JSON envelope |
 
-**The 35 cases at a glance**
+**The 37 cases at a glance**
 
 | Tool | # cases | Online | Offline | Coverage |
 | --- | --- | --- | --- | --- |
-| `mq_queue_inspect` | 4 | 3 | 1 | discovery, FAST PATH, alias resolution, sanitised "not found" |
+| `mq_queue_inspect` | 5 | 4 | 1 | discovery, FAST PATH, alias resolution, remote-queue routing (QR.IN.APP2 → RQMNAME/RNAME/XMITQ), sanitised "not found" |
 | `mq_channel_inspect` | 3 | 2 | 1 | discovery, FAST PATH, sanitised "not found" |
-| `mq_host_overview` | 12 | 10 | 2 | default URL, manifest-resolved host, `DISPLAY QMGR ALL`, full queue properties, max depth + thresholds, focused QMGR properties, topics, topic status, subscriptions, subscription status, `MODIFY_BLOCKED_MSG` over the wire, "without `qmgr_name`" warning |
+| `mq_host_overview` | 13 | 11 | 2 | default URL, manifest-resolved host, `DISPLAY QMGR ALL`, full queue properties, max depth + thresholds, queue creation date (`CRDATE CRTIME`), focused QMGR properties, topics, topic status, subscriptions, subscription status, `MODIFY_BLOCKED_MSG` over the wire, "without `qmgr_name`" warning |
 | `ace_node_overview` | 4 | 3 | 1 | NODE2 live, NODE3 (empty servers edge), NODE4 (unreachable → skip), ghost-node graceful envelope |
 | `ace_server_explore` | 5 | 4 | 1 | NODE2/IS001, NODE2/IS002, NODE2/snaps, NODE2/IS001/snaplogic1 (scoped), ghost-server graceful envelope |
 | `ace_search` | 4 | 0 | 4 | nodes scope, dump scope, default `all` scope, invalid scope (`ace_search` is by design CSV-only — no live path) |
 | `get_cert_details` | 3 | 0 | 3 | match by hostname, match by alias, no-match empty-results (CSV-only — no live path) |
-| **Total** | **35** | **22** | **13** | |
+| **Total** | **37** | **24** | **13** | |
 
 **Adding or editing cases**
 

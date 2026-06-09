@@ -67,10 +67,11 @@ EXPECTED_TOOLS = {
 }
 
 CALLS = [
-    # --- mq_queue_inspect (4) -------------------------------------------------
+    # --- mq_queue_inspect (5) -------------------------------------------------
     ("mq_queue_inspect", {"queue_name": "QL.IN.APP1"}, "live"),
     ("mq_queue_inspect", {"queue_name": "QL.IN.APP1", "qmgr_name": "MQQMGR2"}, "live"),
     ("mq_queue_inspect", {"queue_name": "QA.IN.APP1", "qmgr_name": "MQQMGR2"}, "live"),
+    ("mq_queue_inspect", {"queue_name": "QR.IN.APP2", "qmgr_name": "MQQMGR2"}, "live"),              # remote queue -> routing (RQMNAME/RNAME/XMITQ)
     ("mq_queue_inspect", {"queue_name": "NOPE.DOES.NOT.EXIST"}, "expect_not_found"),
 
     # --- mq_channel_inspect (3) -----------------------------------------------
@@ -78,12 +79,13 @@ CALLS = [
     ("mq_channel_inspect", {"channel_name": "MQQMGR2.TO.MQQMGR1", "qmgr_name": "MQQMGR2"}, "live"),
     ("mq_channel_inspect", {"channel_name": "CH.UNKNOWN.XYZ"}, "expect_not_found"),
 
-    # --- mq_host_overview (12) ------------------------------------------------
+    # --- mq_host_overview (13) ------------------------------------------------
     ("mq_host_overview", {}, "live"),                                                              # default MQ_URL_BASE
     ("mq_host_overview", {"qmgr_name": "MQQMGR2"}, "live"),                                        # resolved via manifest
     ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QMGR ALL"}, "live"),    # + read-only DISPLAY
     ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) ALL"}, "live"),                                       # full queue properties
     ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) MAXDEPTH CURDEPTH QDEPTHHI QDEPTHLO"}, "live"),       # max depth + thresholds
+    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) CRDATE CRTIME"}, "live"),                             # queue creation date/time
     ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QMGR DEADQ DEFXMITQ MAXMSGL MAXHANDS CCSID"}, "live"),                   # focused QMGR properties
     ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY TOPIC(*) TOPICSTR DESCR DEFPRTY"}, "live"),                              # topics
     ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY TPSTATUS('SYSTEM/#') TYPE(TOPIC)"}, "live"),                             # topic publish/subscribe status

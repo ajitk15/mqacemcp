@@ -110,7 +110,7 @@ async def _inspect_queue_on_qm(
         if target:
             depth_result = await run_mqsc_raw(
                 qmgr,
-                f"DISPLAY QLOCAL({target}) CURDEPTH MAXDEPTH IPPROCS OPPROCS TRIGGER TRIGTYPE",
+                f"DISPLAY QLOCAL({target}) ALL",
                 hostname,
             )
             out.append(f"\n[Target QLOCAL({target}) details]")
@@ -128,7 +128,7 @@ async def _inspect_queue_on_qm(
     else:
         depth_result = await run_mqsc_raw(
             qmgr,
-            f"DISPLAY QLOCAL({queue_name}) CURDEPTH MAXDEPTH IPPROCS OPPROCS TRIGGER TRIGTYPE",
+            f"DISPLAY QLOCAL({queue_name}) ALL",
             hostname,
         )
         out.append("[QLOCAL details]")
@@ -175,10 +175,15 @@ def register(mcp: FastMCP) -> None:
     ) -> str:
         """IBM MQ: Inspect a queue end-to-end in a single call.
 
-        Bundles manifest discovery + alias resolution + depth/attribute fetch.
-        For QA* aliases, follows the TARGET to the underlying QLOCAL and
-        returns both the alias mapping and the target's depth + key attributes
-        (CURDEPTH, MAXDEPTH, IPPROCS, OPPROCS, TRIGGER, TRIGTYPE).
+        Bundles manifest discovery + alias resolution + a full attribute fetch
+        (`DISPLAY QLOCAL(<Q>) ALL`), so it answers ANY queue-property question:
+        depth (CURDEPTH/MAXDEPTH), persistence (DEFPSIST), max message length
+        (MAXMSGL), default priority (DEFPRTY), get/put status (GET/PUT),
+        triggering (TRIGGER/TRIGTYPE), backout (BOTHRESH/BOQNAME), creation and
+        last-altered timestamps (CRDATE/CRTIME, ALTDATE/ALTTIME), and the rest.
+        For QA* aliases it follows the TARGET to the underlying QLOCAL and
+        returns both the alias mapping and the target's full attributes; for QR*
+        remote queues it returns the QREMOTE definition (RNAME/RQMNAME/XMITQ).
 
         Args:
             queue_name: The queue name (QL.*, QA.*, QR.*, or any other).
