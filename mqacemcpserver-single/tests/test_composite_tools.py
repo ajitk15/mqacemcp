@@ -102,6 +102,10 @@ def test_mq_queue_inspect_local_queue_displays_all_attributes(monkeypatch):
 
     async def fake_run_mqsc_raw(qmgr, mqsc, hostname):
         captured.append(mqsc)
+        # The chain resolver first probes the real type; report QLOCAL so it
+        # proceeds to the full-attribute display below.
+        if "DISPLAY QUEUE(QL.TEST) TYPE" in mqsc.upper():
+            return "QUEUE(QL.TEST) TYPE(QLOCAL)"
         return f"[stub] {mqsc}"
 
     monkeypatch.setattr(composite_tools, "run_mqsc_raw", fake_run_mqsc_raw)
@@ -110,6 +114,100 @@ def test_mq_queue_inspect_local_queue_displays_all_attributes(monkeypatch):
     asyncio.run(fn(queue_name="QL.TEST", qmgr_name="QMTEST", hostname="loq-mq01"))
 
     assert any("DISPLAY QLOCAL(QL.TEST) ALL" in m for m in captured), captured
+
+
+# ---------------------------------------------------------------------------
+# mq_queue_inspect — alias -> remote -> local chain resolution
+# ---------------------------------------------------------------------------
+def _chain_stub(captured: list[tuple[str, str]]):
+    """A run_mqsc_raw stub that emulates the QA.IN.APP2 alias->remote chain.
+
+    QA.IN.APP2 on MQQMGR2 is a QALIAS -> TARGET(QR.IN.APP2); QR.IN.APP2 on
+    MQQMGR2 is a QREMOTE -> RNAME(QA.IN.APP2) RQMNAME(MQQMGR1); QA.IN.APP2 on
+    MQQMGR1 is the terminal QLOCAL.
+    """
+
+    async def fake(qmgr, mqsc, hostname):
+        captured.append((qmgr.upper(), mqsc.upper()))
+        u = mqsc.upper()
+        qm = qmgr.upper()
+        if "DISPLAY QUEUE(QA.IN.APP2) TYPE" in u:
+            return (
+                "QUEUE(QA.IN.APP2) TYPE(QALIAS)"
+                if qm == "MQQMGR2"
+                else "QUEUE(QA.IN.APP2) TYPE(QLOCAL)"
+            )
+        if "DISPLAY QALIAS(QA.IN.APP2)" in u:
+            return "QUEUE(QA.IN.APP2) TYPE(QALIAS) TARGET(QR.IN.APP2) TARGTYPE(QUEUE)"
+        if "DISPLAY QUEUE(QR.IN.APP2) TYPE" in u:
+            return "QUEUE(QR.IN.APP2) TYPE(QREMOTE)"
+        if "DISPLAY QREMOTE(QR.IN.APP2)" in u:
+            return (
+                "QUEUE(QR.IN.APP2) TYPE(QREMOTE) RNAME(QA.IN.APP2) "
+                "RQMNAME(MQQMGR1) XMITQ(XMIT.Q.QM2)"
+            )
+        if "DISPLAY QLOCAL(QA.IN.APP2) ALL" in u:
+            return "QUEUE(QA.IN.APP2) TYPE(QLOCAL) CURDEPTH(0) MAXDEPTH(5000)"
+        return f"[stub] {mqsc}"
+
+    return fake
+
+
+def test_mq_queue_inspect_alias_to_remote_chain(monkeypatch):
+    """An alias whose TARGET is a QREMOTE must resolve through the remote queue
+    onto its destination QM — NOT be reported as 'QLOCAL not found'."""
+    from server import composite_tools
+
+    captured: list[tuple[str, str]] = []
+    monkeypatch.setattr(composite_tools, "run_mqsc_raw", _chain_stub(captured))
+    # MQQMGR1 lives on an allow-listed host so the chain is chased onto it.
+    monkeypatch.setattr(
+        composite_tools,
+        "_resolve_target_host",
+        lambda qmgr, host: ("loq-mq01", None),
+    )
+
+    fn = _tool("mq_queue_inspect")
+    result = asyncio.run(
+        fn(queue_name="QA.IN.APP2", qmgr_name="MQQMGR2", hostname="loq-mq01")
+    )
+
+    assert (
+        "QA.IN.APP2(MQQMGR2) --> QR.IN.APP2(MQQMGR2) --> QA.IN.APP2(MQQMGR1)"
+        in result
+    ), result
+    # The old bug: querying the remote queue as a local queue.
+    assert not any(
+        "DISPLAY QLOCAL(QR.IN.APP2)" in m for _, m in captured
+    ), captured
+    # The destination QLOCAL on MQQMGR1 must be inspected.
+    assert ("MQQMGR1", "DISPLAY QLOCAL(QA.IN.APP2) ALL") in captured, captured
+
+
+def test_mq_queue_inspect_remote_dest_not_in_manifest_stops(monkeypatch):
+    """When the QREMOTE's RQMNAME is not in the manifest, the chain names the
+    destination and stops — without any HTTP to the unknown QM."""
+    from server import composite_tools
+
+    captured: list[tuple[str, str]] = []
+    monkeypatch.setattr(composite_tools, "run_mqsc_raw", _chain_stub(captured))
+    # Honour an explicit host (the fast-path starting QM) but treat the
+    # QREMOTE's RQMNAME (looked up with host=None) as unknown.
+    monkeypatch.setattr(
+        composite_tools,
+        "_resolve_target_host",
+        lambda qmgr, host: (host, None) if host else (None, "not in manifest"),
+    )
+
+    fn = _tool("mq_queue_inspect")
+    result = asyncio.run(
+        fn(queue_name="QA.IN.APP2", qmgr_name="MQQMGR2", hostname="loq-mq01")
+    )
+
+    assert "QA.IN.APP2(MQQMGR1)" in result, result
+    assert "not in the manifest" in result, result
+    # No call was made against the unknown destination QM.
+    assert not any(qm == "MQQMGR1" for qm, _ in captured), captured
 
 
 # ---------------------------------------------------------------------------

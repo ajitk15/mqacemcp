@@ -79,62 +79,136 @@ def _restricted_footer(restricted: list[dict]) -> str:
     return f"\n🚫 Also found on restricted systems (not queried): {qms}"
 
 
+def _parse_attr(text: str, attr: str) -> str | None:
+    """Extract ATTR(value) from MQSC output. Returns None for missing/blank."""
+    m = re.search(rf"\b{attr}\(([^)]*)\)", text, re.IGNORECASE)
+    if not m:
+        return None
+    val = m.group(1).strip()
+    return val or None
+
+
+async def _resolve_queue_chain(
+    qmgr: str,
+    queue_name: str,
+    hostname: str,
+    max_hops: int = 12,
+    visited: set[tuple[str, str]] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Follow a queue's resolution chain (QALIAS -> QREMOTE -> QLOCAL) across QMs.
+
+    Each hop's real type is probed with ``DISPLAY QUEUE(<q>) TYPE`` rather than
+    guessed from the name, so an alias whose TARGET is itself a remote queue
+    resolves correctly (the previous code wrongly assumed every alias target was
+    a QLOCAL). When a QREMOTE points at another queue manager, the chain hops
+    onto it — provided that QM is in the manifest and its host is allow-listed.
+
+    Returns ``(chain_labels, detail_sections)``.
+    """
+    if visited is None:
+        visited = set()
+
+    chain_labels: list[str] = []
+    details: list[str] = []
+    cur_qm, cur_q, cur_host = qmgr, queue_name, hostname
+
+    for _ in range(max_hops):
+        key = (cur_qm.upper(), cur_q.upper())
+        if key in visited:
+            details.append(
+                f"⚠️ Loop detected at {cur_q}({cur_qm}); stopping chain resolution."
+            )
+            break
+        visited.add(key)
+        chain_labels.append(f"{cur_q}({cur_qm})")
+
+        type_out = await run_mqsc_raw(
+            cur_qm, f"DISPLAY QUEUE({cur_q}) TYPE", cur_host
+        )
+        qtype = _parse_attr(type_out, "TYPE")
+
+        if qtype is None:
+            details.append(f"--- {cur_qm} ({cur_host}) ---")
+            details.append(f"[{cur_q}] could not be displayed:")
+            details.append(type_out)
+            break
+
+        qtype = qtype.upper()
+
+        if qtype == "QALIAS":
+            alias_out = await run_mqsc_raw(
+                cur_qm, f"DISPLAY QALIAS({cur_q})", cur_host
+            )
+            details.append(f"--- {cur_qm} ({cur_host}) ---")
+            details.append(f"[QALIAS({cur_q})]")
+            details.append(alias_out)
+            target = _parse_attr(alias_out, "TARGET")
+            if not target:
+                details.append(
+                    f"⚠️ Could not resolve TARGET for alias {cur_q} on {cur_qm}."
+                )
+                break
+            cur_q = target  # alias target lives on the same QM
+            continue
+
+        if qtype == "QREMOTE":
+            remote_out = await run_mqsc_raw(
+                cur_qm, f"DISPLAY QREMOTE({cur_q}) ALL", cur_host
+            )
+            details.append(f"--- {cur_qm} ({cur_host}) ---")
+            details.append(f"[QREMOTE({cur_q})]")
+            details.append(remote_out)
+            rname = _parse_attr(remote_out, "RNAME")
+            rqmname = _parse_attr(remote_out, "RQMNAME")
+            if not (rname and rqmname):
+                # QM alias (blank RNAME) or cluster transmit path — stop here.
+                break
+            next_host, err = _resolve_target_host(rqmname, None)
+            if not next_host:
+                chain_labels.append(f"{rname}({rqmname})")
+                details.append(
+                    f"ℹ️ Destination QM '{rqmname}' is not in the manifest; "
+                    f"cannot inspect {rname} there. {err or ''}".rstrip()
+                )
+                break
+            allowed, _msg = hostname_allowed(next_host)
+            if not allowed:
+                chain_labels.append(f"{rname}({rqmname})")
+                details.append(
+                    f"🚫 Destination QM '{rqmname}' ({next_host}) is not "
+                    "allow-listed; stopping at the destination name."
+                )
+                break
+            cur_qm, cur_q, cur_host = rqmname, rname, next_host
+            continue
+
+        # Terminal: QLOCAL (or QMODEL/other) — fetch the full attribute set.
+        local_out = await run_mqsc_raw(
+            cur_qm, f"DISPLAY QLOCAL({cur_q}) ALL", cur_host
+        )
+        details.append(f"--- {cur_qm} ({cur_host}) ---")
+        details.append(f"[QLOCAL({cur_q}) full attributes]")
+        details.append(local_out)
+        break
+    else:
+        details.append("⚠️ Maximum hop count reached; chain may be incomplete.")
+
+    return chain_labels, details
+
+
 async def _inspect_queue_on_qm(
     qmgr: str, queue_name: str, hostname: str, hint_type: str | None = None
 ) -> str:
-    """Run the queue-inspect MQSC chain on a single QM and return formatted output."""
-    upper = queue_name.upper()
-    is_alias = upper.startswith("QA.") or (
-        hint_type is not None and hint_type.upper() == "QALIAS"
-    )
-    is_remote = upper.startswith("QR.") or (
-        hint_type is not None and hint_type.upper() == "QREMOTE"
-    )
+    """Resolve and render a queue's full routing chain starting on one QM.
 
-    out = [f"--- {qmgr} ({hostname}) ---"]
-
-    if is_alias:
-        alias_result = await run_mqsc_raw(
-            qmgr, f"DISPLAY QALIAS({queue_name})", hostname
-        )
-        out.append("[Alias definition]")
-        out.append(alias_result)
-
-        target = None
-        for line in alias_result.split("\n"):
-            m = re.search(r"TARGET\(([^)]+)\)", line, re.IGNORECASE)
-            if m:
-                target = m.group(1).strip()
-                break
-
-        if target:
-            depth_result = await run_mqsc_raw(
-                qmgr,
-                f"DISPLAY QLOCAL({target}) ALL",
-                hostname,
-            )
-            out.append(f"\n[Target QLOCAL({target}) details]")
-            out.append(depth_result)
-        else:
-            out.append(
-                f"⚠️ Could not resolve TARGET for alias {queue_name} on {qmgr}"
-            )
-    elif is_remote:
-        remote_result = await run_mqsc_raw(
-            qmgr, f"DISPLAY QREMOTE({queue_name}) ALL", hostname
-        )
-        out.append("[QREMOTE definition]")
-        out.append(remote_result)
-    else:
-        depth_result = await run_mqsc_raw(
-            qmgr,
-            f"DISPLAY QLOCAL({queue_name}) ALL",
-            hostname,
-        )
-        out.append("[QLOCAL details]")
-        out.append(depth_result)
-
-    return "\n".join(out)
+    Follows QALIAS -> QREMOTE -> QLOCAL, hopping across queue managers when a
+    remote queue points elsewhere (subject to the allow-list). ``hint_type`` is
+    accepted for backward compatibility but ignored — the live TYPE probe is
+    authoritative.
+    """
+    chain_labels, details = await _resolve_queue_chain(qmgr, queue_name, hostname)
+    header = "Resolution chain: " + " --> ".join(chain_labels)
+    return header + "\n\n" + "\n".join(details)
 
 
 async def _inspect_channel_on_qm(
