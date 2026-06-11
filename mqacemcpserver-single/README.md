@@ -6,6 +6,13 @@ ReAct-style chaining. Each of the seven tools below is self-sufficient: it
 performs the full discovery-plus-execution workflow internally and returns one
 consolidated answer.
 
+To cover "X **and** Y" questions without chaining, every tool takes a **list**
+for its primary target(s), so several objects of the same kind can be handled
+in a single call (e.g. `queue_names=["QL.IN.APP1","QL.IN.APP2"]`,
+`nodes=["NODE1","NODE2"]`, `qmgr_names=["QM1","QM2"]`). For `ace_server_explore`
+the servers list shares one `node`; for `mq_host_overview` the `mqsc_command`
+applies to every queue manager listed.
+
 This is a deployment variant. The root server (`mqacemcpserver`) and its
 chatbot are untouched. The two can run side-by-side on different ports
 against the same upstream MQ / ACE infrastructure and the same CSV manifests.
@@ -42,8 +49,8 @@ so it answers any queue-property question (depth, persistence `DEFPSIST`,
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `queue_name` | `str` | yes | Queue name (`QL.*`, `QA.*`, `QR.*`, or any other). |
-| `qmgr_name` | `str` | no | When given, skips manifest discovery and goes straight to that QM (FAST PATH). |
+| `queue_names` | `list[str]` | yes | One or more queue names (`QL.*`, `QA.*`, `QR.*`, or any other), as a list — e.g. `["QL.IN.APP1"]` or `["QL.IN.APP1","QL.IN.APP2"]`. Each is inspected independently and the results concatenated. |
+| `qmgr_name` | `str` | no | When given, skips manifest discovery and goes straight to that QM (FAST PATH). Applies to every queue in `queue_names`. |
 | `hostname` | `str` | no | Explicit host. Wins over manifest lookup when both are present. |
 
 **What it does internally**
@@ -54,6 +61,7 @@ so it answers any queue-property question (depth, persistence `DEFPSIST`,
 
 **Sample user questions it answers in one call**
 - "What's the depth of QL.IN.APP1?"
+- "What's the depth of QL.IN.APP1 and QL.IN.APP2?" → `queue_names=["QL.IN.APP1","QL.IN.APP2"]` (both in one call)
 - "Depth of QL.ORDERS on MQQMGR1"
 - "Where is QL.IN.APP1 hosted?"
 - "Is QL.IN.APP1 triggered?"
@@ -73,8 +81,8 @@ runtime status AND configuration per hosting queue manager.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `channel_name` | `str` | yes | MQ channel name. |
-| `qmgr_name` | `str` | no | When given, FAST PATH on that QM. |
+| `channel_names` | `list[str]` | yes | One or more MQ channel names, as a list — e.g. `["CH.TO.PARTNER"]` or `["CH.TO.PARTNER","CH.SDR.TO.QM2"]`. Each is inspected independently and the results concatenated. |
+| `qmgr_name` | `str` | no | When given, FAST PATH on that QM. Applies to every channel in `channel_names`. |
 | `hostname` | `str` | no | Explicit host. Wins over manifest lookup. |
 
 **What it does internally**
@@ -85,6 +93,7 @@ runtime status AND configuration per hosting queue manager.
 
 **Sample user questions it answers in one call**
 - "Is channel CH.APP.SVRCONN up?"
+- "Are CH.APP.SVRCONN and CH.TO.PARTNER up?" → `channel_names=["CH.APP.SVRCONN","CH.TO.PARTNER"]` (both in one call)
 - "Status of CH.TO.PARTNER on QM3"
 - "SSL cipher on CH.TO.PARTNER on QM3"
 - "What's the CONNAME of CH.SDR.TO.QM2?"
@@ -101,25 +110,27 @@ read-only MQSC command.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `qmgr_name` | `str` | no | Queue manager to target (resolved to host via manifest). |
-| `hostname` | `str` | no | Explicit host. Wins over `qmgr_name`. |
-| `mqsc_command` | `str` | no | One read-only `DISPLAY` MQSC. **Requires `qmgr_name`**. Modification verbs (ALTER/DEFINE/…) are blocked. |
+| `qmgr_names` | `list[str]` | no | One or more queue managers to target (each resolved to a host via the manifest) — e.g. `["QM1"]` or `["QM1","QM2"]`. |
+| `hostnames` | `list[str]` | no | One or more explicit hosts — e.g. `["lopalhost"]`. An explicit host is used directly (skips manifest lookup). |
+| `mqsc_command` | `str` | no | One read-only `DISPLAY` MQSC. **Requires a queue manager** (applied to every QM in `qmgr_names`). Modification verbs (ALTER/DEFINE/…) are blocked. |
 
-**Target resolution order**
-1. Explicit `hostname` wins.
-2. Else `qmgr_name` is looked up in the manifest.
-3. Else the configured default `MQ_URL_BASE` is used.
+**Target resolution (per target)**
+1. A single `qmgr_names` + single `hostnames` is treated as one paired target (run the MQSC on that QM via that explicit host).
+2. Otherwise each entry in `qmgr_names` (resolved via manifest) and each entry in `hostnames` (used directly) is a separate target.
+3. With no targets at all, the configured default `MQ_URL_BASE` is used.
 
 **What it returns**
 - `dspmq` section: every queue manager on the resolved host with its state.
 - `dspmqver` section: MQ installation name, version, architecture, install path.
-- If `mqsc_command` + `qmgr_name` given: appends the MQSC output (or
+- If a queue-manager target + `mqsc_command` given: appends the MQSC output (or
   `MODIFY_BLOCKED_MSG` if the verb is not read-only).
+- With multiple targets, the per-target overviews are concatenated under a banner.
 
 **Sample user questions it answers in one call**
 - "Run dspmq on host lopalhost"
 - "List queue managers on lopalhost"
 - "What MQ version is installed on QM1's host?"
+- "MQ version on QM1 and QM2" → `qmgr_names=["QM1","QM2"]` (both in one call)
 - "dspmqver on QM1"
 - "List all listeners on QM1" → `mqsc_command="DISPLAY LSSTATUS(*) ALL"`
 - "Show QM1's configuration" → `mqsc_command="DISPLAY QMGR ALL"`
@@ -135,15 +146,15 @@ that node, in one call.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `node` | `str` | yes | Integration node name (must exist in `node_config.csv`). |
+| `nodes` | `list[str]` | yes | One or more integration node names — e.g. `["NODE2"]` or `["NODE1","NODE2"]`. |
 
 **What it does internally**
-- Confirms the node is in `node_config.csv`.
-- Concurrently issues `GET /apiv2` (node-level) and `GET /apiv2/servers?depth=2` against the node's admin REST endpoint.
-- Returns a single JSON envelope: `{node, status, properties, descriptiveProperties, servers:[{name, active, properties}]}`.
+- For each node, concurrently issues `GET /apiv2` (node-level) and `GET /apiv2/servers?depth=2` against the node's admin REST endpoint.
+- A single node returns one envelope: `{node, status, properties, descriptiveProperties, servers:[{name, active, properties}]}`. Multiple nodes return `{status, count, nodes:[<envelope>, …]}`.
 
 **Sample user questions it answers in one call**
 - "What's running on NODE2?"
+- "What's running on NODE1 and NODE2?" → `nodes=["NODE1","NODE2"]` (both in one call)
 - "Is integration server IS001 active on NODE2?"
 - "What ACE version is NODE2 running?"
 - "What's NODE2's REST admin port?"
@@ -155,21 +166,22 @@ that node, in one call.
 
 ### 5. `ace_server_explore`
 
-**IBM ACE.** Explore one integration server — applications + message flows in
-one call.
+**IBM ACE.** Explore one or more integration servers — applications + message
+flows in one call.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `node` | `str` | yes | Integration node name. |
-| `server` | `str` | yes | Integration server name on that node. |
-| `application` | `str` | no | Optional. When given, message flows are scoped to that application; otherwise flows directly on the server are returned alongside the application list. |
+| `node` | `str` | yes | Integration node name (shared by all servers). |
+| `servers` | `list[str]` | yes | One or more integration server names on that node — e.g. `["IS001"]` or `["IS001","IS002"]`. |
+| `application` | `str` | no | Optional. When given, message flows are scoped to that application (applied to every server); otherwise flows directly on the server are returned alongside the application list. |
 
 **What it does internally**
-- Concurrently fetches applications on the server and message flows (scoped or unscoped).
-- Returns a single JSON envelope: `{node, server, application?, applications:[…], message_flows:[…]}`.
+- For each server, concurrently fetches applications and message flows (scoped or unscoped).
+- A single server returns one envelope: `{node, server, application?, applications:[…], message_flows:[…]}`. Multiple servers return `{status, node, count, servers:[<envelope>, …]}`.
 
 **Sample user questions it answers in one call**
 - "What apps are deployed on IS001 on NODE2?"
+- "What apps are on IS001 and IS002 on NODE2?" → `node="NODE2", servers=["IS001","IS002"]` (both in one call)
 - "List flows on IS001 on NODE2"
 - "What message flows are in snaplogic1 on IS001 on NODE2?"
 - "Is application snaplogic1 running on IS001?"
@@ -184,22 +196,22 @@ message dump, in one call.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `search_string` | `str` | yes | Substring to match, case-insensitive. Pass `""` with `scope="nodes"` to list every configured node. |
+| `search_strings` | `list[str]` | yes | One or more substrings to match, case-insensitive (a row matches if it matches ANY of them; matches are merged + de-duplicated). Pass `[""]` (or an empty list) with `scope="nodes"` to list every configured node. |
 | `scope` | `str` | no | `"nodes"` / `"dump"` / `"all"` (default `"all"`). |
 
 **What it does internally**
-- `scope="nodes"` → reads `node_config.csv`, optionally filters rows by `search_string`.
-- `scope="dump"` → calls `search_node_dump(search_string)` over `node_dump.csv`.
+- `scope="nodes"` → reads `node_config.csv`, ORing the substrings across rows.
+- `scope="dump"` → calls `search_node_dump(s)` per string over `node_dump.csv`, merged + de-duplicated.
 - `scope="all"` (default) → both sections in one envelope.
 
 **Sample user questions it answers in one call**
-- "List all integration nodes" → `search_string="", scope="nodes"`
+- "List all integration nodes" → `search_strings=[""], scope="nodes"`
 - "Find any node matching lodace01.example.com" → `scope="nodes"`
 - "Any BIP errors mentioning OrderFlow?" → `scope="dump"`
+- "Any BIP errors mentioning OrderFlow or PaymentFlow?" → `search_strings=["OrderFlow","PaymentFlow"], scope="dump"` (match either, one call)
 - "Find BIP1290 messages" → `scope="dump"`
 - "Search every ACE source for 'snaplogic1'" → `scope="all"` (default)
-- "Was IS001 running per the last extract?" → `scope="dump"`, `search_string="IS001"`
-- "Which nodes are on port 4415?" → `scope="nodes"`, `search_string="4415"`
+- "Which nodes are on port 4415?" → `scope="nodes"`, `search_strings=["4415"]`
 
 ---
 
@@ -210,20 +222,23 @@ message dump, in one call.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `search_string` | `str` | yes | Hostname, alias, or CN substring to match (case-insensitive). Matches against ALL columns. |
+| `search_strings` | `list[str]` | yes | One or more hostname/alias/CN substrings to match (case-insensitive, against ALL columns), as a list — e.g. `["lodmq01"]` or `["lodmq01","lotace03"]`. Matches from all queries are merged and de-duplicated. |
 
 **What it does internally**
-- `search_certs(search_string)` → case-insensitive substring search across every
-  column of `cert_dump.csv`.
+- `search_certs(s)` → case-insensitive substring search across every column of
+  `cert_dump.csv`, run once per supplied string; matches are merged and
+  de-duplicated by `(hostname, alias, cn_name)`.
 - Returns a JSON envelope: `{status, message, results:[{hostname, alias,
-  cn_name, valid_from, valid_until, expirydays, ace_nodes}]}`. `valid_until` is
-  the certificate's expiry date; `expirydays` is the whole-day count until it,
-  recomputed live against today (negative if already expired); `ace_nodes` is
-  the ACE node(s) running on that hostname per `node_dump.csv` (empty for a
-  pure-MQ host). No live endpoint is inspected.
+  cn_name, valid_from, valid_until, expirydays, ace_nodes, matched_query}]}`.
+  `valid_until` is the certificate's expiry date; `expirydays` is the whole-day
+  count until it, recomputed live against today (negative if already expired);
+  `ace_nodes` is the ACE node(s) running on that hostname per `node_dump.csv`
+  (empty for a pure-MQ host); `matched_query` lists which of the supplied search
+  strings matched this row. No live endpoint is inspected.
 
 **Sample user questions it answers in one call**
 - "When does the certificate on lodmq01 expire?"
+- "When do the certs on lodmq01 and lotace03 expire?" → `search_strings=["lodmq01","lotace03"]` (both in one call)
 - "Show cert details for alias mqweb-https"
 - "Which certs are issued for example.com?"
 - "What's the CN on the lotace03 certificate?"
@@ -497,10 +512,11 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 ### Online smoke (clients/smoke_test.py)
 
 A separate live-deployment smoke client that opens an MCP SSE session,
-lists the catalogue, then drives **37 test cases** across the seven
-tools. Unlike the offline pytest suite, this one requires the server to be
-running and (for `live` cases) the configured upstream MQ / ACE
-infrastructure to be reachable.
+lists the catalogue, then drives **44 test cases** across the seven
+tools (including a multi-target case for every tool that takes a list).
+Unlike the offline pytest suite, this one requires the server to be running
+and (for `live` cases) the configured upstream MQ / ACE infrastructure to be
+reachable.
 
 **Prerequisites**
 - Server running on SSE — see [Quickstart](#quickstart-windows--powershell).
@@ -513,7 +529,7 @@ infrastructure to be reachable.
 ```powershell
 cd C:\Workspace\hready\mqacemcp\mqacemcpserver-single
 .venv\Scripts\python.exe clients\smoke_test.py
-# Expected: pass=36  skip=1  fail=0  (skip = NODE4 unreachable, by design)
+# Expected: pass=43  skip=1  fail=0  (skip = NODE4 unreachable, by design)
 ```
 
 The exit code is `0` only when no case fails; live cases against an
@@ -571,18 +587,18 @@ classified outcome. The run ends with a column-aligned summary table:
 | `expect_warn_no_qmgr` | output contains "without \`qmgr_name\`" |
 | `expect_error_envelope` | top-level `{"status":"error"}`, or `⚠️/❌` prefix, or any `*_error` key in the JSON envelope |
 
-**The 37 cases at a glance**
+**The 44 cases at a glance**
 
 | Tool | # cases | Online | Offline | Coverage |
 | --- | --- | --- | --- | --- |
-| `mq_queue_inspect` | 5 | 4 | 1 | discovery, FAST PATH, alias resolution, remote-queue routing (QR.IN.APP2 → RQMNAME/RNAME/XMITQ), sanitised "not found" |
-| `mq_channel_inspect` | 3 | 2 | 1 | discovery, FAST PATH, sanitised "not found" |
-| `mq_host_overview` | 13 | 11 | 2 | default URL, manifest-resolved host, `DISPLAY QMGR ALL`, full queue properties, max depth + thresholds, queue creation date (`CRDATE CRTIME`), focused QMGR properties, topics, topic status, subscriptions, subscription status, `MODIFY_BLOCKED_MSG` over the wire, "without `qmgr_name`" warning |
-| `ace_node_overview` | 4 | 3 | 1 | NODE2 live, NODE3 (empty servers edge), NODE4 (unreachable → skip), ghost-node graceful envelope |
-| `ace_server_explore` | 5 | 4 | 1 | NODE2/IS001, NODE2/IS002, NODE2/snaps, NODE2/IS001/snaplogic1 (scoped), ghost-server graceful envelope |
-| `ace_search` | 4 | 0 | 4 | nodes scope, dump scope, default `all` scope, invalid scope (`ace_search` is by design CSV-only — no live path) |
-| `get_cert_details` | 3 | 0 | 3 | match by hostname, match by alias, no-match empty-results (CSV-only — no live path) |
-| **Total** | **37** | **24** | **13** | |
+| `mq_queue_inspect` | 6 | 5 | 1 | discovery, FAST PATH, **multi-target (two queues, one call)**, alias resolution, remote-queue routing (QR.IN.APP2 → RQMNAME/RNAME/XMITQ), sanitised "not found" |
+| `mq_channel_inspect` | 4 | 3 | 1 | discovery, FAST PATH, **multi-target (two channels, one call)**, sanitised "not found" |
+| `mq_host_overview` | 14 | 12 | 2 | default URL, manifest-resolved host, **multi-target (two QMs, one call)**, `DISPLAY QMGR ALL`, full queue properties, max depth + thresholds, queue creation date (`CRDATE CRTIME`), focused QMGR properties, topics, topic status, subscriptions, subscription status, `MODIFY_BLOCKED_MSG` over the wire, "without `qmgr_name`" warning |
+| `ace_node_overview` | 5 | 4 | 1 | NODE2 live, **multi-target (two nodes, one call)**, NODE3 (empty servers edge), NODE4 (unreachable → skip), ghost-node graceful envelope |
+| `ace_server_explore` | 6 | 5 | 1 | NODE2/IS001, **multi-target (IS001+IS002, one call)**, NODE2/IS002, NODE2/snaps, NODE2/IS001/snaplogic1 (scoped), ghost-server graceful envelope |
+| `ace_search` | 5 | 0 | 5 | nodes scope, dump scope, **multi-target (match either, one call)**, default `all` scope, invalid scope (`ace_search` is by design CSV-only — no live path) |
+| `get_cert_details` | 4 | 0 | 4 | match by hostname, match by alias, **multi-target (two queries merged, one call)**, no-match empty-results (CSV-only — no live path) |
+| **Total** | **44** | **29** | **15** | |
 
 **Adding or editing cases**
 

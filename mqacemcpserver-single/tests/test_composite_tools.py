@@ -72,7 +72,7 @@ def test_cert_tool_docstring_opens_with_routing_prefix():
 # ---------------------------------------------------------------------------
 def test_mq_queue_inspect_not_in_manifest():
     fn = _tool("mq_queue_inspect")
-    result = asyncio.run(fn(queue_name="DOES.NOT.EXIST.IN.MANIFEST"))
+    result = asyncio.run(fn(queue_names=["DOES.NOT.EXIST.IN.MANIFEST"]))
     assert "not found in the manifest" in result
 
 
@@ -80,14 +80,14 @@ def test_mq_queue_inspect_restricted_only():
     """The shipped manifest's hosts (lopalhost) are NOT in the default
     lod/loq/lot allow-list, so a known queue must come back as restricted."""
     fn = _tool("mq_queue_inspect")
-    result = asyncio.run(fn(queue_name="QL.IN.APP1"))
+    result = asyncio.run(fn(queue_names=["QL.IN.APP1"]))
     assert "restricted" in result.lower(), result
 
 
 def test_mq_queue_inspect_fast_path_rejects_disallowed_host():
     fn = _tool("mq_queue_inspect")
     result = asyncio.run(
-        fn(queue_name="QL.X", qmgr_name="ANY", hostname="evil-host")
+        fn(queue_names=["QL.X"], qmgr_name="ANY", hostname="evil-host")
     )
     assert "not in the allowed list" in result, result
 
@@ -111,7 +111,7 @@ def test_mq_queue_inspect_local_queue_displays_all_attributes(monkeypatch):
     monkeypatch.setattr(composite_tools, "run_mqsc_raw", fake_run_mqsc_raw)
     fn = _tool("mq_queue_inspect")
     # FAST PATH on an allow-listed host so we reach the MQSC call.
-    asyncio.run(fn(queue_name="QL.TEST", qmgr_name="QMTEST", hostname="loq-mq01"))
+    asyncio.run(fn(queue_names=["QL.TEST"], qmgr_name="QMTEST", hostname="loq-mq01"))
 
     assert any("DISPLAY QLOCAL(QL.TEST) ALL" in m for m in captured), captured
 
@@ -169,7 +169,7 @@ def test_mq_queue_inspect_alias_to_remote_chain(monkeypatch):
 
     fn = _tool("mq_queue_inspect")
     result = asyncio.run(
-        fn(queue_name="QA.IN.APP2", qmgr_name="MQQMGR2", hostname="loq-mq01")
+        fn(queue_names=["QA.IN.APP2"], qmgr_name="MQQMGR2", hostname="loq-mq01")
     )
 
     assert (
@@ -201,7 +201,7 @@ def test_mq_queue_inspect_remote_dest_not_in_manifest_stops(monkeypatch):
 
     fn = _tool("mq_queue_inspect")
     result = asyncio.run(
-        fn(queue_name="QA.IN.APP2", qmgr_name="MQQMGR2", hostname="loq-mq01")
+        fn(queue_names=["QA.IN.APP2"], qmgr_name="MQQMGR2", hostname="loq-mq01")
     )
 
     assert "QA.IN.APP2(MQQMGR1)" in result, result
@@ -215,14 +215,14 @@ def test_mq_queue_inspect_remote_dest_not_in_manifest_stops(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_mq_channel_inspect_not_in_manifest():
     fn = _tool("mq_channel_inspect")
-    result = asyncio.run(fn(channel_name="CH.DOES.NOT.EXIST"))
+    result = asyncio.run(fn(channel_names=["CH.DOES.NOT.EXIST"]))
     assert "not found in the manifest" in result
 
 
 def test_mq_channel_inspect_fast_path_rejects_disallowed_host():
     fn = _tool("mq_channel_inspect")
     result = asyncio.run(
-        fn(channel_name="CH.X", qmgr_name="ANY", hostname="prod-host")
+        fn(channel_names=["CH.X"], qmgr_name="ANY", hostname="prod-host")
     )
     assert "not in the allowed list" in result, result
 
@@ -238,8 +238,8 @@ def test_mq_host_overview_blocks_modification_mqsc():
     # the modification block must still appear in the output.
     result = asyncio.run(
         fn(
-            qmgr_name="QMTEST",
-            hostname="loq-mq01",
+            qmgr_names=["QMTEST"],
+            hostnames=["loq-mq01"],
             mqsc_command="DEFINE QLOCAL(X)",
         )
     )
@@ -251,14 +251,14 @@ def test_mq_host_overview_blocks_modification_mqsc():
 
 def test_mq_host_overview_rejects_disallowed_host():
     fn = _tool("mq_host_overview")
-    result = asyncio.run(fn(hostname="evil-host"))
+    result = asyncio.run(fn(hostnames=["evil-host"]))
     assert "not in the allowed list" in result, result
 
 
 def test_mq_host_overview_warns_when_mqsc_without_qmgr():
     fn = _tool("mq_host_overview")
     result = asyncio.run(
-        fn(hostname="loq-mq01", mqsc_command="DISPLAY QMGR ALL")
+        fn(hostnames=["loq-mq01"], mqsc_command="DISPLAY QMGR ALL")
     )
     assert "without `qmgr_name`" in result, result
 
@@ -268,14 +268,14 @@ def test_mq_host_overview_warns_when_mqsc_without_qmgr():
 # ---------------------------------------------------------------------------
 def test_ace_search_rejects_unknown_scope():
     fn = _tool("ace_search")
-    out = json.loads(fn(search_string="x", scope="bogus"))
+    out = json.loads(fn(search_strings=["x"], scope="bogus"))
     assert out["status"] == "error"
     assert "Unknown scope" in out["message"]
 
 
 def test_ace_search_nodes_scope_lists_configured_nodes():
     fn = _tool("ace_search")
-    out = json.loads(fn(search_string="", scope="nodes"))
+    out = json.loads(fn(search_strings=[""], scope="nodes"))
     assert out["status"] == "success"
     assert "nodes" in out
     # The shipped node_config.csv has NODE1..NODE4 — at least one must come back.
@@ -284,7 +284,7 @@ def test_ace_search_nodes_scope_lists_configured_nodes():
 
 def test_ace_search_dump_scope_filters_by_substring():
     fn = _tool("ace_search")
-    out = json.loads(fn(search_string="BIP", scope="dump"))
+    out = json.loads(fn(search_strings=["BIP"], scope="dump"))
     assert out["status"] == "success"
     assert "dump_matches" in out
     assert isinstance(out["dump_matches"], list)
@@ -300,7 +300,7 @@ def test_ace_search_dump_pivots_cert_host_to_node():
     the shared node_dump.csv — the hostname columns are aligned across the
     manifests so this cross-tool pivot works."""
     fn = _tool("ace_search")
-    out = json.loads(fn(search_string="lodace01.example.com", scope="dump"))
+    out = json.loads(fn(search_strings=["lodace01.example.com"], scope="dump"))
     assert out["status"] == "success"
     assert out["dump_matches"], out
     assert any(r["node"] == "NODE01" for r in out["dump_matches"]), out
@@ -308,7 +308,7 @@ def test_ace_search_dump_pivots_cert_host_to_node():
 
 def test_ace_search_default_scope_returns_both_sections():
     fn = _tool("ace_search")
-    out = json.loads(fn(search_string="NODE"))
+    out = json.loads(fn(search_strings=["NODE"]))
     assert out["status"] == "success"
     assert out["scope"] == "all"
     assert "nodes" in out
@@ -320,7 +320,7 @@ def test_ace_search_default_scope_returns_both_sections():
 # ---------------------------------------------------------------------------
 def test_ace_node_overview_unknown_node():
     fn = _tool("ace_node_overview")
-    out = json.loads(asyncio.run(fn(node="NODE.DOES.NOT.EXIST")))
+    out = json.loads(asyncio.run(fn(nodes=["NODE.DOES.NOT.EXIST"])))
     # When the node is missing from node_config.csv, fetch_ace returns an
     # error envelope per call. The composite preserves it without raising.
     assert out["node"] == "NODE.DOES.NOT.EXIST"
@@ -329,7 +329,7 @@ def test_ace_node_overview_unknown_node():
 
 def test_ace_server_explore_unknown_node():
     fn = _tool("ace_server_explore")
-    out = json.loads(asyncio.run(fn(node="NODE.DOES.NOT.EXIST", server="X")))
+    out = json.loads(asyncio.run(fn(node="NODE.DOES.NOT.EXIST", servers=["X"])))
     assert out["node"] == "NODE.DOES.NOT.EXIST"
     assert out["server"] == "X"
 
@@ -339,7 +339,7 @@ def test_ace_server_explore_unknown_node():
 # ---------------------------------------------------------------------------
 def test_get_cert_details_no_match_returns_empty_results():
     fn = _tool("get_cert_details")
-    out = json.loads(fn(search_string="no-such-cert-anywhere"))
+    out = json.loads(fn(search_strings=["no-such-cert-anywhere"]))
     assert out["status"] == "success"
     assert out["results"] == []
 
@@ -347,7 +347,7 @@ def test_get_cert_details_no_match_returns_empty_results():
 def test_get_cert_details_match_returns_expected_fields():
     """The shared cert_dump.csv ships hostnames like lodmq01.example.com."""
     fn = _tool("get_cert_details")
-    out = json.loads(fn(search_string="lodmq01"))
+    out = json.loads(fn(search_strings=["lodmq01"]))
     assert out["status"] == "success"
     assert out["results"], out
     row = out["results"][0]
@@ -365,7 +365,7 @@ def test_get_cert_details_match_returns_expected_fields():
 def test_get_cert_details_searches_all_fields():
     """A substring that only appears in the alias column must still match."""
     fn = _tool("get_cert_details")
-    out = json.loads(fn(search_string="mqweb-https"))
+    out = json.loads(fn(search_strings=["mqweb-https"]))
     assert out["status"] == "success"
     assert any(r["alias"] == "mqweb-https" for r in out["results"]), out
 
@@ -373,7 +373,7 @@ def test_get_cert_details_searches_all_fields():
 def test_get_cert_details_exposes_expirydays():
     """expirydays must round-trip as an integer-parseable string per match."""
     fn = _tool("get_cert_details")
-    out = json.loads(fn(search_string="lodmq01"))
+    out = json.loads(fn(search_strings=["lodmq01"]))
     row = out["results"][0]
     assert "expirydays" in row
     int(row["expirydays"])  # raises if not an integer string
@@ -382,7 +382,132 @@ def test_get_cert_details_exposes_expirydays():
 def test_get_cert_details_includes_ace_nodes():
     """A cert result surfaces the ACE node on its host (empty for an MQ host)."""
     fn = _tool("get_cert_details")
-    ace = json.loads(fn(search_string="lodace01"))["results"][0]
+    ace = json.loads(fn(search_strings=["lodace01"]))["results"][0]
     assert ace["ace_nodes"] == ["NODE01"], ace
-    mq = json.loads(fn(search_string="lodmq01"))["results"][0]
+    mq = json.loads(fn(search_strings=["lodmq01"]))["results"][0]
     assert mq["ace_nodes"] == [], mq
+
+
+# ---------------------------------------------------------------------------
+# Multi-target (list[str]) support — one tool call, several objects
+# ---------------------------------------------------------------------------
+def test_mq_queue_inspect_multi_target_inspects_each():
+    """Two queue names in one call → both are reported (banner + per-queue
+    sections), and one missing queue does not suppress the other."""
+    fn = _tool("mq_queue_inspect")
+    result = asyncio.run(
+        fn(queue_names=["DOES.NOT.EXIST.A", "DOES.NOT.EXIST.B"])
+    )
+    assert "Inspecting 2 queues" in result, result
+    assert "Queue: DOES.NOT.EXIST.A" in result, result
+    assert "Queue: DOES.NOT.EXIST.B" in result, result
+    assert result.count("not found in the manifest") == 2, result
+
+
+def test_mq_queue_inspect_empty_list_is_handled():
+    fn = _tool("mq_queue_inspect")
+    result = asyncio.run(fn(queue_names=[]))
+    assert "No queue name supplied" in result, result
+
+
+def test_mq_queue_inspect_single_element_has_no_banner():
+    """A one-element list must behave exactly like the old single-queue call —
+    no multi-target banner, identical not-found wording."""
+    fn = _tool("mq_queue_inspect")
+    result = asyncio.run(fn(queue_names=["DOES.NOT.EXIST.IN.MANIFEST"]))
+    assert "Inspecting" not in result, result
+    assert "not found in the manifest" in result, result
+
+
+def test_mq_channel_inspect_multi_target_inspects_each():
+    fn = _tool("mq_channel_inspect")
+    result = asyncio.run(
+        fn(channel_names=["CH.NOPE.A", "CH.NOPE.B"])
+    )
+    assert "Inspecting 2 channels" in result, result
+    assert "Channel: CH.NOPE.A" in result, result
+    assert "Channel: CH.NOPE.B" in result, result
+    assert result.count("not found in the manifest") == 2, result
+
+
+def test_get_cert_details_multi_query_merges_and_tags():
+    """Two search strings → merged results, each row tagged with the query that
+    matched it; both hosts appear."""
+    fn = _tool("get_cert_details")
+    out = json.loads(fn(search_strings=["lodmq01", "lodace01"]))
+    assert out["status"] == "success"
+    assert out["results"], out
+    hosts = " ".join(r["hostname"] for r in out["results"])
+    assert "lodmq01" in hosts and "lodace01" in hosts, out
+    for row in out["results"]:
+        assert "matched_query" in row, row
+        assert isinstance(row["matched_query"], list) and row["matched_query"], row
+
+
+def test_get_cert_details_empty_list_is_handled():
+    fn = _tool("get_cert_details")
+    out = json.loads(fn(search_strings=[]))
+    assert out["status"] == "error"
+    assert "No search string supplied" in out["message"], out
+
+
+def test_mq_host_overview_multi_target_rejects_each_disallowed_host():
+    """Two disallowed hosts in one call → banner + a rejection per host, with
+    no outbound HTTP (allow-list fires first)."""
+    fn = _tool("mq_host_overview")
+    result = asyncio.run(fn(hostnames=["evil-a", "evil-b"]))
+    assert "Inspecting 2 hosts/queue managers" in result, result
+    assert "evil-a" in result and "evil-b" in result, result
+    assert result.count("not in the allowed list") == 2, result
+
+
+def test_mq_host_overview_no_args_still_single_default():
+    """No targets → a single default-host overview (no multi banner)."""
+    fn = _tool("mq_host_overview")
+    result = asyncio.run(fn())
+    assert "Inspecting" not in result, result
+    assert "Host overview" in result, result
+
+
+def test_ace_node_overview_multi_target_wraps_results():
+    fn = _tool("ace_node_overview")
+    out = json.loads(asyncio.run(fn(nodes=["GHOST.A", "GHOST.B"])))
+    assert out["status"] == "success"
+    assert out["count"] == 2, out
+    assert len(out["nodes"]) == 2, out
+    assert {n["node"] for n in out["nodes"]} == {"GHOST.A", "GHOST.B"}, out
+
+
+def test_ace_node_overview_empty_list_is_handled():
+    fn = _tool("ace_node_overview")
+    out = json.loads(asyncio.run(fn(nodes=[])))
+    assert out["status"] == "error"
+    assert "No node supplied" in out["message"], out
+
+
+def test_ace_server_explore_multi_target_wraps_results():
+    fn = _tool("ace_server_explore")
+    out = json.loads(
+        asyncio.run(fn(node="NODE.DOES.NOT.EXIST", servers=["X", "Y"]))
+    )
+    assert out["status"] == "success"
+    assert out["node"] == "NODE.DOES.NOT.EXIST"
+    assert out["count"] == 2, out
+    assert {s["server"] for s in out["servers"]} == {"X", "Y"}, out
+
+
+def test_ace_search_multi_query_ors_and_dedups():
+    """Multiple node queries OR together; duplicate queries collapse to one."""
+    fn = _tool("ace_search")
+    multi = json.loads(
+        fn(search_strings=["NODE", "definitely-no-such-xyz"], scope="nodes")
+    )
+    assert multi["status"] == "success"
+    assert multi["search_strings"] == ["NODE", "definitely-no-such-xyz"], multi
+    # "NODE" matches at least one configured node; the no-match term adds none.
+    assert len(multi["nodes"]) >= 1, multi
+    only_node = json.loads(fn(search_strings=["NODE"], scope="nodes"))
+    assert len(multi["nodes"]) == len(only_node["nodes"]), (multi, only_node)
+    # Duplicate queries de-duplicate.
+    dup = json.loads(fn(search_strings=["NODE", "NODE"], scope="nodes"))
+    assert dup["search_strings"] == ["NODE"], dup

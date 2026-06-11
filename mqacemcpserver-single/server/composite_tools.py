@@ -79,6 +79,21 @@ def _restricted_footer(restricted: list[dict]) -> str:
     return f"\n🚫 Also found on restricted systems (not queried): {qms}"
 
 
+def _as_str_list(value) -> list[str]:
+    """Normalise a multi-target argument to a clean, de-duplicated list of strings.
+
+    The tools advertise `list[str]` in their schema, so well-behaved clients send
+    an array. This is belt-and-suspenders: it also tolerates a stray bare string
+    (wraps it), drops blanks/whitespace-only entries, and removes duplicates while
+    preserving the caller's order.
+    """
+    if value is None:
+        return []
+    items = [value] if isinstance(value, str) else list(value)
+    cleaned = [str(v).strip() for v in items if v is not None and str(v).strip()]
+    return list(dict.fromkeys(cleaned))
+
+
 def _parse_attr(text: str, attr: str) -> str | None:
     """Extract ATTR(value) from MQSC output. Returns None for missing/blank."""
     m = re.search(rf"\b{attr}\(([^)]*)\)", text, re.IGNORECASE)
@@ -232,6 +247,288 @@ async def _inspect_channel_on_qm(
     )
 
 
+async def _inspect_one_queue(
+    queue_name: str, qmgr_name: str | None, hostname: str | None
+) -> str:
+    """Full single-queue inspect workflow (FAST PATH or manifest discovery)."""
+    if qmgr_name:
+        target_host, err = _resolve_target_host(qmgr_name, hostname)
+        if err:
+            return err
+        allowed, message = hostname_allowed(target_host)
+        if not allowed:
+            return message
+        return await _inspect_queue_on_qm(qmgr_name, queue_name, target_host)
+
+    results = search_objects_structured(queue_name)
+    if not results:
+        return (
+            f"❌ '{queue_name}' not found in the manifest. "
+            "Pass `qmgr_name=` (and optionally `hostname=`) to query a "
+            "live queue manager directly."
+        )
+
+    accessible = [r for r in results if not r["restricted"]]
+    restricted = [r for r in results if r["restricted"]]
+
+    if not accessible:
+        return (
+            f"🚫 '{queue_name}' was found, but only on restricted/production "
+            "systems. I do not have access to these."
+        )
+
+    sections = [
+        f"🔍 '{queue_name}' found on {len(accessible)} accessible "
+        f"queue manager(s).\n"
+    ]
+    for entry in accessible:
+        sections.append(
+            await _inspect_queue_on_qm(
+                entry["qmgr"],
+                queue_name,
+                entry["hostname"],
+                entry["object_type"],
+            )
+        )
+    footer = _restricted_footer(restricted)
+    if footer:
+        sections.append(footer)
+    return "\n".join(sections)
+
+
+async def _inspect_one_channel(
+    channel_name: str, qmgr_name: str | None, hostname: str | None
+) -> str:
+    """Full single-channel inspect workflow (FAST PATH or manifest discovery)."""
+    if qmgr_name:
+        target_host, err = _resolve_target_host(qmgr_name, hostname)
+        if err:
+            return err
+        allowed, message = hostname_allowed(target_host)
+        if not allowed:
+            return message
+        return await _inspect_channel_on_qm(qmgr_name, channel_name, target_host)
+
+    results = search_objects_structured(channel_name, "CHANNEL")
+    if not results:
+        results = search_objects_structured(channel_name)
+    if not results:
+        return (
+            f"❌ '{channel_name}' not found in the manifest. "
+            "Pass `qmgr_name=` (and optionally `hostname=`) to query a "
+            "live queue manager directly."
+        )
+
+    accessible = [r for r in results if not r["restricted"]]
+    restricted = [r for r in results if r["restricted"]]
+
+    if not accessible:
+        return (
+            f"🚫 '{channel_name}' was found, but only on restricted/production "
+            "systems. I do not have access to these."
+        )
+
+    sections = [
+        f"🔍 Channel '{channel_name}' found on {len(accessible)} accessible "
+        f"queue manager(s).\n"
+    ]
+    for entry in accessible:
+        sections.append(
+            await _inspect_channel_on_qm(
+                entry["qmgr"], channel_name, entry["hostname"]
+            )
+        )
+    footer = _restricted_footer(restricted)
+    if footer:
+        sections.append(footer)
+    return "\n".join(sections)
+
+
+async def _host_overview_one(
+    qmgr_name: str | None, hostname: str | None, mqsc_command: str | None
+) -> str:
+    """Single host/QM overview: dspmq + dspmqver (+ optional read-only MQSC)."""
+    target_host = ""
+    dspmq_url = MQ_URL_BASE + "qmgr/"
+    dspmqver_url = MQ_URL_BASE + "installation"
+
+    if hostname:
+        target_host = hostname.strip()
+    elif qmgr_name:
+        resolved, err = _resolve_target_host(qmgr_name, None)
+        if err:
+            return err
+        target_host = resolved
+
+    if target_host:
+        allowed, message = hostname_allowed(target_host)
+        if not allowed:
+            return message
+        dspmq_url = build_url(target_host, "qmgr/")
+        dspmqver_url = build_url(target_host, "installation")
+
+    headers = {
+        "Content-Type": "application/json",
+        "ibm-mq-rest-csrf-token": CSRF_TOKEN,
+    }
+
+    async def _do_dspmq() -> str:
+        try:
+            resp = await mq_get(dspmq_url, headers=headers, timeout=30.0)
+            resp.raise_for_status()
+            return prettify_dspmq(resp.content)
+        except Exception as err:
+            return friendly_error(err, hostname=target_host)
+
+    async def _do_dspmqver() -> str:
+        try:
+            resp = await mq_get(dspmqver_url, headers=headers, timeout=30.0)
+            resp.raise_for_status()
+            return prettify_dspmqver(resp.content)
+        except Exception as err:
+            return friendly_error(err, hostname=target_host)
+
+    dspmq_result, dspmqver_result = await asyncio.gather(
+        _do_dspmq(), _do_dspmqver()
+    )
+
+    sections = [
+        f"--- Host overview ({target_host or 'default MQ_URL_BASE'}) ---",
+        "[Queue managers (dspmq)]",
+        dspmq_result,
+        "\n[MQ version (dspmqver)]",
+        dspmqver_result,
+    ]
+
+    if mqsc_command:
+        if not qmgr_name:
+            sections.append(
+                "\n⚠️ `mqsc_command` was supplied without `qmgr_name`; "
+                "MQSC was not executed. Pass `qmgr_name=` to target a QM."
+            )
+        elif is_modification_command(mqsc_command):
+            logger.warning(
+                "Blocked modification command from mq_host_overview: %s (qmgr=%s)",
+                mqsc_command,
+                qmgr_name,
+            )
+            sections.append("\n" + MODIFY_BLOCKED_MSG)
+        else:
+            mqsc_result = await run_mqsc_raw(qmgr_name, mqsc_command, target_host)
+            sections.append(f"\n[MQSC `{mqsc_command}` on {qmgr_name}]")
+            sections.append(mqsc_result)
+
+    return "\n".join(sections)
+
+
+async def _node_overview_one(node: str) -> dict:
+    """Single-node overview envelope (node status + integration servers)."""
+    node_task = fetch_ace(node, "", "node", node=node)
+    servers_task = fetch_ace(node, "/servers?depth=2", "server", node=node)
+    node_raw, servers_raw = await asyncio.gather(node_task, servers_task)
+
+    envelope: dict = {"node": node}
+
+    try:
+        node_doc = json.loads(node_raw)
+    except json.JSONDecodeError:
+        node_doc = {"status": "error", "message": node_raw}
+
+    if node_doc.get("status") == "success":
+        raw = node_doc.get("raw_response", {}) or {}
+        envelope["status"] = "success"
+        envelope["properties"] = raw.get("properties")
+        envelope["descriptiveProperties"] = raw.get("descriptiveProperties")
+    else:
+        envelope["status"] = node_doc.get("status", "error")
+        envelope["message"] = node_doc.get("message")
+
+    try:
+        servers_doc = json.loads(servers_raw)
+    except json.JSONDecodeError:
+        servers_doc = {"status": "error", "message": servers_raw}
+
+    if servers_doc.get("status") == "success":
+        children = (servers_doc.get("raw_response") or {}).get("children", [])
+        envelope["servers"] = [
+            {
+                "name": c.get("name"),
+                "active": c.get("active"),
+                "properties": c.get("properties"),
+            }
+            for c in children
+        ]
+    else:
+        envelope["servers_error"] = servers_doc.get("message")
+
+    return {k: v for k, v in envelope.items() if v is not None}
+
+
+async def _server_explore_one(
+    node: str, server: str, application: str | None
+) -> dict:
+    """Single integration-server exploration envelope (apps + message flows)."""
+    apps_task = fetch_ace(
+        node,
+        f"/servers/{server}/applications?depth=2",
+        "app",
+        node=node,
+        server=server,
+    )
+    if application:
+        flow_path = (
+            f"/servers/{server}/applications/{application}/messageflows?depth=2"
+        )
+        flows_task = fetch_ace(
+            node, flow_path, "flow",
+            node=node, server=server, application=application,
+        )
+    else:
+        flow_path = f"/servers/{server}/messageflows?depth=2"
+        flows_task = fetch_ace(
+            node, flow_path, "flow", node=node, server=server
+        )
+
+    apps_raw, flows_raw = await asyncio.gather(apps_task, flows_task)
+
+    envelope: dict = {"node": node, "server": server}
+    if application:
+        envelope["application"] = application
+
+    try:
+        apps_doc = json.loads(apps_raw)
+    except json.JSONDecodeError:
+        apps_doc = {"status": "error", "message": apps_raw}
+
+    if apps_doc.get("status") == "success":
+        children = (apps_doc.get("raw_response") or {}).get("children", [])
+        envelope["applications"] = [
+            {
+                "name": c.get("name"),
+                "active": c.get("active"),
+                "properties": c.get("properties"),
+                "descriptiveProperties": c.get("descriptiveProperties"),
+            }
+            for c in children
+        ]
+    else:
+        envelope["applications_error"] = apps_doc.get("message")
+
+    try:
+        flows_doc = json.loads(flows_raw)
+    except json.JSONDecodeError:
+        flows_doc = {"status": "error", "message": flows_raw}
+
+    if flows_doc.get("status") == "success":
+        envelope["message_flows"] = (
+            flows_doc.get("raw_response") or {}
+        ).get("children", [])
+    else:
+        envelope["message_flows_error"] = flows_doc.get("message")
+
+    return envelope
+
+
 # ---------------------------------------------------------------------------
 # Tool registration
 # ---------------------------------------------------------------------------
@@ -243,11 +540,11 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     @logged_tool
     async def mq_queue_inspect(
-        queue_name: str,
+        queue_names: list[str],
         qmgr_name: str | None = None,
         hostname: str | None = None,
     ) -> str:
-        """IBM MQ: Inspect a queue end-to-end in a single call.
+        """IBM MQ: Inspect one or more queues end-to-end in a single call.
 
         Bundles manifest discovery + alias resolution + a full attribute fetch
         (`DISPLAY QLOCAL(<Q>) ALL`), so it answers ANY queue-property question:
@@ -259,65 +556,43 @@ def register(mcp: FastMCP) -> None:
         returns both the alias mapping and the target's full attributes; for QR*
         remote queues it returns the QREMOTE definition (RNAME/RQMNAME/XMITQ).
 
+        Pass MULTIPLE queue names to inspect them all in one call — e.g. for
+        "what is the depth of QL.IN.APP1 and QL.IN.APP2?" send
+        `queue_names=["QL.IN.APP1", "QL.IN.APP2"]`. Each queue is inspected
+        independently and the results are concatenated; one queue failing or
+        being absent does not stop the others.
+
         Args:
-            queue_name: The queue name (QL.*, QA.*, QR.*, or any other).
+            queue_names: One or more queue names (QL.*, QA.*, QR.*, or any
+                other), as a list — e.g. ["QL.IN.APP1"] or
+                ["QL.IN.APP1", "QL.IN.APP2"].
             qmgr_name: Optional. When given, goes straight to the live queue
-                manager (FAST PATH) instead of consulting the manifest.
+                manager (FAST PATH) instead of consulting the manifest. Applies
+                to every queue in `queue_names`.
             hostname: Optional explicit host. Used when the QM is not in the
                 manifest; otherwise the manifest's hostname wins.
         """
-        if qmgr_name:
-            target_host, err = _resolve_target_host(qmgr_name, hostname)
-            if err:
-                return err
-            allowed, message = hostname_allowed(target_host)
-            if not allowed:
-                return message
-            return await _inspect_queue_on_qm(qmgr_name, queue_name, target_host)
+        names = _as_str_list(queue_names)
+        if not names:
+            return "❌ No queue name supplied. Pass queue_names=[\"QL.IN.APP1\", ...]."
+        if len(names) == 1:
+            return await _inspect_one_queue(names[0], qmgr_name, hostname)
 
-        results = search_objects_structured(queue_name)
-        if not results:
-            return (
-                f"❌ '{queue_name}' not found in the manifest. "
-                "Pass `qmgr_name=` (and optionally `hostname=`) to query a "
-                "live queue manager directly."
-            )
-
-        accessible = [r for r in results if not r["restricted"]]
-        restricted = [r for r in results if r["restricted"]]
-
-        if not accessible:
-            return (
-                f"🚫 '{queue_name}' was found, but only on restricted/production "
-                "systems. I do not have access to these."
-            )
-
-        sections = [
-            f"🔍 '{queue_name}' found on {len(accessible)} accessible "
-            f"queue manager(s).\n"
-        ]
-        for entry in accessible:
-            sections.append(
-                await _inspect_queue_on_qm(
-                    entry["qmgr"],
-                    queue_name,
-                    entry["hostname"],
-                    entry["object_type"],
-                )
-            )
-        footer = _restricted_footer(restricted)
-        if footer:
-            sections.append(footer)
+        sections = [f"🔍 Inspecting {len(names)} queues.\n"]
+        for q in names:
+            sections.append(f"════════ Queue: {q} ════════")
+            sections.append(await _inspect_one_queue(q, qmgr_name, hostname))
+            sections.append("")
         return "\n".join(sections)
 
     @mcp.tool()
     @logged_tool
     async def mq_channel_inspect(
-        channel_name: str,
+        channel_names: list[str],
         qmgr_name: str | None = None,
         hostname: str | None = None,
     ) -> str:
-        """IBM MQ: Inspect a channel end-to-end in a single call.
+        """IBM MQ: Inspect one or more channels end-to-end in a single call.
 
         Returns BOTH `DISPLAY CHSTATUS(<C>) ALL` (runtime status) AND
         `DISPLAY CHANNEL(<C>) CHLTYPE CONNAME SSLCIPH SSLPEER CERTLABL
@@ -325,299 +600,196 @@ def register(mcp: FastMCP) -> None:
         One call answers "is it running", "what's the config", "SSL set up",
         and "where does it connect to".
 
+        Pass MULTIPLE channel names to inspect them all in one call — e.g. for
+        "are CH.A and CH.B up?" send `channel_names=["CH.A", "CH.B"]`. Each
+        channel is inspected independently and the results are concatenated.
+
         Args:
-            channel_name: The MQ channel name.
+            channel_names: One or more MQ channel names, as a list — e.g.
+                ["CH.APP.SVRCONN"] or ["CH.TO.PARTNER", "CH.SDR.TO.QM2"].
             qmgr_name: Optional. When given, goes straight to that QM (FAST PATH).
+                Applies to every channel in `channel_names`.
             hostname: Optional explicit host. Used when the QM is not in the
                 manifest; otherwise the manifest's hostname wins.
         """
-        if qmgr_name:
-            target_host, err = _resolve_target_host(qmgr_name, hostname)
-            if err:
-                return err
-            allowed, message = hostname_allowed(target_host)
-            if not allowed:
-                return message
-            return await _inspect_channel_on_qm(qmgr_name, channel_name, target_host)
+        names = _as_str_list(channel_names)
+        if not names:
+            return "❌ No channel name supplied. Pass channel_names=[\"CH.A\", ...]."
+        if len(names) == 1:
+            return await _inspect_one_channel(names[0], qmgr_name, hostname)
 
-        results = search_objects_structured(channel_name, "CHANNEL")
-        if not results:
-            results = search_objects_structured(channel_name)
-        if not results:
-            return (
-                f"❌ '{channel_name}' not found in the manifest. "
-                "Pass `qmgr_name=` (and optionally `hostname=`) to query a "
-                "live queue manager directly."
-            )
-
-        accessible = [r for r in results if not r["restricted"]]
-        restricted = [r for r in results if r["restricted"]]
-
-        if not accessible:
-            return (
-                f"🚫 '{channel_name}' was found, but only on restricted/production "
-                "systems. I do not have access to these."
-            )
-
-        sections = [
-            f"🔍 Channel '{channel_name}' found on {len(accessible)} accessible "
-            f"queue manager(s).\n"
-        ]
-        for entry in accessible:
-            sections.append(
-                await _inspect_channel_on_qm(
-                    entry["qmgr"], channel_name, entry["hostname"]
-                )
-            )
-        footer = _restricted_footer(restricted)
-        if footer:
-            sections.append(footer)
+        sections = [f"🔍 Inspecting {len(names)} channels.\n"]
+        for c in names:
+            sections.append(f"════════ Channel: {c} ════════")
+            sections.append(await _inspect_one_channel(c, qmgr_name, hostname))
+            sections.append("")
         return "\n".join(sections)
 
     @mcp.tool()
     @logged_tool
     async def mq_host_overview(
-        qmgr_name: str | None = None,
-        hostname: str | None = None,
+        qmgr_names: list[str] | None = None,
+        hostnames: list[str] | None = None,
         mqsc_command: str | None = None,
     ) -> str:
         """IBM MQ: Host-level overview — dspmq + dspmqver, plus one optional read-only MQSC.
 
-        Resolves the target host as follows:
-          1. Explicit `hostname` wins if supplied.
-          2. Else `qmgr_name` is looked up in the manifest.
-          3. Else the configured default `MQ_URL_BASE` is used.
+        For each target it resolves the host as follows:
+          1. An explicit hostname is used directly.
+          2. Else a queue-manager name is looked up in the manifest.
+          3. Else (no targets at all) the configured default `MQ_URL_BASE`.
 
         Returns the list of queue managers on the host (`dspmq` equivalent)
-        and the MQ installation/version info (`dspmqver` equivalent). When
-        BOTH `qmgr_name` and `mqsc_command` are supplied, the command is
-        validated against the read-only allow-list and its output is appended.
+        and the MQ installation/version info (`dspmqver` equivalent). When a
+        queue manager is targeted AND `mqsc_command` is supplied, the command
+        is validated against the read-only allow-list and its output appended.
+
+        Pass MULTIPLE queue managers or hosts to overview them all in one call
+        — e.g. "MQ version on QM1 and QM2" → `qmgr_names=["QM1","QM2"]`, or
+        "dspmq on hostA and hostB" → `hostnames=["hostA","hostB"]`. A single
+        `qmgr_names` + single `hostnames` pair is treated as one paired target
+        (run the MQSC on that QM via that explicit host). `mqsc_command` is
+        applied to every queue-manager target.
 
         Args:
-            qmgr_name: Optional queue manager name to target.
-            hostname: Optional explicit host. Wins over manifest lookup.
-            mqsc_command: Optional read-only MQSC DISPLAY command. Requires
-                `qmgr_name`. Modification verbs are blocked.
+            qmgr_names: Optional list of queue manager names to target.
+            hostnames: Optional list of explicit hosts. An explicit host is
+                used directly (skips manifest lookup).
+            mqsc_command: Optional read-only MQSC DISPLAY command. Requires a
+                queue-manager target. Modification verbs are blocked.
         """
-        target_host = ""
-        dspmq_url = MQ_URL_BASE + "qmgr/"
-        dspmqver_url = MQ_URL_BASE + "installation"
+        qms = _as_str_list(qmgr_names)
+        hosts = _as_str_list(hostnames)
 
-        if hostname:
-            target_host = hostname.strip()
-        elif qmgr_name:
-            resolved, err = _resolve_target_host(qmgr_name, None)
-            if err:
-                return err
-            target_host = resolved
+        # A single QM + single host is the existing "paired" target (run the
+        # MQSC on that QM, reached via that explicit host).
+        if len(qms) == 1 and len(hosts) == 1:
+            targets: list[tuple[str | None, str | None]] = [(qms[0], hosts[0])]
+        else:
+            targets = [(q, None) for q in qms] + [(None, h) for h in hosts]
+        if not targets:
+            targets = [(None, None)]  # default MQ_URL_BASE overview
 
-        if target_host:
-            allowed, message = hostname_allowed(target_host)
-            if not allowed:
-                return message
-            dspmq_url = build_url(target_host, "qmgr/")
-            dspmqver_url = build_url(target_host, "installation")
+        if len(targets) == 1:
+            q, h = targets[0]
+            return await _host_overview_one(q, h, mqsc_command)
 
-        headers = {
-            "Content-Type": "application/json",
-            "ibm-mq-rest-csrf-token": CSRF_TOKEN,
-        }
-
-        async def _do_dspmq() -> str:
-            try:
-                resp = await mq_get(dspmq_url, headers=headers, timeout=30.0)
-                resp.raise_for_status()
-                return prettify_dspmq(resp.content)
-            except Exception as err:
-                return friendly_error(err, hostname=target_host)
-
-        async def _do_dspmqver() -> str:
-            try:
-                resp = await mq_get(dspmqver_url, headers=headers, timeout=30.0)
-                resp.raise_for_status()
-                return prettify_dspmqver(resp.content)
-            except Exception as err:
-                return friendly_error(err, hostname=target_host)
-
-        dspmq_result, dspmqver_result = await asyncio.gather(
-            _do_dspmq(), _do_dspmqver()
-        )
-
-        sections = [
-            f"--- Host overview ({target_host or 'default MQ_URL_BASE'}) ---",
-            "[Queue managers (dspmq)]",
-            dspmq_result,
-            "\n[MQ version (dspmqver)]",
-            dspmqver_result,
-        ]
-
-        if mqsc_command:
-            if not qmgr_name:
-                sections.append(
-                    "\n⚠️ `mqsc_command` was supplied without `qmgr_name`; "
-                    "MQSC was not executed. Pass `qmgr_name=` to target a QM."
-                )
-            elif is_modification_command(mqsc_command):
-                logger.warning(
-                    "Blocked modification command from mq_host_overview: %s (qmgr=%s)",
-                    mqsc_command,
-                    qmgr_name,
-                )
-                sections.append("\n" + MODIFY_BLOCKED_MSG)
-            else:
-                mqsc_result = await run_mqsc_raw(
-                    qmgr_name, mqsc_command, target_host
-                )
-                sections.append(f"\n[MQSC `{mqsc_command}` on {qmgr_name}]")
-                sections.append(mqsc_result)
-
+        sections = [f"🔍 Inspecting {len(targets)} hosts/queue managers.\n"]
+        for q, h in targets:
+            label = q or h or "default MQ_URL_BASE"
+            sections.append(f"════════ {label} ════════")
+            sections.append(await _host_overview_one(q, h, mqsc_command))
+            sections.append("")
         return "\n".join(sections)
 
     # ----- ACE ----------------------------------------------------------------
 
     @mcp.tool()
     @logged_tool
-    async def ace_node_overview(node: str) -> str:
+    async def ace_node_overview(nodes: list[str]) -> str:
         """IBM ACE: Node-level overview — node status + every integration server in one call.
 
-        Confirms the node is in `node_config.csv`, then issues the node-status
-        and `/servers?depth=2` calls concurrently and returns a single JSON
-        envelope: `{status, node, properties, descriptiveProperties,
-        servers: [{name, active, properties}]}`.
+        For each node it issues the node-status and `/servers?depth=2` calls
+        concurrently and builds an envelope: `{status, node, properties,
+        descriptiveProperties, servers: [{name, active, properties}]}`.
+
+        Pass MULTIPLE nodes to overview them all in one call — e.g. "what's on
+        NODE1 and NODE2?" → `nodes=["NODE1","NODE2"]`. A single node returns
+        that envelope directly; multiple nodes return
+        `{status, count, nodes: [<envelope>, ...]}`.
 
         Args:
-            node: The integration node name (must exist in node_config.csv).
+            nodes: One or more integration node names, as a list — e.g.
+                ["NODE1"] or ["NODE1","NODE2"].
         """
-        node_task = fetch_ace(node, "", "node", node=node)
-        servers_task = fetch_ace(node, "/servers?depth=2", "server", node=node)
-        node_raw, servers_raw = await asyncio.gather(node_task, servers_task)
-
-        envelope: dict = {"node": node}
-
-        try:
-            node_doc = json.loads(node_raw)
-        except json.JSONDecodeError:
-            node_doc = {"status": "error", "message": node_raw}
-
-        if node_doc.get("status") == "success":
-            raw = node_doc.get("raw_response", {}) or {}
-            envelope["status"] = "success"
-            envelope["properties"] = raw.get("properties")
-            envelope["descriptiveProperties"] = raw.get("descriptiveProperties")
-        else:
-            envelope["status"] = node_doc.get("status", "error")
-            envelope["message"] = node_doc.get("message")
-
-        try:
-            servers_doc = json.loads(servers_raw)
-        except json.JSONDecodeError:
-            servers_doc = {"status": "error", "message": servers_raw}
-
-        if servers_doc.get("status") == "success":
-            children = (servers_doc.get("raw_response") or {}).get("children", [])
-            envelope["servers"] = [
+        names = _as_str_list(nodes)
+        if not names:
+            return json.dumps(
                 {
-                    "name": c.get("name"),
-                    "active": c.get("active"),
-                    "properties": c.get("properties"),
-                }
-                for c in children
-            ]
-        else:
-            envelope["servers_error"] = servers_doc.get("message")
+                    "status": "error",
+                    "message": "No node supplied. Pass nodes=[\"NODE1\", ...].",
+                },
+                indent=2,
+            )
+        if len(names) == 1:
+            return json.dumps(await _node_overview_one(names[0]), indent=2)
 
-        envelope = {k: v for k, v in envelope.items() if v is not None}
-        return json.dumps(envelope, indent=2)
+        results = await asyncio.gather(*[_node_overview_one(n) for n in names])
+        return json.dumps(
+            {"status": "success", "count": len(results), "nodes": list(results)},
+            indent=2,
+        )
 
     @mcp.tool()
     @logged_tool
     async def ace_server_explore(
-        node: str, server: str, application: str | None = None
+        node: str, servers: list[str], application: str | None = None
     ) -> str:
-        """IBM ACE: Explore an integration server — applications + message flows in one call.
+        """IBM ACE: Explore one or more integration servers — applications + message flows.
 
-        Returns the list of applications on `server` AND the relevant message
-        flows in a single JSON envelope. When `application` is given the
-        flows are scoped to that application; otherwise flows directly on the
-        integration server are returned alongside the application list.
+        For each server it returns the list of applications AND the relevant
+        message flows. When `application` is given the flows are scoped to that
+        application; otherwise flows directly on the integration server are
+        returned alongside the application list.
+
+        Pass MULTIPLE servers to explore them all in one call — e.g. "apps on
+        IS001 and IS002 on NODE2" → `node="NODE2", servers=["IS001","IS002"]`.
+        All servers must live on the same `node`. A single server returns its
+        envelope directly; multiple return `{status, node, count, servers:
+        [<envelope>, ...]}`.
 
         Args:
-            node: The integration node name.
-            server: The integration server name on that node.
-            application: Optional application to scope message flows to.
+            node: The integration node name (shared by all servers).
+            servers: One or more integration server names on that node, as a
+                list — e.g. ["IS001"] or ["IS001","IS002"].
+            application: Optional application to scope message flows to
+                (applied to every server).
         """
-        apps_task = fetch_ace(
-            node,
-            f"/servers/{server}/applications?depth=2",
-            "app",
-            node=node,
-            server=server,
+        names = _as_str_list(servers)
+        if not names:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": "No server supplied. Pass servers=[\"IS001\", ...].",
+                },
+                indent=2,
+            )
+        if len(names) == 1:
+            return json.dumps(
+                await _server_explore_one(node, names[0], application), indent=2
+            )
+
+        results = await asyncio.gather(
+            *[_server_explore_one(node, s, application) for s in names]
         )
-        if application:
-            flow_path = (
-                f"/servers/{server}/applications/{application}/messageflows?depth=2"
-            )
-            flows_task = fetch_ace(
-                node, flow_path, "flow",
-                node=node, server=server, application=application,
-            )
-        else:
-            flow_path = f"/servers/{server}/messageflows?depth=2"
-            flows_task = fetch_ace(
-                node, flow_path, "flow", node=node, server=server
-            )
-
-        apps_raw, flows_raw = await asyncio.gather(apps_task, flows_task)
-
-        envelope: dict = {"node": node, "server": server}
+        envelope: dict = {
+            "status": "success",
+            "node": node,
+            "count": len(results),
+            "servers": list(results),
+        }
         if application:
             envelope["application"] = application
-
-        try:
-            apps_doc = json.loads(apps_raw)
-        except json.JSONDecodeError:
-            apps_doc = {"status": "error", "message": apps_raw}
-
-        if apps_doc.get("status") == "success":
-            children = (apps_doc.get("raw_response") or {}).get("children", [])
-            envelope["applications"] = [
-                {
-                    "name": c.get("name"),
-                    "active": c.get("active"),
-                    "properties": c.get("properties"),
-                    "descriptiveProperties": c.get("descriptiveProperties"),
-                }
-                for c in children
-            ]
-        else:
-            envelope["applications_error"] = apps_doc.get("message")
-
-        try:
-            flows_doc = json.loads(flows_raw)
-        except json.JSONDecodeError:
-            flows_doc = {"status": "error", "message": flows_raw}
-
-        if flows_doc.get("status") == "success":
-            envelope["message_flows"] = (
-                flows_doc.get("raw_response") or {}
-            ).get("children", [])
-        else:
-            envelope["message_flows_error"] = flows_doc.get("message")
-
         return json.dumps(envelope, indent=2)
 
     @mcp.tool()
     @logged_tool
-    def ace_search(search_string: str, scope: str | None = None) -> str:
+    def ace_search(search_strings: list[str], scope: str | None = None) -> str:
         """IBM ACE: Combined OFFLINE search across configured nodes and the BIP-message dump.
 
         Searches `resources/node_config.csv` (configured nodes) and/or
         `resources/node_dump.csv` (cached BIP messages from the periodic
         extract job) in a single call.
 
+        Pass MULTIPLE search strings to match any of them in one call — e.g.
+        "find anything about OrderFlow or PaymentFlow" →
+        `search_strings=["OrderFlow","PaymentFlow"]`. A row matches if it
+        matches ANY supplied string; matches are merged and de-duplicated.
+
         Args:
-            search_string: Substring to match (case-insensitive). Pass an
-                empty string with `scope="nodes"` to list every configured node.
+            search_strings: One or more substrings to match (case-insensitive),
+                as a list. Pass `[""]` (or an empty list) with `scope="nodes"`
+                to list every configured node.
             scope: One of `"nodes"`, `"dump"`, or `"all"` (default `"all"`).
                 - `"nodes"` searches only `node_config.csv`.
                 - `"dump"` searches only `node_dump.csv`.
@@ -635,7 +807,16 @@ def register(mcp: FastMCP) -> None:
                 indent=2,
             )
 
-        envelope: dict = {"status": "success", "search_string": search_string,
+        # Keep blanks here (unlike _as_str_list): an empty string means
+        # "match everything". An empty/blank list collapses to a single
+        # match-all query.
+        queries = [q.strip() for q in (search_strings or []) if q is not None]
+        queries = list(dict.fromkeys(queries))
+        if not queries:
+            queries = [""]
+        match_all = "" in queries
+
+        envelope: dict = {"status": "success", "search_strings": queries,
                           "scope": s}
 
         if s in {"all", "nodes"}:
@@ -646,17 +827,20 @@ def register(mcp: FastMCP) -> None:
                     "node_config.csv is empty or missing."
                 )
             else:
-                if search_string:
-                    pattern = re.escape(search_string)
-                    mask = df.astype(str).apply(
-                        lambda row: row.str.contains(
-                            pattern, case=False, na=False
-                        ).any(),
-                        axis=1,
-                    )
-                    matches = df[mask]
-                else:
+                if match_all:
                     matches = df
+                else:
+                    combined = None
+                    for q in queries:
+                        pattern = re.escape(q)
+                        mask = df.astype(str).apply(
+                            lambda row: row.str.contains(
+                                pattern, case=False, na=False
+                            ).any(),
+                            axis=1,
+                        )
+                        combined = mask if combined is None else (combined | mask)
+                    matches = df[combined]
                 envelope["nodes"] = matches.to_dict(orient="records")
 
         if s in {"all", "dump"}:
@@ -666,7 +850,15 @@ def register(mcp: FastMCP) -> None:
                     "node_dump.csv is empty or missing."
                 )
             else:
-                envelope["dump_matches"] = search_node_dump(search_string)
+                seen: set[str] = set()
+                merged: list[dict] = []
+                for q in queries:
+                    for row in search_node_dump(q):
+                        key = json.dumps(row, sort_keys=True, default=str)
+                        if key not in seen:
+                            seen.add(key)
+                            merged.append(row)
+                envelope["dump_matches"] = merged
 
         return json.dumps(envelope, indent=2)
 
@@ -674,7 +866,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     @logged_tool
-    def get_cert_details(search_string: str) -> str:
+    def get_cert_details(search_strings: list[str]) -> str:
         """Certificate: Look up TLS/SSL certificate details from the OFFLINE inventory (`resources/cert_dump.csv`).
 
         Use this whenever a user asks about a certificate — its expiry,
@@ -685,34 +877,69 @@ def register(mcp: FastMCP) -> None:
         returns: hostname, alias, cn_name (the certificate's CN/subject),
         valid_from and valid_until (the validity window, as date strings;
         valid_until is the expiry date), expirydays (whole days until expiry,
-        computed live against today — negative means already expired), and
+        computed live against today — negative means already expired),
         ace_nodes (the ACE integration node(s) running on that hostname per the
-        offline node dump; empty for a pure-MQ host with no ACE node). The
-        search matches the given string (case-insensitive substring) against
-        ALL fields, so you can look up by hostname, alias, or CN.
+        offline node dump; empty for a pure-MQ host with no ACE node), and
+        matched_query (which of the supplied search strings matched this cert).
+        Each search string matches (case-insensitive substring) against ALL
+        fields, so you can look up by hostname, alias, or CN.
+
+        Pass MULTIPLE search strings to look up several certificates in one
+        call — e.g. for "when do the certs on lodmq01 and lotace03 expire?"
+        send `search_strings=["lodmq01", "lotace03"]`. Matches from all queries
+        are merged into one `results` array, de-duplicated by
+        (hostname, alias, cn_name).
 
         Args:
-            search_string: Hostname, alias, or CN substring to match
-                (e.g. 'lodmq01', 'mqweb-https', 'example.com').
+            search_strings: One or more hostname/alias/CN substrings to match,
+                as a list — e.g. ["lodmq01"] or ["lodmq01", "mqweb-https"].
         """
-        results = search_certs(search_string)
-        for row in results:
-            row["ace_nodes"] = nodes_on_host(row.get("hostname", ""))
+        queries = _as_str_list(search_strings)
+        if not queries:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": "No search string supplied. Pass search_strings=[\"lodmq01\", ...].",
+                    "details": {},
+                },
+                indent=2,
+            )
+
+        # Distinguish "no inventory loaded" from "no matches".
+        if load_cert_dump().empty:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": "No certificate records found. cert_dump.csv may be empty or missing.",
+                    "details": {},
+                },
+                indent=2,
+            )
+
+        # Merge matches across all queries, deduped by (hostname, alias, cn_name),
+        # preserving first-seen order and recording which queries matched each row.
+        merged: dict[tuple, dict] = {}
+        order: list[tuple] = []
+        for s in queries:
+            for row in search_certs(s):
+                key = (row.get("hostname"), row.get("alias"), row.get("cn_name"))
+                if key in merged:
+                    if s not in merged[key]["matched_query"]:
+                        merged[key]["matched_query"].append(s)
+                    continue
+                row["ace_nodes"] = nodes_on_host(row.get("hostname", ""))
+                row["matched_query"] = [s]
+                merged[key] = row
+                order.append(key)
+
+        results = [merged[k] for k in order]
+        q_word = "query" if len(queries) == 1 else "queries"
+
         if not results:
-            # Distinguish "no inventory loaded" from "no matches".
-            if load_cert_dump().empty:
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "message": "No certificate records found. cert_dump.csv may be empty or missing.",
-                        "details": {},
-                    },
-                    indent=2,
-                )
             return json.dumps(
                 {
                     "status": "success",
-                    "message": f"'{search_string}' not found in the certificate inventory.",
+                    "message": f"No certificates found matching {len(queries)} {q_word}: {queries}.",
                     "results": [],
                 },
                 indent=2,
@@ -721,7 +948,7 @@ def register(mcp: FastMCP) -> None:
         return json.dumps(
             {
                 "status": "success",
-                "message": f"Found {len(results)} certificate(s) matching '{search_string}'.",
+                "message": f"Found {len(results)} certificate(s) matching {len(queries)} {q_word}.",
                 "results": results,
             },
             indent=2,

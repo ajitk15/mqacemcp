@@ -67,56 +67,63 @@ EXPECTED_TOOLS = {
 }
 
 CALLS = [
-    # --- mq_queue_inspect (5) -------------------------------------------------
-    ("mq_queue_inspect", {"queue_name": "QL.IN.APP1"}, "live"),
-    ("mq_queue_inspect", {"queue_name": "QL.IN.APP1", "qmgr_name": "MQQMGR2"}, "live"),
-    ("mq_queue_inspect", {"queue_name": "QA.IN.APP1", "qmgr_name": "MQQMGR2"}, "live"),
-    ("mq_queue_inspect", {"queue_name": "QR.IN.APP2", "qmgr_name": "MQQMGR2"}, "live"),              # remote queue -> routing (RQMNAME/RNAME/XMITQ)
-    ("mq_queue_inspect", {"queue_name": "NOPE.DOES.NOT.EXIST"}, "expect_not_found"),
+    # --- mq_queue_inspect (6) -------------------------------------------------
+    ("mq_queue_inspect", {"queue_names": ["QL.IN.APP1"]}, "live"),
+    ("mq_queue_inspect", {"queue_names": ["QL.IN.APP1", "QL.IN.APP2"], "qmgr_name": "MQQMGR2"}, "live"),  # MULTI-TARGET: two queues, one call
+    ("mq_queue_inspect", {"queue_names": ["QL.IN.APP1"], "qmgr_name": "MQQMGR2"}, "live"),
+    ("mq_queue_inspect", {"queue_names": ["QA.IN.APP1"], "qmgr_name": "MQQMGR2"}, "live"),
+    ("mq_queue_inspect", {"queue_names": ["QR.IN.APP2"], "qmgr_name": "MQQMGR2"}, "live"),              # remote queue -> routing (RQMNAME/RNAME/XMITQ)
+    ("mq_queue_inspect", {"queue_names": ["NOPE.DOES.NOT.EXIST"]}, "expect_not_found"),
 
-    # --- mq_channel_inspect (3) -----------------------------------------------
-    ("mq_channel_inspect", {"channel_name": "MQQMGR2.TO.MQQMGR1"}, "live"),
-    ("mq_channel_inspect", {"channel_name": "MQQMGR2.TO.MQQMGR1", "qmgr_name": "MQQMGR2"}, "live"),
-    ("mq_channel_inspect", {"channel_name": "CH.UNKNOWN.XYZ"}, "expect_not_found"),
+    # --- mq_channel_inspect (4) -----------------------------------------------
+    ("mq_channel_inspect", {"channel_names": ["MQQMGR2.TO.MQQMGR1"]}, "live"),
+    ("mq_channel_inspect", {"channel_names": ["MQQMGR2.TO.MQQMGR1"], "qmgr_name": "MQQMGR2"}, "live"),
+    ("mq_channel_inspect", {"channel_names": ["MQQMGR2.TO.MQQMGR1", "CH.UNKNOWN.XYZ"]}, "live"),        # MULTI-TARGET: two channels, one call
+    ("mq_channel_inspect", {"channel_names": ["CH.UNKNOWN.XYZ"]}, "expect_not_found"),
 
-    # --- mq_host_overview (13) ------------------------------------------------
+    # --- mq_host_overview (14) ------------------------------------------------
     ("mq_host_overview", {}, "live"),                                                              # default MQ_URL_BASE
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2"}, "live"),                                        # resolved via manifest
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QMGR ALL"}, "live"),    # + read-only DISPLAY
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) ALL"}, "live"),                                       # full queue properties
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) MAXDEPTH CURDEPTH QDEPTHHI QDEPTHLO"}, "live"),       # max depth + thresholds
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) CRDATE CRTIME"}, "live"),                             # queue creation date/time
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY QMGR DEADQ DEFXMITQ MAXMSGL MAXHANDS CCSID"}, "live"),                   # focused QMGR properties
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY TOPIC(*) TOPICSTR DESCR DEFPRTY"}, "live"),                              # topics
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY TPSTATUS('SYSTEM/#') TYPE(TOPIC)"}, "live"),                             # topic publish/subscribe status
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY SUB(*) SUBID DEST TOPICSTR"}, "live"),                                   # subscriptions
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DISPLAY SBSTATUS(*) ALL"}, "live"),                                              # subscription status
-    ("mq_host_overview", {"qmgr_name": "MQQMGR2", "mqsc_command": "DEFINE QLOCAL(SMOKE.BLOCK.TEST)"}, "expect_blocked"),
-    ("mq_host_overview", {"hostname": "loq-mq01", "mqsc_command": "DISPLAY QMGR"}, "expect_warn_no_qmgr"),
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"]}, "live"),                                     # resolved via manifest
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR1", "MQQMGR2"]}, "live"),                          # MULTI-TARGET: two QMs, one call
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY QMGR ALL"}, "live"),    # + read-only DISPLAY
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) ALL"}, "live"),                                       # full queue properties
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) MAXDEPTH CURDEPTH QDEPTHHI QDEPTHLO"}, "live"),       # max depth + thresholds
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY QLOCAL(QL.IN.APP1) CRDATE CRTIME"}, "live"),                             # queue creation date/time
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY QMGR DEADQ DEFXMITQ MAXMSGL MAXHANDS CCSID"}, "live"),                   # focused QMGR properties
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY TOPIC(*) TOPICSTR DESCR DEFPRTY"}, "live"),                              # topics
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY TPSTATUS('SYSTEM/#') TYPE(TOPIC)"}, "live"),                             # topic publish/subscribe status
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY SUB(*) SUBID DEST TOPICSTR"}, "live"),                                   # subscriptions
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DISPLAY SBSTATUS(*) ALL"}, "live"),                                              # subscription status
+    ("mq_host_overview", {"qmgr_names": ["MQQMGR2"], "mqsc_command": "DEFINE QLOCAL(SMOKE.BLOCK.TEST)"}, "expect_blocked"),
+    ("mq_host_overview", {"hostnames": ["loq-mq01"], "mqsc_command": "DISPLAY QMGR"}, "expect_warn_no_qmgr"),
 
-    # --- ace_node_overview (4) ------------------------------------------------
-    ("ace_node_overview", {"node": "NODE2"}, "live"),                                  # ACE 13.0.4.0, 3 IS
-    ("ace_node_overview", {"node": "NODE3"}, "live"),                                  # ACE 13.0.6.0, 0 IS (edge)
-    ("ace_node_overview", {"node": "NODE4"}, "live"),                                  # configured but unreachable -> skip
-    ("ace_node_overview", {"node": "GHOST.NODE"}, "expect_error_envelope"),
+    # --- ace_node_overview (5) ------------------------------------------------
+    ("ace_node_overview", {"nodes": ["NODE2"]}, "live"),                               # ACE 13.0.4.0, 3 IS
+    ("ace_node_overview", {"nodes": ["NODE2", "NODE3"]}, "live"),                      # MULTI-TARGET: two nodes, one call
+    ("ace_node_overview", {"nodes": ["NODE3"]}, "live"),                               # ACE 13.0.6.0, 0 IS (edge)
+    ("ace_node_overview", {"nodes": ["NODE4"]}, "live"),                               # configured but unreachable -> skip
+    ("ace_node_overview", {"nodes": ["GHOST.NODE"]}, "expect_error_envelope"),
 
-    # --- ace_server_explore (5) -----------------------------------------------
-    ("ace_server_explore", {"node": "NODE2", "server": "IS001"}, "live"),
-    ("ace_server_explore", {"node": "NODE2", "server": "IS002"}, "live"),
-    ("ace_server_explore", {"node": "NODE2", "server": "snaps"}, "live"),
-    ("ace_server_explore", {"node": "NODE2", "server": "IS001", "application": "snaplogic1"}, "live"),
-    ("ace_server_explore", {"node": "NODE2", "server": "GHOST.SERVER"}, "expect_error_envelope"),
+    # --- ace_server_explore (6) -----------------------------------------------
+    ("ace_server_explore", {"node": "NODE2", "servers": ["IS001"]}, "live"),
+    ("ace_server_explore", {"node": "NODE2", "servers": ["IS001", "IS002"]}, "live"),  # MULTI-TARGET: two servers, one call
+    ("ace_server_explore", {"node": "NODE2", "servers": ["IS002"]}, "live"),
+    ("ace_server_explore", {"node": "NODE2", "servers": ["snaps"]}, "live"),
+    ("ace_server_explore", {"node": "NODE2", "servers": ["IS001"], "application": "snaplogic1"}, "live"),
+    ("ace_server_explore", {"node": "NODE2", "servers": ["GHOST.SERVER"]}, "expect_error_envelope"),
 
-    # --- ace_search (4) -------------------------------------------------------
-    ("ace_search", {"search_string": "", "scope": "nodes"}, "offline"),
-    ("ace_search", {"search_string": "BIP", "scope": "dump"}, "offline"),
-    ("ace_search", {"search_string": ""}, "offline"),                                              # default scope = all
-    ("ace_search", {"search_string": "x", "scope": "bogus"}, "expect_error_envelope"),
+    # --- ace_search (5) -------------------------------------------------------
+    ("ace_search", {"search_strings": [""], "scope": "nodes"}, "offline"),
+    ("ace_search", {"search_strings": ["BIP"], "scope": "dump"}, "offline"),
+    ("ace_search", {"search_strings": ["BIP", "Order"], "scope": "dump"}, "offline"),              # MULTI-TARGET: match either, one call
+    ("ace_search", {"search_strings": [""]}, "offline"),                                           # default scope = all
+    ("ace_search", {"search_strings": ["x"], "scope": "bogus"}, "expect_error_envelope"),
 
-    # --- get_cert_details (3) -------------------------------------------------
-    ("get_cert_details", {"search_string": "lodmq01"}, "offline"),                                  # match by hostname
-    ("get_cert_details", {"search_string": "mqweb-https"}, "offline"),                              # match by alias
-    ("get_cert_details", {"search_string": "no-such-cert-anywhere"}, "offline"),                    # success, empty results
+    # --- get_cert_details (4) -------------------------------------------------
+    ("get_cert_details", {"search_strings": ["lodmq01"]}, "offline"),                                # match by hostname
+    ("get_cert_details", {"search_strings": ["mqweb-https"]}, "offline"),                            # match by alias
+    ("get_cert_details", {"search_strings": ["lodmq01", "lodace01"]}, "offline"),                    # MULTI-TARGET: two queries merged, one call
+    ("get_cert_details", {"search_strings": ["no-such-cert-anywhere"]}, "offline"),                  # success, empty results
 ]
 
 
