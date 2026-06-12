@@ -144,7 +144,7 @@ npm run dev
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENAI_API_KEY` | — | Required. OpenAI API key. |
-| `OPENAI_MODEL` | `gpt-4o` | LLM model name. |
+| `OPENAI_MODEL` | `gpt-5.4` | LLM model name. |
 | `MCP_SSE_URL` | `http://localhost:8000/sse` | Full SSE URL of any MCP server. |
 | `MCP_AUTH_USER`, `MCP_AUTH_PASSWORD` | — | Optional HTTP Basic Auth. |
 | `MCP_HEADERS_JSON` | — | Optional JSON object for Bearer tokens / custom headers. Merged on top of Basic Auth. |

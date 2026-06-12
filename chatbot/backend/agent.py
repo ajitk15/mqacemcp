@@ -136,7 +136,7 @@ def build_agent(tools: list[BaseTool]) -> tuple[object, MemorySaver]:
 
     The checkpointer is returned so `app.py` can clear a thread on /reset.
     """
-    model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+    model_name = os.getenv("OPENAI_MODEL", "gpt-5.4")
     llm = ChatOpenAI(model=model_name, temperature=0, streaming=True)
 
     bot_domain = os.getenv("BOT_DOMAIN", "").strip()
