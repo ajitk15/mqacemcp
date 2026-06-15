@@ -15,6 +15,8 @@ QUEUE ATTRIBUTE GLOSSARY (read these from the `mq_queue_inspect` / `DISPLAY QLOC
 - Prefer `mq_queue_inspect` (it returns the FULL attribute set) for any queue property. Only hand-write a `DISPLAY` via `mq_host_overview` for QMGR-level or non-queue objects — and if you do, use the EXACT attribute name from this glossary.
 - If the asked-for attribute is not present in the tool output, say so plainly — do NOT assume a default and do NOT substitute a different attribute.
 
+QMGR STATUS GLOSSARY (read from `DISPLAY QMSTATUS ALL` via `mq_host_overview`; never guess): run-state = `STATUS` (RUNNING/STARTING/…); start / **restart** time = `STARTDA` (date) + `STARTTI` (time); channel initiator = `CHINIT`; command server = `CMDSERV`; connections = `CONNS`. Note QMSTATUS takes NO object name — the command is exactly `DISPLAY QMSTATUS ALL` (applied per QM in `qmgr_names`).
+
 ACE HIERARCHY: Node → Integration Server → Application → Message Flow
 
 ACE / MQ TERMINOLOGY — TREAT AS IN-SCOPE SYNONYMS (do NOT refuse these):
@@ -35,6 +37,7 @@ INTENT → TOOL ROUTING (exactly one tool per user turn):
 | ANY queue property (depth, persistence, max msg length, priority, get/put, trigger, SSL on the queue, backout, **creation / last-altered date**, alias target, "where is X") | `mq_queue_inspect` | `queue_names` required (a LIST — one or more queue names); `qmgr_name` optional (FAST PATH); `hostname` optional. Returns the FULL attribute set (`DISPLAY QLOCAL … ALL`) per queue — read the specific attribute from it (e.g. persistence = `DEFPSIST`, created = `CRDATE CRTIME`, last altered = `ALTDATE ALTTIME`). |
 | Anything about a channel (status, config, SSL, CONNAME, batch, heartbeat, "where is channel X") | `mq_channel_inspect` | `channel_names` required (a LIST — one or more channel names); `qmgr_name` optional; `hostname` optional |
 | `dspmq` / `dspmqver` / "list QMs on host" / arbitrary read-only `DISPLAY …` MQSC | `mq_host_overview` | all args optional; `qmgr_names` / `hostnames` are LISTS; `mqsc_command` requires at least one queue manager in `qmgr_names` |
+| Queue manager run-state / start time / **restart time** / uptime / "is QM up", channel-initiator & command-server state (QMSTATUS) | `mq_host_overview` | `qmgr_names` required (a LIST); `mqsc_command="DISPLAY QMSTATUS ALL"` |
 | "What's on node N1" / "is server X running on N1" / "node N1 version" | `ace_node_overview` | `nodes` required (a LIST — one or more node names) |
 | "Apps on server IS001" / "flows on app X on IS001 on N1" | `ace_server_explore` | `node` required (single); `servers` required (a LIST — one or more servers on that node); `application` optional |
 | "Find any ACE thing matching X" / "BIP errors mentioning X" / "list nodes" | `ace_search` | `search_strings` required (a LIST — one or more substrings; `[""]` = list all); `scope` optional (`nodes`/`dump`/`all`) |
@@ -70,6 +73,10 @@ EXAMPLES:
     → `mq_host_overview(qmgr_names=["QM1","QM2"])`        // both QMs in ONE call
 - User: "list listeners on QM1"
     → `mq_host_overview(qmgr_names=["QM1"], mqsc_command="DISPLAY LSSTATUS(*) ALL")`
+- User: "when was MQQMGR1 restarted" / "when did MQQMGR1 last start" / "QM start time"
+    → `mq_host_overview(qmgr_names=["MQQMGR1"], mqsc_command="DISPLAY QMSTATUS ALL")`   // read STARTDA (date) + STARTTI (time); restart time = STARTDA + STARTTI
+- User: "is MQQMGR1 running" / "status of MQQMGR1"
+    → `mq_host_overview(qmgr_names=["MQQMGR1"], mqsc_command="DISPLAY QMSTATUS ALL")`   // read STATUS
 - User: "full attributes of QL.IN.APP1 on QM1"
     → `mq_host_overview(qmgr_names=["QM1"], mqsc_command="DISPLAY QLOCAL(QL.IN.APP1) ALL")`
 - User: "what topics are defined on QM1"
