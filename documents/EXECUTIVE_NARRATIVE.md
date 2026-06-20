@@ -65,8 +65,8 @@
 `scripts\start-all.ps1` launches the entire stack. Components:
 
 1. **Unified MCP Server** (Python) — 14 read-only tools (7 MQ + 6 ACE + 1 Certificate) behind one endpoint.
-2. **Agentic Backend** (FastAPI + LangGraph + GPT-4o) — the reasoning loop.
-3. **Web Chat UI** (Next.js + Tailwind) — operator interface with streaming tool steps, tables, Mermaid diagrams, session memory.
+2. **Agentic Backend** (FastAPI + LangGraph + GPT-5.5) — the reasoning loop.
+3. **Web Chat UI** (Streamlit) — operator interface with streaming tool steps, tables, Mermaid diagrams, session memory.
 
 *Visual:* a 3-box architecture diagram — Browser → Agent Backend → MCP Server → (MQ REST, ACE Admin REST, CSV manifests).
 
@@ -82,7 +82,7 @@ Mapped to the canonical agentic-AI checklist (10 of 12 components implemented):
 
 | Capability | How it shows up |
 |---|---|
-| **LLM reasoner** | GPT-4o picks the next step every turn |
+| **LLM reasoner** | GPT-5.5 picks the next step every turn |
 | **Tool registry** | 14 MQ + ACE + certificate tools auto-loaded over MCP |
 | **Tool selector** | The LLM itself — guided by tool docstrings, zero dispatcher code |
 | **ReAct action loop** | Think → call tool → observe → repeat, until done |
@@ -145,7 +145,7 @@ The architecture cleanly separates **the agentic chassis** (reusable as-is) from
 
 | Layer | What gets reused |
 |---|---|
-| **Web Chat UI** (Next.js + Tailwind) | 100% — streaming, tables, Mermaid, session memory, reset, branding hooks |
+| **Web Chat UI** (Streamlit) | 100% — streaming, tables, Mermaid, session memory, reset, branding hooks |
 | **Agentic Backend** (FastAPI + LangGraph ReAct + MemorySaver) | 100% — reasoning loop, tool loader, SSE event stream, output renderers |
 | **MCP Server scaffold** (config, logging, query log, error sanitiser, auth middleware, safety primitives) | 100% — drop in new tools and you inherit logging, auth, allow-listing, observability for free |
 | **Guardrail framework** (scope refusal, tool allow/deny, hostname allow-list, read-only enforcement, secret redaction) | 100% — policy values change; the enforcement code does not |

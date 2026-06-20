@@ -1,6 +1,6 @@
 """HTTP client to the chatbot FastAPI backend.
 
-Three endpoints, mirrored from the Next.js client (`chatbot/frontend/lib`):
+Three backend endpoints:
   GET  /api/health         -> backend metadata used to drive header + UX
   POST /api/chat/reset     -> drop a thread's in-memory state
   POST /api/chat/stream    -> server-sent events of typed chat events

@@ -7,11 +7,11 @@
     log stream:
       1. MCP server   (mqacemcpserver.py, SSE on :8000)
       2. Chat backend (FastAPI on :8001)
-      3. Chat UI      (Next.js dev server on :3000)
+      3. Streamlit UI (streamlit run app.py on :8501)
 
-    Pre-flight checks every prerequisite (venvs, .env files, node_modules)
-    and refuses to start anything until they're satisfied - with a clear
-    fix-up command for each missing piece.
+    Pre-flight checks every prerequisite (venvs, .env files) and refuses to
+    start anything until they're satisfied - with a clear fix-up command for
+    each missing piece.
 
     PIDs of spawned PowerShell windows are written to scripts/.pids so
     stop-all.ps1 can clean them up.
@@ -25,10 +25,13 @@
     Do not start the chat backend.
 
 .PARAMETER SkipFrontend
-    Do not start the chat UI.
+    Do not start the Streamlit UI.
 
 .PARAMETER CheckOnly
     Run all pre-flight checks and exit without starting anything.
+
+.PARAMETER Port
+    Streamlit port (default 8501).
 
 .EXAMPLE
     .\scripts\start-all.ps1
@@ -41,7 +44,8 @@ param(
     [switch]$SkipMcp,
     [switch]$SkipBackend,
     [switch]$SkipFrontend,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [int]$Port = 8501
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,21 +104,21 @@ if (-not $SkipBackend) {
 }
 
 if (-not $SkipFrontend) {
-    Write-Step "Checking chat UI prerequisites"
-    $fePkg          = Join-Path $FrontendDir "package.json"
-    $feNodeModules  = Join-Path $FrontendDir "node_modules"
-    $feEnv          = Join-Path $FrontendDir ".env.local"
-    if (-not (Test-Path $fePkg)) {
-        $problems += "Missing chatbot\frontend\package.json."
-        Write-Bad "chatbot\frontend\package.json not found"
-    } else { Write-Ok "frontend package.json present" }
-    if (-not (Test-Path $feNodeModules)) {
-        $problems += "Missing frontend node_modules. Fix: cd `"$FrontendDir`" ; npm install"
-        Write-Bad "chatbot\frontend\node_modules not found"
-    } else { Write-Ok "node_modules present" }
+    Write-Step "Checking Streamlit UI prerequisites"
+    $feVenvPython = Join-Path $FrontendDir ".venv\Scripts\python.exe"
+    $feApp        = Join-Path $FrontendDir "app.py"
+    $feEnv        = Join-Path $FrontendDir ".env"
+    if (-not (Test-Path $feVenvPython)) {
+        $problems += "Missing Streamlit venv. Fix: cd `"$FrontendDir`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r requirements.txt"
+        Write-Bad "chatbot\frontend\.venv\Scripts\python.exe not found"
+    } else { Write-Ok "frontend venv present" }
+    if (-not (Test-Path $feApp)) {
+        $problems += "Missing chatbot\frontend\app.py."
+        Write-Bad "chatbot\frontend\app.py not found"
+    } else { Write-Ok "frontend app.py present" }
     if (-not (Test-Path $feEnv)) {
-        Write-Note "chatbot\frontend\.env.local missing - defaults to BACKEND_URL=http://localhost:8001. Copy .env.local.example if you need to override."
-    } else { Write-Ok "frontend .env.local present" }
+        Write-Note "chatbot\frontend\.env missing - defaults to MCP_BACKEND_URL=http://localhost:8001. Copy .env.example if you need to override."
+    } else { Write-Ok "frontend .env present" }
 }
 
 if ($problems.Count -gt 0) {
@@ -170,8 +174,8 @@ if (-not $SkipBackend) {
 }
 
 if (-not $SkipFrontend) {
-    $cmd = "npm run dev"
-    $pids += Start-Service-Window -Title "Chat UI (Next.js :3000)" `
+    $cmd = ".\.venv\Scripts\python.exe -m streamlit run app.py --server.port $Port"
+    $pids += Start-Service-Window -Title "Streamlit UI (:$Port)" `
         -WorkingDirectory $FrontendDir -Command $cmd
 }
 
@@ -183,6 +187,6 @@ Write-Ok "All requested services launched."
 Write-Host ""
 Write-Host "  MCP health    : http://localhost:8000/healthz" -ForegroundColor Gray
 Write-Host "  Backend health: http://localhost:8001/api/health" -ForegroundColor Gray
-Write-Host "  Chat UI       : http://localhost:3000" -ForegroundColor Gray
+Write-Host "  Streamlit UI  : http://localhost:$Port" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  To stop everything, run:  .\scripts\stop-all.ps1" -ForegroundColor DarkGray

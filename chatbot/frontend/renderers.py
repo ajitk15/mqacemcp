@@ -1,7 +1,6 @@
 """Block + tool-step renderers for the Streamlit chat UI.
 
-These mirror the `Block` shapes in `chatbot/backend/schemas.py` and the
-component set in `chatbot/frontend/components/chat/*`. They are
+These mirror the `Block` shapes in `chatbot/backend/schemas.py`. They are
 MCP-server-agnostic — no tool names are referenced.
 """
 from __future__ import annotations

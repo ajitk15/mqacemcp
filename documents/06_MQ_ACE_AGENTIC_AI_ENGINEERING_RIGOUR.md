@@ -100,7 +100,7 @@ Every tool is **GET-only** at the protocol layer. Modification verbs cannot be i
 
 | # | Canonical component | This solution | Status |
 |---|---|---|---|
-| 1 | LLM reasoner | OpenAI GPT-4o via `langchain-openai` | ✅ |
+| 1 | LLM reasoner | OpenAI GPT-5.5 via `langchain-openai` | ✅ |
 | 2 | Tool registry | 14 MCP tools auto-loaded | ✅ |
 | 3 | Tool selector | The LLM itself — guided by `IBM MQ:` / `IBM ACE:` / `Certificate:` docstring prefixes; **no dispatcher code** | ✅ |
 | 4 | Action loop (ReAct) | `langgraph.prebuilt.create_react_agent` | ✅ |

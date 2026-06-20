@@ -1,7 +1,6 @@
 """Streamlit chat UI for the MCP chatbot backend.
 
-A drop-in alternative to the Next.js frontend under `chatbot/frontend/`.
-Talks to the same FastAPI backend (`chatbot/backend/app.py`) over its
+Talks to the FastAPI backend (`chatbot/backend/app.py`) over its
 existing endpoints — no backend changes required.
 
 Run:
@@ -72,7 +71,7 @@ _CUSTOM_CSS = """
     margin-top: 3rem;
   }
 
-  /* Chat message styling — keep close to the Next.js look (subtle borders) */
+  /* Chat message styling — subtle borders, light theme */
   [data-testid="stChatMessage"] {
     background: transparent;
     border: 1px solid #e5e7eb;

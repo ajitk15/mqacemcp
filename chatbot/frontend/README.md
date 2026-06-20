@@ -1,8 +1,8 @@
-# Streamlit frontend (alternative to the Next.js UI)
+# Streamlit frontend
 
-A drop-in chat UI for the same FastAPI backend that the Next.js frontend
-under `chatbot/frontend/` already powers. Pick whichever you prefer —
-they're functionally equivalent and both stay MCP-server-agnostic.
+The chat UI for the FastAPI backend. A Streamlit app that streams from the
+backend over HTTP/SSE and stays MCP-server-agnostic — nothing in the UI is
+hardcoded to a particular MCP server.
 
 ```
 Streamlit UI (:8501)
@@ -14,8 +14,6 @@ Any MCP server over SSE            ← unchanged
 ```
 
 ## What you get
-
-Feature parity with the Next.js frontend:
 
 - **Streaming tokens** — assistant text streams in as it's produced.
 - **Tool steps** — each tool invocation is shown inline with name + args
@@ -35,7 +33,7 @@ Feature parity with the Next.js frontend:
 ## One-time setup
 
 ```powershell
-cd chatbot\streamlit_frontend
+cd chatbot\frontend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -45,7 +43,7 @@ copy .env.example .env       # then edit if your backend isn't on :8001
 ## Run
 
 The chatbot backend must already be running (see `chatbot/README.md` —
-the Streamlit UI does NOT replace the backend, only the Next.js layer).
+the Streamlit UI does NOT replace the backend, only fronts it).
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -71,10 +69,10 @@ All knobs live in `.env` (loaded at startup) or as environment variables:
 | `PAGE_ICON` | `💬` | Page icon (any single emoji). |
 
 Everything else (header text, scope hint, available tools, filters,
-prompt source) is driven by the backend's `/api/health` response — same
-as the Next.js frontend. So changing `HEADER_TITLE` /
-`HEADER_SUBTITLE` / `BOT_DOMAIN` / `TOOL_ALLOWLIST` in the backend `.env`
-flows through to this UI without touching code here.
+prompt source) is driven by the backend's `/api/health` response. So
+changing `HEADER_TITLE` / `HEADER_SUBTITLE` / `BOT_DOMAIN` /
+`TOOL_ALLOWLIST` in the backend `.env` flows through to this UI without
+touching code here.
 
 ## Architecture
 
@@ -88,10 +86,10 @@ renderers.py    — Block renderers (text/markdown/table/code/mermaid)
 
 ### Why a separate file for renderers?
 
-The wire protocol (`Block` shapes) is shared with the Next.js frontend
-via `chatbot/backend/schemas.py`. Keeping renderers isolated mirrors how
-`chatbot/frontend/components/chat/*.tsx` is structured and makes it
-trivial to add a new `kind` (just update both ends).
+The wire protocol (`Block` shapes) is defined in
+`chatbot/backend/schemas.py`. Keeping renderers isolated from `app.py`
+makes it trivial to add a new `kind` (just update both ends —
+`schemas.py` and `renderers.py`).
 
 ### Mermaid
 
@@ -104,8 +102,7 @@ loading mermaid 10 from a CDN — no extra Python deps.
   streaming code re-uses the existing assistant turn record from
   `st.session_state` so prior tool steps are preserved.
 - **Per-session memory only.** Closing the browser tab issues a new
-  `thread_id` on next load. Same behavior as `localStorage` in the
-  Next.js UI when the storage is cleared.
+  `thread_id` on next load, so the backend agent starts a fresh thread.
 - **No auth on the Streamlit hop.** If you put the backend behind auth,
   put a reverse proxy in front of Streamlit too — this UI doesn't
   forward credentials.

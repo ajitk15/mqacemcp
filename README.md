@@ -43,9 +43,7 @@ troubleshooting matrix.
 
 A standalone, MCP-server-agnostic chat UI lives under
 **[chatbot/](chatbot/README.md)**. It pairs a FastAPI + LangGraph backend
-(OpenAI GPT-4o) with two interchangeable frontends: the original Next.js 15
-+ Tailwind UI in `chatbot/frontend/`, and an alternative Streamlit UI in
-`chatbot/streamlit_frontend/` — same backend, pick whichever you prefer.
+(OpenAI) with a Streamlit frontend in `chatbot/frontend/` (`app.py`, :8501).
 Features include: session memory, structured rendering (tables / Mermaid /
 code blocks), a configurable scope guardrail (`BOT_DOMAIN`), an externalised
 system prompt (`prompts/system.md`), and a tool allow/deny list — all driven
@@ -310,9 +308,9 @@ mqacemcp/
 │   ├── node_config.csv
 │   └── node_dump.csv
 ├── chatbot/                 # separate stack: FastAPI + LangGraph backend +
-│   ├── backend/             #   Next.js / Streamlit frontends (uses this MCP
-│   ├── frontend/            #   server over SSE like any external client).
-│   ├── streamlit_frontend/  #   See chatbot/README.md.
+│   ├── backend/             #   Streamlit frontend (uses this MCP server
+│   ├── frontend/            #   over SSE like any external client).
+│   │                        #   See chatbot/README.md.
 │   ├── AGENTIC_AI.md
 │   ├── SAMPLE_QUESTIONS.md
 │   └── README.md

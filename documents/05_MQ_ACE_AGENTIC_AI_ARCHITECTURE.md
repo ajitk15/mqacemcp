@@ -19,7 +19,7 @@ flowchart LR
 
   subgraph BE["Agentic Backend"]
     direction TB
-    A["**LangGraph ReAct Agent**<br/>GPT-4o reasoner<br/>MemorySaver (per thread)"]:::backend
+    A["**LangGraph ReAct Agent**<br/>GPT-5.5 reasoner<br/>MemorySaver (per thread)"]:::backend
     R["**ReAct Loop**<br/>think → act → observe<br/>(LLM picks every step)"]:::loop
     A -.-> R -.-> A
   end
@@ -74,7 +74,7 @@ flowchart LR
 | # | Layer | Built with | Job |
 |---|---|---|---|
 | **1** | **Web Chat UI** | Streamlit · httpx · python-dotenv | The only thing the user sees. Streams the agent's tokens, tool steps, tables, and diagrams in real time. Per-session memory via `thread_id`. Pure Python — no Node/React build step to operate. |
-| **2** | **Agentic Backend** | FastAPI · LangGraph `create_react_agent` · GPT-4o · `MemorySaver` | The brain. Runs the ReAct loop — the LLM picks which tool to call, with what arguments, and when to stop. No hand-coded if/then routing. |
+| **2** | **Agentic Backend** | FastAPI · LangGraph `create_react_agent` · GPT-5.5 · `MemorySaver` | The brain. Runs the ReAct loop — the LLM picks which tool to call, with what arguments, and when to stop. No hand-coded if/then routing. |
 | **3** | **MCP Server** | Python · FastMCP · SSE endpoint | The toolbox. Exposes 14 read-only diagnostics (7 MQ + 6 ACE + 1 Certificate) over the **Model Context Protocol** — Anthropic's open standard (the "USB-C of AI tools"). Any MCP-compliant client can use the same server. |
 | **4** | **Safety Layer** | `server/safety.py` · `server/errors.py` | Three independent enforcements: **hostname allow-list** (only approved hosts reachable), **read-only enforcement** (every MQSC modification verb blocked at the tool boundary), **error sanitisation** (no raw tracebacks or upstream bodies ever reach the user). |
 | **5** | **Target Systems** | IBM MQ REST API · IBM ACE Admin REST · offline inventory CSVs | The live platform. The agent reads from these — never writes. Three sources covered: live MQ, live ACE, plus offline inventory dumps for fast lookups. |

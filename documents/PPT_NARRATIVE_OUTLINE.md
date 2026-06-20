@@ -351,10 +351,10 @@ Draw four labelled boxes connected by rightward arrows:
 
 ```
 [User Chat UI]  →  [Agentic Backend]  →  [MCP Server]  →  [MQ & ACE APIs]
-(Next.js)          (FastAPI +             (14 read-only      (MQ REST API,
+(Streamlit)        (FastAPI +             (14 read-only      (MQ REST API,
                     LangGraph               tools, Python)     ACE Admin REST,
                     ReAct loop,                               CSV inventories)
-                    GPT-4o)
+                    GPT-5.5)
 ```
 
 **Below each box — a one-line descriptor:**

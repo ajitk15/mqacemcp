@@ -9,11 +9,11 @@ unchanged — there are no MCP-server-specific tool names hardcoded anywhere.
 > files in this repo, with concrete behaviour walk-throughs.
 
 ```
-Browser (Next.js, :3000)
-   │  /api/chat   (SSE proxy)
+Browser → Streamlit UI (:8501)
+   │  httpx → /api/chat/stream   (SSE)
    ▼
 FastAPI backend (:8001)
-   │  LangGraph agent  (OpenAI GPT-4o + MemorySaver)
+   │  LangGraph agent  (OpenAI + MemorySaver)
    │  langchain-mcp-adapters MultiServerMCPClient
    ▼
 Any MCP server over SSE
@@ -47,23 +47,13 @@ Any MCP server over SSE
 - **No MCP-server coupling** — change `MCP_SSE_URL` to retarget. The
   frontend has *zero* MCP-specific code; backend renderers are
   tool-name-agnostic.
-- **Light/white UI** — Tailwind palette with a `bg`/`panel`/`border`/
-  `muted`/`accent`/`fg` color set in `tailwind.config.ts`. Component
-  classes are stable, so retheming later is a single-file change.
 
-## Two interchangeable frontends
+## Frontend
 
-The backend is fronted by **either** of these UIs — pick whichever you
-prefer. They have feature parity and both stay MCP-server-agnostic.
-
-| Frontend | Stack | Folder | Default port |
-| --- | --- | --- | --- |
-| Next.js (the original) | Next.js 15, Tailwind, React | `chatbot/frontend/` | 3000 |
-| Streamlit (alternative) | Streamlit + httpx | `chatbot/streamlit_frontend/` | 8501 |
-
-The same FastAPI backend powers both — no backend changes are needed
-when swapping. See `chatbot/streamlit_frontend/README.md` for the
-Streamlit-specific details.
+The backend is fronted by a **Streamlit** app in `chatbot/frontend/`
+(`app.py`, `client.py`, `renderers.py`), default port **8501**. It talks
+to the backend over HTTP/SSE via `httpx` and stays MCP-server-agnostic —
+all header text, scope hint, and tool catalog come from `/api/health`.
 
 ## Run order
 
@@ -71,14 +61,14 @@ You need three processes (in three terminals). One-liner once everything is
 installed:
 
 ```powershell
-.\scripts\start-all.ps1            # MCP server + backend + Next.js UI
-.\scripts\start-streamlit.ps1      # MCP server + backend + Streamlit UI
+.\scripts\start-all.ps1            # MCP server + backend + Streamlit UI
+.\scripts\start-streamlit.ps1      # same stack, with a -Port switch
 .\scripts\start-all.ps1 -SkipMcp   # use this if your MCP server runs elsewhere
 .\scripts\start-all.ps1 -CheckOnly # verify prerequisites without launching
 .\scripts\stop-all.ps1             # kill everything start-all started
 ```
 
-The script pre-flights every venv / `.env` / `node_modules` and refuses to
+The script pre-flights every venv / `.env` and refuses to
 launch until each missing piece is fixed (with the fix command printed
 inline). The manual steps below are what `start-all.ps1` automates.
 
@@ -127,14 +117,16 @@ A successful `/api/health` response now looks like:
 }
 ```
 
-### 3. The chat UI
+### 3. The chat UI (Streamlit)
 
 ```powershell
 cd chatbot\frontend
-copy .env.local.example .env.local
-npm install
-npm run dev
-# → http://localhost:3000
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env          # edit if your backend isn't on :8001
+.\.venv\Scripts\python.exe -m streamlit run app.py --server.port 8501
+# → http://localhost:8501
 ```
 
 ## Configuration
@@ -144,7 +136,7 @@ npm run dev
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENAI_API_KEY` | — | Required. OpenAI API key. |
-| `OPENAI_MODEL` | `gpt-5.4` | LLM model name. |
+| `OPENAI_MODEL` | `gpt-5.5` | LLM model name. |
 | `MCP_SSE_URL` | `http://localhost:8000/sse` | Full SSE URL of any MCP server. |
 | `MCP_AUTH_USER`, `MCP_AUTH_PASSWORD` | — | Optional HTTP Basic Auth. |
 | `MCP_HEADERS_JSON` | — | Optional JSON object for Bearer tokens / custom headers. Merged on top of Basic Auth. |
@@ -155,18 +147,20 @@ npm run dev
 | `TOOL_ALLOWLIST` | — | Comma-separated tool names; when non-empty, ONLY these tools are exposed to the agent. |
 | `TOOL_DENYLIST` | — | Comma-separated tool names; always removed (wins over allowlist for the same name). |
 | `CHAT_HOST`, `CHAT_PORT` | `0.0.0.0`, `8001` | FastAPI bind. |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated origins allowed to call the backend. |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:8501` | Comma-separated browser origins allowed to call the backend. (Streamlit calls the backend server-side, so this only matters for direct browser-origin callers.) |
 
-### Frontend (`chatbot/frontend/.env.local`)
+### Frontend (`chatbot/frontend/.env`)
 
-| Variable | Purpose |
-|---|---|
-| `BACKEND_URL` | URL of the FastAPI backend, default `http://localhost:8001` |
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_BACKEND_URL` | `http://localhost:8001` | URL of the FastAPI backend. |
+| `PAGE_TITLE` | backend's `HEADER_TITLE` | Override the browser tab title. |
+| `PAGE_ICON` | `💬` | Page icon (any single emoji). |
 
-Frontend has only this one knob. To point the whole stack at a different
-MCP server, change `MCP_SSE_URL` in the **backend** `.env` and restart it —
-the frontend needs no changes. All visible UI customisations (header,
-scope hint, refusal text) flow from backend `.env` through `/api/health`.
+To point the whole stack at a different MCP server, change `MCP_SSE_URL`
+in the **backend** `.env` and restart it — the frontend needs no changes.
+All visible UI customisations (header, scope hint, refusal text) flow from
+backend `.env` through `/api/health`.
 
 ## Customising the assistant
 
@@ -288,23 +282,15 @@ chatbot/
 │   │   └── system.md                      ← editable system prompt template
 │   ├── requirements.txt
 │   └── .env.example
-└── frontend/
-    ├── package.json, tsconfig, tailwind/postcss config, .env.local.example
-    ├── app/
-    │   ├── layout.tsx, page.tsx (Server Component, reads /api/health)
-    │   ├── globals.css (light theme)
-    │   └── api/{chat,reset}/route.ts      ← proxies to backend
-    ├── lib/
-    │   ├── session.ts                     ← localStorage thread_id
-    │   ├── types.ts                       ← Block, ChatEvent, BackendInfo
-    │   ├── stream.ts                      ← fetch+ReadableStream SSE decoder
-    │   └── backend-info.ts                ← server-side /api/health fetcher
-    └── components/chat/
-        ├── ChatPane.tsx                   ← main chat surface
-        ├── Message.tsx                    ← turn renderer
-        ├── BlockView.tsx                  ← dispatches by block.kind
-        ├── TableBlock.tsx, CodeBlock.tsx, MermaidBlock.tsx, Markdown.tsx
-        └── ToolStep.tsx                   ← collapsible "🔧 ran tool_name(args)"
+└── frontend/                              ← Streamlit UI (:8501)
+    ├── app.py                             ← Streamlit page, session state,
+    │                                        streaming loop
+    ├── client.py                          ← httpx client for /api/health,
+    │                                        /api/chat/reset, /api/chat/stream (SSE)
+    ├── renderers.py                       ← Block renderers (text/markdown/
+    │                                        table/code/mermaid) + tool-step expander
+    ├── requirements.txt
+    └── .env.example
 ```
 
 ## Out of scope (v1)

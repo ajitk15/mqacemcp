@@ -1,6 +1,6 @@
 # Sample test questions
 
-Copy-paste these into the chat UI ([http://localhost:3000](http://localhost:3000))
+Copy-paste these into the chat UI ([http://localhost:8501](http://localhost:8501))
 to exercise every MCP tool the agent has access to. Names match the seed
 manifests (`resources/qmgr_dump.csv`, `resources/node_config.csv`,
 `resources/node_dump.csv`) so the offline tools will return rows.

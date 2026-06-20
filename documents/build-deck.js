@@ -667,7 +667,7 @@ function buildSlide5(I) {
 
   const layers = [
     { tag: "Web Chat UI",      sub: "(Streamlit)",                              icon: I.chat },
-    { tag: "Agentic Backend",  sub: "(FastAPI / LangGraph /\nGPT-4o)",          icon: I.infinity, special: true },
+    { tag: "Agentic Backend",  sub: "(FastAPI / LangGraph /\nGPT-5.5)",          icon: I.infinity, special: true },
     { tag: "MCP Server",       sub: "(FastMCP)",                                icon: I.usb },
     { tag: "Safety\nLayer",    sub: "",                                         icon: I.shield },
     { tag: "Target Systems",   sub: "Live\nIBM MQ, IBM ACE,\nOffline Inventory CSVs", icon: I.database },

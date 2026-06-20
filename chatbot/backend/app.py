@@ -73,7 +73,7 @@ app = FastAPI(title="MCP Chatbot Backend", lifespan=lifespan)
 
 _origins = [
     o.strip()
-    for o in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    for o in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:8501").split(",")
     if o.strip()
 ]
 app.add_middleware(

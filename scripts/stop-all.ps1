@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Reads scripts/.pids (written by start-all.ps1) and terminates each
-    PowerShell window plus its child processes (python, node, npm). Safe
+    PowerShell window plus its child processes (python / streamlit). Safe
     to run multiple times - missing PIDs are reported, not errored.
 #>
 [CmdletBinding()]

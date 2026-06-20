@@ -175,10 +175,14 @@ repo. See `chatbot/README.md` for full docs.
 - `chatbot/backend/` — FastAPI on `:8001`. LangGraph `create_react_agent`
   with `MemorySaver` (per-`thread_id` in-process). Tools loaded via
   `langchain-mcp-adapters.MultiServerMCPClient` pointed at `MCP_SSE_URL`.
-- `chatbot/frontend/` — Next.js 15 App Router, Tailwind, light theme. SSE
-  streaming from a Server Component proxy route.
-- `scripts/start-all.ps1` / `stop-all.ps1` — launchers that pre-flight
-  prereqs and spawn three terminal windows.
+- `chatbot/frontend/` — **Streamlit** app (Python: `app.py`, `client.py`,
+  `renderers.py`) on `:8501`. Streams from the backend over SSE via `httpx`.
+  (There is no Next.js frontend in this repo despite older references; the
+  Streamlit app lives directly in `chatbot/frontend/`.)
+- `scripts/start-all.ps1` / `start-streamlit.ps1` / `stop-all.ps1` — launchers
+  that pre-flight prereqs and spawn the service windows (MCP :8000, backend
+  :8001, Streamlit UI :8501). `start-all.ps1` and `start-streamlit.ps1` now
+  both launch the Streamlit UI from `chatbot/frontend/`.
 
 ### Hard rules when working in this repo
 - **Do not modify any file under `server/`, `mqacemcpserver.py`, or
@@ -187,11 +191,12 @@ repo. See `chatbot/README.md` for full docs.
   a new behaviour, change the chatbot, not the server.
 - **The frontend is MCP-server-agnostic.** No tool names, no MQ/ACE
   strings. All UI customisation (header title/subtitle, scope hint,
-  empty-state) flows from backend `/api/health` → `lib/backend-info.ts`
-  → `app/page.tsx`.
-- **The backend's renderers (`renderers.py`) are tool-name-agnostic.**
-  Use shape detection (JSON list keys, `key:value` lines, mermaid
-  fences) — never branch on a tool name.
+  empty-state) flows from backend `/api/health` → `chatbot/frontend/client.py`
+  → `chatbot/frontend/app.py`.
+- **The renderers (`chatbot/backend/renderers.py` and the frontend's
+  `chatbot/frontend/renderers.py`) are tool-name-agnostic.** Use shape
+  detection (JSON list keys, `key:value` lines, mermaid fences) — never
+  branch on a tool name.
 
 ### Configuration knobs (all live in `chatbot/backend/.env`)
 | Var | Purpose |
@@ -210,7 +215,10 @@ repo. See `chatbot/README.md` for full docs.
   uses `{scope_block}` and `{tool_catalog}` placeholders).
 - Add a new structured rendering rule → `chatbot/backend/renderers.py`
   (a new detector, NOT a per-tool function).
-- Add a new wire-protocol event kind → `chatbot/backend/schemas.py` AND
-  `chatbot/frontend/lib/types.ts` AND `chatbot/frontend/components/chat/ChatPane.tsx`.
-- Change the theme → `chatbot/frontend/tailwind.config.ts` palette +
-  `chatbot/frontend/app/globals.css` body/markdown styles.
+- Add a new wire-protocol event kind / `Block` shape → `chatbot/backend/schemas.py`
+  AND the frontend renderer in `chatbot/frontend/renderers.py` (which dispatches
+  on `block.kind`).
+- Change the theme → Streamlit theming via `PAGE_TITLE` / `PAGE_ICON` in
+  `chatbot/frontend/.env`, or a `chatbot/frontend/.streamlit/config.toml`
+  `[theme]` block. (The old Tailwind `tailwind.config.ts` / `app/globals.css`
+  no longer exist.)

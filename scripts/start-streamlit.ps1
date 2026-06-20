@@ -1,6 +1,8 @@
 <#
 .SYNOPSIS
-    Starts the MCP chatbot stack with the Streamlit frontend instead of Next.js.
+    Starts the MCP chatbot stack with the Streamlit frontend. Equivalent to
+    start-all.ps1 (the Streamlit UI is the only frontend); kept for the explicit
+    name and -Port switch.
 
 .DESCRIPTION
     Spawns three PowerShell windows:
@@ -44,7 +46,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot       = Split-Path -Parent $PSScriptRoot
 $BackendDir     = Join-Path $RepoRoot "chatbot\backend"
-$StreamlitDir   = Join-Path $RepoRoot "chatbot\streamlit_frontend"
+$StreamlitDir   = Join-Path $RepoRoot "chatbot\frontend"
 $PidFile        = Join-Path $PSScriptRoot ".pids"
 
 function Write-Step($msg)  { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -94,14 +96,14 @@ if (-not $SkipFrontend) {
     $stEnv        = Join-Path $StreamlitDir ".env"
     if (-not (Test-Path $stVenvPython)) {
         $problems += "Missing Streamlit venv. Fix: cd `"$StreamlitDir`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r requirements.txt"
-        Write-Bad "chatbot\streamlit_frontend\.venv\Scripts\python.exe not found"
+        Write-Bad "chatbot\frontend\.venv\Scripts\python.exe not found"
     } else { Write-Ok "Streamlit venv present" }
     if (-not (Test-Path $stApp)) {
-        $problems += "Missing chatbot\streamlit_frontend\app.py."
-        Write-Bad "chatbot\streamlit_frontend\app.py not found"
+        $problems += "Missing chatbot\frontend\app.py."
+        Write-Bad "chatbot\frontend\app.py not found"
     } else { Write-Ok "Streamlit app.py present" }
     if (-not (Test-Path $stEnv)) {
-        Write-Note "chatbot\streamlit_frontend\.env missing - defaults to MCP_BACKEND_URL=http://localhost:8001. Copy .env.example if you need to override."
+        Write-Note "chatbot\frontend\.env missing - defaults to MCP_BACKEND_URL=http://localhost:8001. Copy .env.example if you need to override."
     } else { Write-Ok "Streamlit .env present" }
 }
 

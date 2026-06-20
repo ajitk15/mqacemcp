@@ -209,7 +209,7 @@ MQ/ACE creds the server needs.
 
 ## Web chat UI (bundled, `chatbot/`)
 
-A standalone Next.js + FastAPI chat UI lives in `chatbot/`. It is itself an
+A standalone Streamlit + FastAPI chat UI lives in `chatbot/`. It is itself an
 MCP client — it connects to the SSE endpoint just like Claude Desktop or
 the Inspector would. Use it when you want a brandable web chat surface for
 operators rather than a desktop client.
