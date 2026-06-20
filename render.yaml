@@ -1,0 +1,69 @@
+# Render Blueprint — deploys the chatbot UI + backend as two web services.
+#
+# Scope: this hosts ONLY the cloud-facing chatbot tiers. The MCP server
+# (mqacemcpserver.py) is NOT deployed here — it stays on-prem behind an
+# outbound tunnel because it must reach the real IBM MQ/ACE REST APIs and its
+# hostname allow-list only resolves on the internal network. Point the backend
+# at it via MCP_SSE_URL (the tunnel's public https URL) below.
+#
+# Secrets (OPENAI_API_KEY, MCP_AUTH_PASSWORD, MCP_SSE_URL, MCP_AUTH_USER) use
+# `sync: false` — set them in the Render dashboard, never in this file.
+#
+# First deploy: the backend comes up first; then set MCP_BACKEND_URL on the UI
+# service to the backend's public URL (https://<backend-name>.onrender.com).
+
+services:
+  # ---- FastAPI + LangGraph agent backend ----------------------------------
+  - type: web
+    name: mqace-chat-backend
+    runtime: python
+    rootDir: chatbot/backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # Bind to Render's injected $PORT (do NOT use `python app.py`, which would
+    # bind CHAT_PORT=8001 and the service would be unreachable).
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: OPENAI_API_KEY        # secret — set in dashboard
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.5
+      - key: MCP_SSE_URL           # on-prem tunnel URL, e.g. https://mcp-demo.you.com/sse
+        sync: false
+      - key: MCP_AUTH_USER
+        sync: false
+      - key: MCP_AUTH_PASSWORD     # secret
+        sync: false
+      - key: BOT_DOMAIN
+        value: IBM MQ, IBM ACE, and TLS/SSL certificates
+      - key: HEADER_TITLE
+        value: IBM MQ and ACE assistant
+      - key: SUPPORT_TEAM
+        value: MQ_ACE_SUPPORT
+      # NOT set on purpose (local-only values that would break Render startup):
+      #   MCP_TLS_CA_BUNDLE  -> blank: the tunnel presents a real public cert,
+      #                         standard TLS verification applies.
+      #   SYSTEM_PROMPT_FILE -> blank: falls back to the bundled
+      #                         chatbot/backend/prompts/system.md.
+
+  # ---- Streamlit chat UI ---------------------------------------------------
+  - type: web
+    name: mqace-chat-ui
+    runtime: python
+    rootDir: chatbot/frontend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      # After the backend's first deploy, set this to its public URL:
+      #   https://mqace-chat-backend.onrender.com
+      # (The UI calls the backend server-side via httpx, so no CORS wiring is
+      # needed between the two services.)
+      - key: MCP_BACKEND_URL
+        sync: false
