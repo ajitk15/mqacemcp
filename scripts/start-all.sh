@@ -8,8 +8,8 @@
 #
 # Startup order (each component reads its own .env from its own directory):
 #
-#   1. MCP server   (mqacemcpserver-single/single_server.py, SSE on :8443)
-#                   (use --main to launch mqacemcpserver/mqacemcpserver.py)
+#   1. MCP server   (mqacemcpserver-single/single_server.py, SSE on :8010)
+#                   (use --main to launch mqacemcpserver/mqacemcpserver.py on :8443)
 #   2. Chat backend (backend/app.py, FastAPI on :8002)
 #   3. Streamlit UI (frontend/app.py, on :8003)
 #   4. Dashboard    (dashboard/dashboard_server.py, on :8004)

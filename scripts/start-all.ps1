@@ -5,8 +5,8 @@
 .DESCRIPTION
     Opens one new PowerShell window per service so each has its own visible log
     stream:
-      1. MCP server   (mqacemcpserver-single\single_server.py, SSE on :8443)
-                      (use -Main to launch mqacemcpserver\mqacemcpserver.py instead)
+      1. MCP server   (mqacemcpserver-single\single_server.py, SSE on :8010)
+                      (use -Main to launch mqacemcpserver\mqacemcpserver.py on :8443 instead)
       2. Chat backend (backend\app.py, FastAPI on :8002)
       3. Streamlit UI (frontend\app.py, on :8003)
       4. Dashboard    (dashboard\dashboard_server.py, on :8004)
@@ -109,8 +109,12 @@ function Get-EnvValue {
 # both serve HTTPS when a cert is configured); the backend is plain HTTP.
 $RootEnv     = Join-Path $RepoRoot ".env"
 $BackendEnv  = Join-Path $BackendDir ".env"
-$McpPort     = Get-EnvValue $RootEnv "MCP_PORT" "8000"
-$McpScheme   = if (Get-EnvValue $RootEnv "MCP_TLS_CERT" "") { "https" } else { "http" }
+# The MCP server reads its own .env: the single build loads mqacemcpserver-single\.env,
+# while the main build (no .env beside it) loads the repo-root .env. Read MCP_PORT /
+# MCP_TLS_CERT from whichever the chosen build actually uses so the banner matches.
+$McpEnv      = if ($Main) { $RootEnv } else { Join-Path $McpDir ".env" }
+$McpPort     = Get-EnvValue $McpEnv "MCP_PORT" "8000"
+$McpScheme   = if (Get-EnvValue $McpEnv "MCP_TLS_CERT" "") { "https" } else { "http" }
 $BackendPort = Get-EnvValue $BackendEnv "CHAT_PORT" "8001"
 $DashPort    = Get-EnvValue $RootEnv "MCP_DASHBOARD_PORT" "8002"
 $DashScheme  = $McpScheme
