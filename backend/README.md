@@ -50,7 +50,7 @@ Any MCP server over SSE
 
 ## Frontend
 
-The backend is fronted by a **Streamlit** app in `chatbot/frontend/`
+The backend is fronted by a **Streamlit** app in `frontend/`
 (`app.py`, `client.py`, `renderers.py`), default port **8501**. It talks
 to the backend over HTTP/SSE via `httpx` and stays MCP-server-agnostic —
 all header text, scope hint, and tool catalog come from `/api/health`.
@@ -78,7 +78,7 @@ For this repo's bundled MQ/ACE MCP server, from the project root:
 
 ```powershell
 $env:MCP_TRANSPORT = "sse"
-.\.venv\Scripts\python.exe mqacemcpserver.py
+.\.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 # Verify:
 curl http://localhost:8000/healthz
 ```
@@ -88,7 +88,7 @@ For a different MCP server, just start it and note its `/sse` URL.
 ### 2. The chat backend
 
 ```powershell
-cd chatbot\backend
+cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -111,7 +111,7 @@ A successful `/api/health` response now looks like:
   "bot_domain": "IBM MQ and IBM ACE",
   "header_title": "IBM MQ and ACE assistant",
   "header_subtitle": "",
-  "prompt_source": "C:/.../chatbot/backend/prompts/system.md",
+  "prompt_source": "C:/.../backend/prompts/system.md",
   "tool_allowlist": [],
   "tool_denylist": []
 }
@@ -120,7 +120,7 @@ A successful `/api/health` response now looks like:
 ### 3. The chat UI (Streamlit)
 
 ```powershell
-cd chatbot\frontend
+cd frontend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -131,7 +131,7 @@ copy .env.example .env          # edit if your backend isn't on :8001
 
 ## Configuration
 
-### Backend (`chatbot/backend/.env`)
+### Backend (`backend/.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -143,13 +143,13 @@ copy .env.example .env          # edit if your backend isn't on :8001
 | `HEADER_TITLE` | `MCP Chatbot` | UI title bar text. |
 | `HEADER_SUBTITLE` | — | Optional subtitle override. When empty, the UI auto-derives one from `BOT_DOMAIN`. |
 | `BOT_DOMAIN` | — | When set, the LLM only answers questions about this domain and refuses everything else. Empty = unrestricted. |
-| `SYSTEM_PROMPT_FILE` | — | Optional path override for the system prompt template. Default resolution looks for `chatbot/backend/prompts/system.md`, then falls back to the inline template. |
+| `SYSTEM_PROMPT_FILE` | — | Optional path override for the system prompt template. Default resolution looks for `backend/prompts/system.md`, then falls back to the inline template. |
 | `TOOL_ALLOWLIST` | — | Comma-separated tool names; when non-empty, ONLY these tools are exposed to the agent. |
 | `TOOL_DENYLIST` | — | Comma-separated tool names; always removed (wins over allowlist for the same name). |
 | `CHAT_HOST`, `CHAT_PORT` | `0.0.0.0`, `8001` | FastAPI bind. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:8501` | Comma-separated browser origins allowed to call the backend. (Streamlit calls the backend server-side, so this only matters for direct browser-origin callers.) |
 
-### Frontend (`chatbot/frontend/.env`)
+### Frontend (`frontend/.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -166,7 +166,7 @@ backend `.env` through `/api/health`.
 
 ### Edit the system prompt
 
-The active system prompt lives at **`chatbot/backend/prompts/system.md`**.
+The active system prompt lives at **`backend/prompts/system.md`**.
 It's plain markdown with two required placeholders:
 
 - `{scope_block}` — auto-replaced with the BOT_DOMAIN refusal block when
@@ -265,32 +265,37 @@ sanitised error in the chat — no stack trace.
 
 ## File map (after all refinements)
 
+The chatbot stack is two sibling folders at the repo root:
+
 ```
-chatbot/
+backend/                                   ← this folder (FastAPI agent, :8001)
 ├── README.md                              ← this file
-├── backend/
-│   ├── app.py                             ← FastAPI: SSE chat / reset / health
-│   ├── agent.py                           ← LangGraph create_react_agent +
-│   │                                        MemorySaver + prompt loader +
-│   │                                        SCOPE_BLOCK_TEMPLATE injection
-│   ├── mcp_client.py                      ← MultiServerMCPClient + Basic/Bearer
-│   │                                        auth + TOOL_ALLOWLIST/DENYLIST filter
-│   ├── renderers.py                       ← generic shape detection (JSON list,
-│   │                                        key:value lines, mermaid fence, code)
-│   ├── schemas.py                         ← Block + ChatEvent wire models
-│   ├── prompts/
-│   │   └── system.md                      ← editable system prompt template
-│   ├── requirements.txt
-│   └── .env.example
-└── frontend/                              ← Streamlit UI (:8501)
-    ├── app.py                             ← Streamlit page, session state,
-    │                                        streaming loop
-    ├── client.py                          ← httpx client for /api/health,
-    │                                        /api/chat/reset, /api/chat/stream (SSE)
-    ├── renderers.py                       ← Block renderers (text/markdown/
-    │                                        table/code/mermaid) + tool-step expander
-    ├── requirements.txt
-    └── .env.example
+├── AGENTIC_AI.md                          ← agentic-AI component map
+├── SAMPLE_QUESTIONS.md                    ← curated demo prompts
+├── app.py                                 ← FastAPI: SSE chat / reset / health
+├── agent.py                               ← LangGraph create_react_agent +
+│                                            MemorySaver + prompt loader +
+│                                            SCOPE_BLOCK_TEMPLATE injection
+├── mcp_client.py                          ← MultiServerMCPClient + Basic/Bearer
+│                                            auth + TOOL_ALLOWLIST/DENYLIST filter
+├── renderers.py                           ← generic shape detection (JSON list,
+│                                            key:value lines, mermaid fence, code)
+├── schemas.py                             ← Block + ChatEvent wire models
+├── prompts/
+│   └── system.md                          ← editable system prompt template
+├── tests/                                 ← run_question_suite.py
+├── requirements.txt
+└── .env.example
+
+frontend/                                  ← Streamlit UI (:8501)
+├── app.py                                 ← Streamlit page, session state,
+│                                            streaming loop
+├── client.py                              ← httpx client for /api/health,
+│                                            /api/chat/reset, /api/chat/stream (SSE)
+├── renderers.py                           ← Block renderers (text/markdown/
+│                                            table/code/mermaid) + tool-step expander
+├── requirements.txt
+└── .env.example
 ```
 
 ## Out of scope (v1)

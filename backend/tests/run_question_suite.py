@@ -1,4 +1,4 @@
-"""Pump the 30 questions from documents/MQ_ACE_Chatbot_Questions.md at the
+"""Pump the 30 questions from docs/MQ_ACE_Chatbot_Questions.md at the
 chatbot backend and produce a markdown report.
 
 Assumes the chatbot backend is already running. Probes /api/health first
@@ -6,9 +6,9 @@ and exits non-zero if unreachable.
 
 Usage (from repo root, with either venv that has httpx):
 
-  python chatbot/tests/run_question_suite.py --out report.md
-  python chatbot/tests/run_question_suite.py --filter Q1,Q5 --out smoke.md
-  python chatbot/tests/run_question_suite.py --only ace --out ace.md
+  python backend/tests/run_question_suite.py --out report.md
+  python backend/tests/run_question_suite.py --filter Q1,Q5 --out smoke.md
+  python backend/tests/run_question_suite.py --only ace --out ace.md
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from typing import Iterable
 import httpx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-QUESTIONS_PATH = REPO_ROOT / "documents" / "MQ_ACE_Chatbot_Questions.md"
+QUESTIONS_PATH = REPO_ROOT / "docs" / "MQ_ACE_Chatbot_Questions.md"
 DEFAULT_BACKEND = os.getenv("MCP_BACKEND_URL", "").strip() or "http://localhost:8002"
 
 

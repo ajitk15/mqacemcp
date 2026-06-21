@@ -46,8 +46,12 @@ from dotenv import load_dotenv
 # ---------------------------------------------------------------------------
 # Env
 # ---------------------------------------------------------------------------
+# This client lives inside the build folder (mqacemcpserver/clients/). The
+# shared .env and resources/ live one level up at the repo root in the mono-repo
+# layout, or next to the build when it is deployed standalone. Detect which.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
+_BASE_DIR = PROJECT_ROOT if (PROJECT_ROOT / "resources").is_dir() else PROJECT_ROOT.parent
+load_dotenv(dotenv_path=_BASE_DIR / ".env")
 
 MCP_AUTH_USER = os.getenv("MCP_AUTH_USER", "")
 MCP_AUTH_PASSWORD = os.getenv("MCP_AUTH_PASSWORD", "")
@@ -202,7 +206,7 @@ SAMPLE_CERT_SEARCH = "lodmq01"   # matches a hostname row in resources/cert_dump
 
 def discover_channel_name() -> str | None:
     """Read the first CHANNEL row from the offline manifest. Best-effort only."""
-    csv_path = PROJECT_ROOT / "resources" / "qmgr_dump.csv"
+    csv_path = _BASE_DIR / "resources" / "qmgr_dump.csv"
     if not csv_path.exists():
         return None
     try:

@@ -13,32 +13,41 @@ read-only enforcement) is in-process.
 
 ## Development commands
 
+The main build lives in `mqacemcpserver/`. Its dev `.venv` stays at the **repo
+root** (shared), but its code, tests, and `requirements.txt` live in the build
+folder. Paths in the architecture section below are relative to `mqacemcpserver/`.
+
 ```powershell
-# venv + deps (Windows)
+# venv + deps (Windows) — venv at repo root, requirements in the build folder
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r mqacemcpserver\requirements.txt
 
-# Run (stdio, default)
-.venv\Scripts\python.exe mqacemcpserver.py
+# Run (stdio, default) — from repo root; cwd stays root so .env/resources resolve
+.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 
 # Run (SSE — endpoint at http://MCP_HOST:MCP_PORT/sse, healthz at /healthz)
 $env:MCP_TRANSPORT = "sse"
-.venv\Scripts\python.exe mqacemcpserver.py
+.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 
-# Smoke check that all 14 tools register
-.venv\Scripts\python.exe -c "import mqacemcpserver as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
+# Smoke check that all 14 tools register (run from inside the build folder)
+cd mqacemcpserver
+..\.venv\Scripts\python.exe -c "import mqacemcpserver as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
 
-# Tests (pytest + pytest-asyncio installed in .venv, NOT in requirements.txt)
-.venv\Scripts\python.exe -m pip install pytest pytest-asyncio   # one-time
-.venv\Scripts\python.exe -m pytest -q                            # full suite
-.venv\Scripts\python.exe -m pytest tests/test_mq_offline.py -q   # single file
-.venv\Scripts\python.exe -m pytest -k "redacts" -q               # by name
+# Tests — run from INSIDE mqacemcpserver/. Both mqacemcpserver/ and
+# mqacemcpserver-single/ ship a top-level `server` package, so running pytest
+# from the repo root collides on the import name — run each suite in its folder.
+cd mqacemcpserver
+..\.venv\Scripts\python.exe -m pip install pytest pytest-asyncio   # one-time
+..\.venv\Scripts\python.exe -m pytest -q                           # full suite
+..\.venv\Scripts\python.exe -m pytest tests/test_mq_queue_depth.py -q  # single file
+..\.venv\Scripts\python.exe -m pytest -k "redacts" -q              # by name
 ```
 
-`tests/conftest.py` redirects `LOG_DIR` to a temp directory **before** `server.config`
-is imported. Do not move that fixture out of `conftest.py`, and do not import from
-`server.*` at the top of `conftest.py` itself — the env vars must be set first.
+`mqacemcpserver/tests/conftest.py` redirects `LOG_DIR` to a temp directory
+**before** `server.config` is imported. Do not move that fixture out of
+`conftest.py`, and do not import from `server.*` at the top of `conftest.py`
+itself — the env vars must be set first.
 
 ## Big-picture architecture
 
@@ -116,7 +125,7 @@ public `load_*()` returning `cache.get()`. Do **not** reintroduce a
 ### Two HTTP clients, one shutdown path
 `server/mq_helpers.py:get_http_client` and `server/ace_helpers.py:get_http_client`
 each maintain a singleton `httpx.AsyncClient` with their own credentials. Both
-are closed via `aclose_http_client` in `mqacemcpserver.py:_shutdown`'s finally
+are closed via `aclose_http_client` in `mqacemcpserver/mqacemcpserver.py:_shutdown`'s finally
 block. Do not create ad-hoc clients in tools — use `mq_get`/`mq_post` for MQ
 and `fetch_ace` for ACE.
 
@@ -141,7 +150,7 @@ and `fetch_ace` for ACE.
 Two file-based logs in `LOG_DIR` (default `<project>/logs/`), daily-rotated:
 - `app-YYYY-MM-DD.log` — plain text, mirrors stderr.
 - `queries-YYYY-MM-DD.jsonl` — one JSON object per tool invocation. Schema in
-  README.md "Logging" section. Power BI ingests via "Get Data → From Folder".
+  `mqacemcpserver/README.md` "Logging" section. Power BI ingests via "Get Data → From Folder".
 
 Sensitive kwargs are auto-redacted: any kwarg whose lowercase name contains
 `password`, `secret`, `token`, `auth`, `pwd`, `key`, or `credential` is replaced
@@ -149,8 +158,11 @@ with `"[REDACTED]"`. To opt a parameter into redaction, name it accordingly.
 
 ## Environment variables
 
-Loaded from `.env` (project root) by `server/config.py` at import time. The full
-table is in README.md. Two namespaces operators most often touch:
+Loaded from `.env` (repo root) by `mqacemcpserver/server/config.py` at import
+time — the config auto-detects whether it's running standalone (its own
+`resources/` beside the code) or in the mono-repo (shared root `resources/` and
+`.env`). The full table is in `mqacemcpserver/README.md`. Two namespaces
+operators most often touch:
 - `MQ_ALLOWED_HOSTNAME_PREFIXES` / `ACE_ALLOWED_HOSTNAME_PREFIXES` — comma-separated
   hostname prefixes; defaults `lod,loq,lot` (excludes prod by convention).
 - `MCP_TRANSPORT` (`stdio` / `sse`), `MCP_AUTH_USER` + `MCP_AUTH_PASSWORD`
@@ -164,41 +176,44 @@ table is in README.md. Two namespaces operators most often touch:
 - **`pytest`/`pytest-asyncio` are not in `requirements.txt`.** They live only
   in the dev `.venv`. If you change tests, document the install step.
 
-## The `chatbot/` subdirectory (separate stack)
+## The `backend/` + `frontend/` chatbot stack (separate product)
 
-`chatbot/` is a self-contained web chat UI + agent backend that *uses* this
-MCP server over its SSE endpoint. It is **not** part of the MCP server and
-the MCP server does not depend on it. Treat them as two products in one
-repo. See `chatbot/README.md` for full docs.
+`backend/` and `frontend/` together are a self-contained web chat UI + agent
+backend that *uses* this MCP server over its SSE endpoint. They are **not**
+part of the MCP server and the MCP server does not depend on them. Treat them
+as separate products in one repo, each independently deployable (own
+`requirements.txt`, own `.env`, own venv). See `backend/README.md` for full docs.
 
 ### Architecture summary
-- `chatbot/backend/` — FastAPI on `:8001`. LangGraph `create_react_agent`
+- `backend/` — FastAPI on `:8001`. LangGraph `create_react_agent`
   with `MemorySaver` (per-`thread_id` in-process). Tools loaded via
   `langchain-mcp-adapters.MultiServerMCPClient` pointed at `MCP_SSE_URL`.
-- `chatbot/frontend/` — **Streamlit** app (Python: `app.py`, `client.py`,
+- `frontend/` — **Streamlit** app (Python: `app.py`, `client.py`,
   `renderers.py`) on `:8501`. Streams from the backend over SSE via `httpx`.
   (There is no Next.js frontend in this repo despite older references; the
-  Streamlit app lives directly in `chatbot/frontend/`.)
+  Streamlit app lives directly in `frontend/`.)
 - `scripts/start-all.ps1` / `start-streamlit.ps1` / `stop-all.ps1` — launchers
   that pre-flight prereqs and spawn the service windows (MCP :8000, backend
-  :8001, Streamlit UI :8501). `start-all.ps1` and `start-streamlit.ps1` now
-  both launch the Streamlit UI from `chatbot/frontend/`.
+  :8001, Streamlit UI :8501). Each `-Skip*` switch isolates a component so a
+  single tier can be (re)started on its own; with no switches the script brings
+  up the whole stack. Both `start-all.ps1` and `start-streamlit.ps1` launch the
+  Streamlit UI from `frontend/`.
 
 ### Hard rules when working in this repo
-- **Do not modify any file under `server/`, `mqacemcpserver.py`, or
-  `resources/` from chatbot work.** The MCP server is untouched by design;
-  the chatbot talks to it like any external client. If the chatbot needs
-  a new behaviour, change the chatbot, not the server.
+- **Do not modify any file under `mqacemcpserver/` or `resources/` from
+  chatbot work.** The MCP server is untouched by design; the chatbot talks to
+  it like any external client. If the chatbot needs a new behaviour, change the
+  chatbot, not the server.
 - **The frontend is MCP-server-agnostic.** No tool names, no MQ/ACE
   strings. All UI customisation (header title/subtitle, scope hint,
-  empty-state) flows from backend `/api/health` → `chatbot/frontend/client.py`
-  → `chatbot/frontend/app.py`.
-- **The renderers (`chatbot/backend/renderers.py` and the frontend's
-  `chatbot/frontend/renderers.py`) are tool-name-agnostic.** Use shape
+  empty-state) flows from backend `/api/health` → `frontend/client.py`
+  → `frontend/app.py`.
+- **The renderers (`backend/renderers.py` and the frontend's
+  `frontend/renderers.py`) are tool-name-agnostic.** Use shape
   detection (JSON list keys, `key:value` lines, mermaid fences) — never
   branch on a tool name.
 
-### Configuration knobs (all live in `chatbot/backend/.env`)
+### Configuration knobs (all live in `backend/.env`)
 | Var | Purpose |
 | --- | --- |
 | `MCP_SSE_URL` | Which MCP server to talk to. |
@@ -206,19 +221,19 @@ repo. See `chatbot/README.md` for full docs.
 | `MCP_HEADERS_JSON` | Bearer / custom headers (escape hatch). |
 | `HEADER_TITLE` / `HEADER_SUBTITLE` | UI title bar; subtitle override. |
 | `BOT_DOMAIN` | Scope guardrail; empty = unrestricted. |
-| `SYSTEM_PROMPT_FILE` | Override prompt file path. Default is `chatbot/backend/prompts/system.md`. |
+| `SYSTEM_PROMPT_FILE` | Override prompt file path. Default is `backend/prompts/system.md`. |
 | `TOOL_ALLOWLIST` / `TOOL_DENYLIST` | Filter which MCP tools the agent sees. |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM. |
 
 ### Where common changes go
-- Edit the system prompt → `chatbot/backend/prompts/system.md` (markdown,
+- Edit the system prompt → `backend/prompts/system.md` (markdown,
   uses `{scope_block}` and `{tool_catalog}` placeholders).
-- Add a new structured rendering rule → `chatbot/backend/renderers.py`
+- Add a new structured rendering rule → `backend/renderers.py`
   (a new detector, NOT a per-tool function).
-- Add a new wire-protocol event kind / `Block` shape → `chatbot/backend/schemas.py`
-  AND the frontend renderer in `chatbot/frontend/renderers.py` (which dispatches
+- Add a new wire-protocol event kind / `Block` shape → `backend/schemas.py`
+  AND the frontend renderer in `frontend/renderers.py` (which dispatches
   on `block.kind`).
 - Change the theme → Streamlit theming via `PAGE_TITLE` / `PAGE_ICON` in
-  `chatbot/frontend/.env`, or a `chatbot/frontend/.streamlit/config.toml`
+  `frontend/.env`, or a `frontend/.streamlit/config.toml`
   `[theme]` block. (The old Tailwind `tailwind.config.ts` / `app/globals.css`
   no longer exist.)

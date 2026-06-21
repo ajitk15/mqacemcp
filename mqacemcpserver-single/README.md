@@ -376,7 +376,7 @@ is a pure tool server with no LLM. It is provided so a host can adopt the same
 routing/rendering guidance the tools were designed for.
 
 It carries two substitution placeholders (the same contract the bundled chatbot
-uses — see `chatbot/backend/agent.py`):
+uses — see `backend/agent.py`):
 
 | Placeholder | Replaced with |
 | --- | --- |

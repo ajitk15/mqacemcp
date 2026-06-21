@@ -14,10 +14,20 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
-# .env discovery: project root (the parent of the `server/` package)
+# .env / resource discovery
 # ---------------------------------------------------------------------------
+# PROJECT_ROOT is the parent of the `server/` package — i.e. this build's own
+# folder (`mqacemcpserver/`). The build can be deployed two ways:
+#   - standalone: ships its own `resources/` (and `.env`) next to the code.
+#   - mono-repo:  shares the parent repo's root-level `resources/` and `.env`,
+#                 so the daily extract job feeds every build from one place.
+# Detect which once, and base default resource/log/.env locations on it.
+# Explicit env overrides (RESOURCES_DIR, *_PATH, LOG_DIR) always win.
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
-ENV_PATH: Path = PROJECT_ROOT / ".env"
+_STANDALONE: bool = (PROJECT_ROOT / "resources").is_dir()
+_BASE_DIR: Path = PROJECT_ROOT if _STANDALONE else PROJECT_ROOT.parent
+
+ENV_PATH: Path = _BASE_DIR / ".env"
 
 load_dotenv(dotenv_path=ENV_PATH)
 
@@ -66,7 +76,7 @@ if _LOG_DIR_RAW:
         os.path.expandvars(os.path.expanduser(_LOG_DIR_RAW))
     ).resolve()
 else:
-    LOG_DIR = (PROJECT_ROOT / "logs").resolve()
+    LOG_DIR = (_BASE_DIR / "logs").resolve()
 
 LOG_RETENTION_DAYS: int = int(os.getenv("LOG_RETENTION_DAYS", "30"))
 QUERY_LOG_ENABLED: bool = os.getenv("QUERY_LOG_ENABLED", "true").strip().lower() in {
@@ -103,11 +113,25 @@ ACE_ALLOWED_HOSTNAME_PREFIXES: list[str] = _split_csv(
 # ---------------------------------------------------------------------------
 # Resource files (CSV manifests)
 # ---------------------------------------------------------------------------
-RESOURCES_DIR: Path = PROJECT_ROOT / "resources"
-MQ_QMGR_DUMP_PATH: Path = RESOURCES_DIR / "qmgr_dump.csv"
-ACE_NODE_DUMP_PATH: Path = RESOURCES_DIR / "node_dump.csv"
-ACE_NODE_CONFIG_PATH: Path = RESOURCES_DIR / "node_config.csv"
-CERT_DUMP_PATH: Path = RESOURCES_DIR / "cert_dump.csv"
+# Default to the local resources/ for a standalone deploy, else the parent
+# repo's resources/ so the external extract jobs feed every build from one
+# location. Override individual paths in .env if the deployment splits them.
+_DEFAULT_RESOURCES_DIR = (_BASE_DIR / "resources").resolve()
+RESOURCES_DIR: Path = Path(
+    os.getenv("RESOURCES_DIR", str(_DEFAULT_RESOURCES_DIR))
+).resolve()
+MQ_QMGR_DUMP_PATH: Path = Path(
+    os.getenv("MQ_QMGR_DUMP_PATH", str(RESOURCES_DIR / "qmgr_dump.csv"))
+).resolve()
+ACE_NODE_DUMP_PATH: Path = Path(
+    os.getenv("ACE_NODE_DUMP_PATH", str(RESOURCES_DIR / "node_dump.csv"))
+).resolve()
+ACE_NODE_CONFIG_PATH: Path = Path(
+    os.getenv("ACE_NODE_CONFIG_PATH", str(RESOURCES_DIR / "node_config.csv"))
+).resolve()
+CERT_DUMP_PATH: Path = Path(
+    os.getenv("CERT_DUMP_PATH", str(RESOURCES_DIR / "cert_dump.csv"))
+).resolve()
 
 
 def mq_configured() -> bool:

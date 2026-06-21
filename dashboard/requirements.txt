@@ -1,0 +1,6 @@
+# Dashboard component — log-insights HTTP server.
+# It imports the MCP server's `server.config` / `server.logger` (which only need
+# python-dotenv) from ../mqacemcpserver, and serves HTML via uvicorn.
+# Versions use >= to match the repo convention.
+uvicorn>=0.30
+python-dotenv>=1.0

@@ -159,5 +159,5 @@ synonyms, and refusal of modification verbs).
   doesn't carry context across unrelated tests.
 - Use `/reset` (or the UI's reset control if exposed) between modification
   tests so the refusal isn't influenced by prior context.
-- If a tool times out, check `chatbot/backend/.env` → `MCP_SSE_URL` and
+- If a tool times out, check `backend/.env` → `MCP_SSE_URL` and
   the running MCP server's `/healthz`.

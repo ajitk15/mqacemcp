@@ -6,8 +6,14 @@ team one endpoint; their orchestrator/LLM picks the right tool from the unified
 tool list based on the user's question — no in-server routing required.
 
 > New to MQ / ACE or unsure where they fit in an enterprise middleware
-> stack? See **[documents/MIDDLEWARE_STACK.md](documents/MIDDLEWARE_STACK.md)**
+> stack? See **[docs/MIDDLEWARE_STACK.md](../docs/MIDDLEWARE_STACK.md)**
 > for a short primer with ESB topology and layer-mapping diagrams.
+
+> **Layout note:** this build lives in `mqacemcpserver/`. Its dev `.venv`
+> stays at the **repo root** (shared); commands below run from the repo root
+> unless stated otherwise. The server auto-detects whether it runs standalone
+> (its own `resources/` beside the code) or in the mono-repo (shared root
+> `resources/` and `.env`).
 
 ## Setup
 
@@ -15,7 +21,7 @@ tool list based on the user's question — no in-server routing required.
 # from the project root: C:\Workspace\hready\mqacemcp
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r mqacemcpserver\requirements.txt
 copy .env.example .env
 # then edit .env with real MQ / ACE credentials and allow-list prefixes
 ```
@@ -34,21 +40,21 @@ real deployment.
 
 ## Connect a client
 
-See **[documents/CONNECTING.md](documents/CONNECTING.md)** for copy-paste configs for
+See **[docs/CONNECTING.md](../docs/CONNECTING.md)** for copy-paste configs for
 Claude Desktop, Claude Code (CLI + VS Code extension), VS Code GitHub Copilot
 agent mode, Cursor, the MCP Inspector, and the Python MCP SDK — plus a
 troubleshooting matrix.
 
 ## Web chat UI (optional)
 
-A standalone, MCP-server-agnostic chat UI lives under
-**[chatbot/](chatbot/README.md)**. It pairs a FastAPI + LangGraph backend
-(OpenAI) with a Streamlit frontend in `chatbot/frontend/` (`app.py`, :8501).
-Features include: session memory, structured rendering (tables / Mermaid /
-code blocks), a configurable scope guardrail (`BOT_DOMAIN`), an externalised
-system prompt (`prompts/system.md`), and a tool allow/deny list — all driven
-from `chatbot/backend/.env`. The MCP server itself is untouched; the chatbot
-talks to it over SSE like any other MCP client.
+A standalone, MCP-server-agnostic chat UI lives in
+**[backend/](../backend/README.md)** + **[frontend/](../frontend/README.md)**.
+It pairs a FastAPI + LangGraph backend (OpenAI) with a Streamlit frontend in
+`frontend/` (`app.py`, :8501). Features include: session memory, structured
+rendering (tables / Mermaid / code blocks), a configurable scope guardrail
+(`BOT_DOMAIN`), an externalised system prompt (`prompts/system.md`), and a tool
+allow/deny list — all driven from `backend/.env`. The MCP server itself is
+untouched; the chatbot talks to it over SSE like any other MCP client.
 
 Launch the whole stack (MCP server + chat backend + UI) with:
 
@@ -58,15 +64,15 @@ Launch the whole stack (MCP server + chat backend + UI) with:
 
 If you need to explain *why* the chatbot qualifies as agentic AI (vs. "a
 chat box wrapping APIs"), point readers at
-**[chatbot/AGENTIC_AI.md](chatbot/AGENTIC_AI.md)** — a single doc that maps
+**[backend/AGENTIC_AI.md](../backend/AGENTIC_AI.md)** — a single doc that maps
 the canonical agentic-AI components to specific files here. Curated demo
-prompts live in **[chatbot/SAMPLE_QUESTIONS.md](chatbot/SAMPLE_QUESTIONS.md)**.
+prompts live in **[backend/SAMPLE_QUESTIONS.md](../backend/SAMPLE_QUESTIONS.md)**.
 
 ## Run
 
 **stdio (local/dev, default):**
 ```powershell
-.venv\Scripts\python.exe mqacemcpserver.py
+.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 ```
 
 **SSE (HTTP endpoint for the central team):**
@@ -74,7 +80,7 @@ prompts live in **[chatbot/SAMPLE_QUESTIONS.md](chatbot/SAMPLE_QUESTIONS.md)**.
 $env:MCP_TRANSPORT = "sse"
 $env:MCP_AUTH_USER = "..."
 $env:MCP_AUTH_PASSWORD = "..."
-.venv\Scripts\python.exe mqacemcpserver.py
+.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 # endpoint: http://<MCP_HOST>:<MCP_PORT>/sse
 ```
 
@@ -161,11 +167,11 @@ The same env vars can live in `.env` instead of being exported.
 
 | Name | What it does |
 | --- | --- |
-| `get_cert_details` | Offline lookup of TLS/SSL certificate details from `cert_dump.csv` (hostname, alias, cn_name, valid_from/valid_until, expirydays — computed live, negative if already expired — and ace_nodes, the ACE node(s) on that host, empty for a pure-MQ host). Searches by hostname, alias, or CN. |
+| `get_cert_details` | Offline lookup of TLS/SSL certificate details from `cert_dump.csv` (hostname, alias, cn_name, valid_from/valid_until, expirydays, ace_nodes). `valid_until` is the expiry date; `expirydays` is computed live (days until expiry, negative if expired); `ace_nodes` lists the ACE node(s) running on that host (empty for a pure-MQ host). Searches by hostname, alias, or CN. |
 
 For a detailed per-tool walkthrough — inputs, resolution chain,
 fallback behaviour, recorded endpoints — see
-**[documents/TOOLS.md](documents/TOOLS.md)**.
+**[docs/TOOLS.md](../docs/TOOLS.md)**.
 
 ## How the orchestrator routes
 
@@ -201,12 +207,14 @@ and `stale` (the file changed on disk and a reload is pending on next access).
 
 ## Data freshness (auto-reload, no restart)
 
-The four CSV manifests are replaced by a daily extract job. Each loader goes
+The four CSV manifests are replaced by a daily extract job. Each loader
+(`load_csv`, `load_node_dump`, `load_node_config`, `load_cert_dump`) goes
 through `server/csv_cache.py:CsvCache`, which checks the file's `(mtime, size)`
 on every access and **reloads only when it changed** — so a daily swap is picked
 up on the next tool call **with no restart**, at the cost of one `os.stat` per
-call. If a read lands while the file is mid-write (loader fails), the cache keeps
-serving the previously-loaded data and retries on the next call.
+call (the CSV is re-parsed only when it actually changes). If a read lands while
+the file is mid-write (loader fails), the cache keeps serving the
+previously-loaded data and retries on the next call rather than flapping to empty.
 
 > **Ops note:** have the extract job write to a temp file and **atomically rename**
 > it into place (e.g. `os.replace`), so a reader never sees a half-written CSV.
@@ -216,9 +224,14 @@ serving the previously-loaded data and retries on the next call.
 A small offline pytest suite covers the safety primitives, query-log
 decorator, error sanitiser, and the `runmqsc` allow-list path:
 
+Run from **inside** `mqacemcpserver/` (both this build and
+`mqacemcpserver-single/` ship a top-level `server` package, so a repo-root
+pytest run would collide on the import name):
+
 ```powershell
-.venv\Scripts\python.exe -m pip install pytest pytest-asyncio
-.venv\Scripts\python.exe -m pytest -q
+cd mqacemcpserver
+..\.venv\Scripts\python.exe -m pip install pytest pytest-asyncio
+..\.venv\Scripts\python.exe -m pytest -q
 ```
 
 Tests redirect `LOG_DIR` to a temp directory via `tests/conftest.py` so they
@@ -285,51 +298,45 @@ dashboard.
 ## Project layout
 
 ```
-mqacemcp/
-├── mqacemcpserver.py        # entry point
-├── server/
-│   ├── config.py            # .env loading, typed settings
-│   ├── logger.py            # stdlib logging factory + daily-rotated file handler
-│   ├── query_log.py         # per-call JSONL query log + logged_tool decorator
-│   ├── errors.py            # user-safe error sanitiser (ref-tagged messages)
-│   ├── auth.py              # Basic Auth ASGI middleware (SSE) + caller capture + /healthz bypass
-│   ├── safety.py            # hostname allow-list + read-only MQSC guard
-│   ├── mq_helpers.py        # MQ HTTP client, manifest, formatters, errors
-│   ├── mq_tools.py          # @mcp.tool wrappers for MQ
-│   ├── ace_helpers.py       # ACE HTTP client, node config / dump, REST helper
-│   └── ace_tools.py         # @mcp.tool wrappers for ACE
-├── tests/                   # offline pytest suite
-├── logs/                    # app-*.log + queries-*.jsonl (created at runtime, gitignored;
-│                            #   LOG_DIR in .env can redirect elsewhere, e.g. custom-logs/)
-├── resources/
-│   ├── qmgr_dump.csv
-│   ├── node_config.csv
-│   └── node_dump.csv
-├── chatbot/                 # separate stack: FastAPI + LangGraph backend +
-│   ├── backend/             #   Streamlit frontend (uses this MCP server
-│   ├── frontend/            #   over SSE like any external client).
-│   │                        #   See chatbot/README.md.
-│   ├── AGENTIC_AI.md
-│   ├── SAMPLE_QUESTIONS.md
-│   └── README.md
-├── scripts/                 # start-all.ps1 / stop-all.ps1 / start-streamlit.ps1 /
-│                            #   gen_basic_auth.py
-├── documents/               # supplementary docs: CONNECTING.md, EXECUTIVE_NARRATIVE.md,
-│                            #   executive deck (.pptx)
-├── requirements.txt
-├── pytest.ini
-├── .env.example
-├── .gitignore
+mqacemcp/                    # repo root
+├── mqacemcpserver/          # THIS build — unified MQ + ACE MCP server
+│   ├── mqacemcpserver.py    #   entry point
+│   ├── server/
+│   │   ├── config.py        #   .env loading, typed settings, standalone/mono-repo detection
+│   │   ├── logger.py        #   stdlib logging factory + daily-rotated file handler
+│   │   ├── query_log.py     #   per-call JSONL query log + logged_tool decorator
+│   │   ├── errors.py        #   user-safe error sanitiser (ref-tagged messages)
+│   │   ├── auth.py          #   Basic Auth ASGI middleware (SSE) + caller capture + /healthz bypass
+│   │   ├── safety.py        #   hostname allow-list + read-only MQSC guard
+│   │   ├── mq_helpers.py    #   MQ HTTP client, manifest, formatters, errors
+│   │   ├── mq_tools.py      #   @mcp.tool wrappers for MQ
+│   │   ├── ace_helpers.py   #   ACE HTTP client, node config / dump, REST helper
+│   │   ├── ace_tools.py     #   @mcp.tool wrappers for ACE
+│   │   └── cert_tools.py    #   @mcp.tool wrapper for certificate lookups
+│   ├── tests/               #   offline pytest suite
+│   ├── clients/             #   manual HTTPS smoke client
+│   └── requirements.txt
+├── mqacemcpserver-single/   # second build: one composite tool (own server/, tests/, requirements.txt)
+├── backend/                 # chatbot stack — FastAPI + LangGraph agent (:8001). See backend/README.md.
+├── frontend/                # chatbot stack — Streamlit UI (:8501). See frontend/README.md.
+├── scripts/                 # start-all.ps1 / stop-all.ps1 / start-streamlit.ps1 / gen_basic_auth.py
+├── resources/               # shared CSV manifests (qmgr_dump, node_config, node_dump, cert_dump)
+├── docs/                    # overview / supplementary docs: CONNECTING.md, TOOLS.md, deck (.pptx)
+├── logs/                    # app-*.log + queries-*.jsonl (runtime, gitignored; LOG_DIR can redirect)
+├── .venv/                   # shared dev venv for the main build (gitignored)
+├── .env / .env.example      # shared config (root)
+├── render.yaml              # Render blueprint for backend + frontend
 ├── CLAUDE.md                # repo-specific guidance for Claude Code
-└── README.md
+└── README.md                # repo overview / component index
 ```
 
 ## Verification
 
-After install:
+After install (run from inside `mqacemcpserver/`):
 
 ```powershell
-.venv\Scripts\python.exe -c "import mqacemcpserver; print(sorted([t.name for t in mqacemcpserver.mcp._tool_manager._tools.values()]))"
+cd mqacemcpserver
+..\.venv\Scripts\python.exe -c "import mqacemcpserver; print(sorted([t.name for t in mqacemcpserver.mcp._tool_manager._tools.values()]))"
 ```
 
 Should print:
@@ -341,5 +348,5 @@ Should print:
 
 Inspect interactively with the MCP Inspector (no network needed for offline tools):
 ```powershell
-npx @modelcontextprotocol/inspector .venv\Scripts\python.exe mqacemcpserver.py
+npx @modelcontextprotocol/inspector .venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 ```

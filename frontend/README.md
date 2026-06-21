@@ -33,7 +33,7 @@ Any MCP server over SSE            ← unchanged
 ## One-time setup
 
 ```powershell
-cd chatbot\frontend
+cd frontend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -42,7 +42,7 @@ copy .env.example .env       # then edit if your backend isn't on :8001
 
 ## Run
 
-The chatbot backend must already be running (see `chatbot/README.md` —
+The chatbot backend must already be running (see `../backend/README.md` —
 the Streamlit UI does NOT replace the backend, only fronts it).
 
 ```powershell
@@ -87,7 +87,7 @@ renderers.py    — Block renderers (text/markdown/table/code/mermaid)
 ### Why a separate file for renderers?
 
 The wire protocol (`Block` shapes) is defined in
-`chatbot/backend/schemas.py`. Keeping renderers isolated from `app.py`
+`../backend/schemas.py`. Keeping renderers isolated from `app.py`
 makes it trivial to add a new `kind` (just update both ends —
 `schemas.py` and `renderers.py`).
 

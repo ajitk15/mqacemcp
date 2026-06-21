@@ -21,7 +21,7 @@ reachable interface unless that is acceptable in your environment.
 
 Run
 ---
-  .venv\\Scripts\\python.exe scripts\\dashboard_server.py
+  dashboard\\.venv\\Scripts\\python.exe dashboard\\dashboard_server.py
 """
 from __future__ import annotations
 
@@ -30,10 +30,14 @@ import os
 import sys
 from pathlib import Path
 
-# Make project root and this dir importable for `server.config` and `analyze_logs`.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_SCRIPTS_DIR = Path(__file__).resolve().parent
-for _p in (_PROJECT_ROOT, _SCRIPTS_DIR):
+# This component lives in `dashboard/` but reuses the MCP server's config and
+# logger. `analyze_logs` sits beside this file; the `server` package lives in
+# `mqacemcpserver/`. Put both on the path. `MCP_SERVER_DIR` can override the MCP
+# directory (e.g. to point at the single-build's `server` package instead).
+_DASHBOARD_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _DASHBOARD_DIR.parent
+_MCP_DIR = Path(os.getenv("MCP_SERVER_DIR", str(_REPO_ROOT / "mqacemcpserver"))).resolve()
+for _p in (_DASHBOARD_DIR, _MCP_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 

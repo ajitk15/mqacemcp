@@ -17,7 +17,7 @@ services:
   - type: web
     name: mqace-chat-backend
     runtime: python
-    rootDir: chatbot/backend
+    rootDir: backend
     plan: free
     buildCommand: pip install -r requirements.txt
     # Bind to Render's injected $PORT (do NOT use `python app.py`, which would
@@ -47,13 +47,13 @@ services:
       #   MCP_TLS_CA_BUNDLE  -> blank: the tunnel presents a real public cert,
       #                         standard TLS verification applies.
       #   SYSTEM_PROMPT_FILE -> blank: falls back to the bundled
-      #                         chatbot/backend/prompts/system.md.
+      #                         backend/prompts/system.md.
 
   # ---- Streamlit chat UI ---------------------------------------------------
   - type: web
     name: mqace-chat-ui
     runtime: python
-    rootDir: chatbot/frontend
+    rootDir: frontend
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true

@@ -83,7 +83,7 @@ def _load_system_prompt_template() -> tuple[str, str]:
 
     Resolution order:
       1. Path in SYSTEM_PROMPT_FILE env, if set and the file exists.
-      2. chatbot/backend/prompts/system.md next to this module.
+      2. backend/prompts/system.md next to this module.
       3. Inline SYSTEM_PROMPT_TEMPLATE (always works, last resort).
 
     Any candidate missing the required placeholders is rejected with a

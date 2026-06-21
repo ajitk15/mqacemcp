@@ -45,8 +45,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot       = Split-Path -Parent $PSScriptRoot
-$BackendDir     = Join-Path $RepoRoot "chatbot\backend"
-$StreamlitDir   = Join-Path $RepoRoot "chatbot\frontend"
+$McpDir         = Join-Path $RepoRoot "mqacemcpserver"
+$BackendDir     = Join-Path $RepoRoot "backend"
+$StreamlitDir   = Join-Path $RepoRoot "frontend"
 $PidFile        = Join-Path $PSScriptRoot ".pids"
 
 function Write-Step($msg)  { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -59,15 +60,15 @@ $problems = @()
 if (-not $SkipMcp) {
     Write-Step "Checking MCP server prerequisites"
     $mcpVenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-    $mcpEntry      = Join-Path $RepoRoot "mqacemcpserver.py"
+    $mcpEntry      = Join-Path $McpDir "mqacemcpserver.py"
     if (-not (Test-Path $mcpVenvPython)) {
-        $problems += "Missing MCP venv. Fix: cd `"$RepoRoot`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r requirements.txt"
+        $problems += "Missing MCP venv. Fix: cd `"$RepoRoot`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r mqacemcpserver\requirements.txt"
         Write-Bad ".venv\Scripts\python.exe not found"
     } else { Write-Ok ".venv present" }
     if (-not (Test-Path $mcpEntry)) {
-        $problems += "Missing mqacemcpserver.py at repo root."
-        Write-Bad "mqacemcpserver.py not found"
-    } else { Write-Ok "mqacemcpserver.py present" }
+        $problems += "Missing mqacemcpserver\mqacemcpserver.py."
+        Write-Bad "mqacemcpserver\mqacemcpserver.py not found"
+    } else { Write-Ok "mqacemcpserver\mqacemcpserver.py present" }
 }
 
 if (-not $SkipBackend) {
@@ -77,15 +78,15 @@ if (-not $SkipBackend) {
     $beEnv        = Join-Path $BackendDir ".env"
     if (-not (Test-Path $beVenvPython)) {
         $problems += "Missing backend venv. Fix: cd `"$BackendDir`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r requirements.txt"
-        Write-Bad "chatbot\backend\.venv\Scripts\python.exe not found"
+        Write-Bad "backend\.venv\Scripts\python.exe not found"
     } else { Write-Ok "backend venv present" }
     if (-not (Test-Path $beApp)) {
-        $problems += "Missing chatbot\backend\app.py."
-        Write-Bad "chatbot\backend\app.py not found"
+        $problems += "Missing backend\app.py."
+        Write-Bad "backend\app.py not found"
     } else { Write-Ok "backend app.py present" }
     if (-not (Test-Path $beEnv)) {
-        $problems += "Missing chatbot\backend\.env. Fix: cd `"$BackendDir`" ; copy .env.example .env ; then edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"
-        Write-Bad "chatbot\backend\.env not found"
+        $problems += "Missing backend\.env. Fix: cd `"$BackendDir`" ; copy .env.example .env ; then edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"
+        Write-Bad "backend\.env not found"
     } else { Write-Ok "backend .env present" }
 }
 
@@ -96,14 +97,14 @@ if (-not $SkipFrontend) {
     $stEnv        = Join-Path $StreamlitDir ".env"
     if (-not (Test-Path $stVenvPython)) {
         $problems += "Missing Streamlit venv. Fix: cd `"$StreamlitDir`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r requirements.txt"
-        Write-Bad "chatbot\frontend\.venv\Scripts\python.exe not found"
+        Write-Bad "frontend\.venv\Scripts\python.exe not found"
     } else { Write-Ok "Streamlit venv present" }
     if (-not (Test-Path $stApp)) {
-        $problems += "Missing chatbot\frontend\app.py."
-        Write-Bad "chatbot\frontend\app.py not found"
+        $problems += "Missing frontend\app.py."
+        Write-Bad "frontend\app.py not found"
     } else { Write-Ok "Streamlit app.py present" }
     if (-not (Test-Path $stEnv)) {
-        Write-Note "chatbot\frontend\.env missing - defaults to MCP_BACKEND_URL=http://localhost:8001. Copy .env.example if you need to override."
+        Write-Note "frontend\.env missing - defaults to MCP_BACKEND_URL=http://localhost:8001. Copy .env.example if you need to override."
     } else { Write-Ok "Streamlit .env present" }
 }
 
@@ -141,7 +142,7 @@ function Start-Service-Window {
 }
 
 if (-not $SkipMcp) {
-    $cmd = "`$env:MCP_TRANSPORT='sse'; .\.venv\Scripts\python.exe mqacemcpserver.py"
+    $cmd = "`$env:MCP_TRANSPORT='sse'; .\.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py"
     $pids += Start-Service-Window -Title "MCP Server (SSE :8000)" `
         -WorkingDirectory $RepoRoot -Command $cmd
     Start-Sleep -Seconds 2
