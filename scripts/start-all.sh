@@ -6,20 +6,18 @@
 # scripts/.logs/<service>.log and recording PIDs in scripts/.pids so
 # stop-all.sh can terminate them.
 #
+# Startup order (each component reads its own .env from its own directory):
+#
 #   1. MCP server   (mqacemcpserver-single/single_server.py, SSE on :8443)
 #                   (use --main to launch mqacemcpserver/mqacemcpserver.py)
 #   2. Chat backend (backend/app.py, FastAPI on :8002)
 #   3. Streamlit UI (frontend/app.py, on :8003)
 #   4. Dashboard    (dashboard/dashboard_server.py, on :8004)
 #
-# Ports/scheme for MCP, backend, and dashboard are read from the .env files at
-# runtime; the Streamlit port is --port (default 8003). Values above are this
-# repo's current configuration.
-#
-# Each component is self-contained with its own requirements.txt. The MCP server
-# shares the repo-root .venv; backend, frontend, and dashboard each have their
-# own .venv. Pass --setup to create missing venvs and pip install each
-# component's requirements before launching.
+# Each component is self-contained with its own .env and requirements.txt.
+# The MCP server uses the repo-root .venv; backend, frontend, and dashboard
+# each have their own .venv. Pass --setup to create missing venvs and pip
+# install each component's requirements before launching.
 #
 # Usage:
 #   ./scripts/start-all.sh --setup            # first run: build venvs, then start
@@ -68,9 +66,13 @@ else
     MCP_ENTRY="$MCP_DIR/single_server.py"
 fi
 MCP_REQS="$MCP_DIR/requirements.txt"
+MCP_ENV="$MCP_DIR/.env"
 BACKEND_DIR="$REPO_ROOT/backend"
+BACKEND_ENV="$BACKEND_DIR/.env"
 FRONTEND_DIR="$REPO_ROOT/frontend"
+FRONTEND_ENV="$FRONTEND_DIR/.env"
 DASHBOARD_DIR="$REPO_ROOT/dashboard"
+DASHBOARD_ENV="$DASHBOARD_DIR/.env"
 ROOT_VENV_PY="$REPO_ROOT/.venv/bin/python"
 PID_FILE="$SCRIPT_DIR/.pids"
 LOG_DIR="$SCRIPT_DIR/.logs"
@@ -92,15 +94,12 @@ get_env() {
     [[ -n "$val" ]] && echo "$val" || echo "$default"
 }
 
-# Derive the real bind ports/scheme. MCP and the dashboard share MCP_TLS_* (both
-# serve HTTPS when a cert is configured); the backend is plain HTTP.
-ROOT_ENV="$REPO_ROOT/.env"
-BACKEND_ENV="$BACKEND_DIR/.env"
-MCP_PORT_V="$(get_env "$ROOT_ENV" MCP_PORT 8000)"
-if [[ -n "$(get_env "$ROOT_ENV" MCP_TLS_CERT '')" ]]; then MCP_SCHEME=https; else MCP_SCHEME=http; fi
-BACKEND_PORT_V="$(get_env "$BACKEND_ENV" CHAT_PORT 8001)"
-DASH_PORT_V="$(get_env "$ROOT_ENV" MCP_DASHBOARD_PORT 8002)"
-DASH_SCHEME="$MCP_SCHEME"
+# Derive the real bind ports/scheme from per-app .env files.
+MCP_PORT_V="$(get_env "$MCP_ENV" MCP_PORT 8443)"
+if [[ -n "$(get_env "$MCP_ENV" MCP_TLS_CERT '')" ]]; then MCP_SCHEME=https; else MCP_SCHEME=http; fi
+BACKEND_PORT_V="$(get_env "$BACKEND_ENV" CHAT_PORT 8002)"
+DASH_PORT_V="$(get_env "$DASHBOARD_ENV" MCP_DASHBOARD_PORT 8004)"
+if [[ -n "$(get_env "$DASHBOARD_ENV" MCP_TLS_CERT '')" ]]; then DASH_SCHEME=https; else DASH_SCHEME=http; fi
 
 # --- setup helper ----------------------------------------------------------
 # init_venv <label> <venv_dir> <requirements_file>
@@ -137,27 +136,28 @@ if [[ $SKIP_MCP -eq 0 ]]; then
     if [[ ! -f "$MCP_ENTRY" ]]; then
         problems+=("Missing MCP entry $MCP_ENTRY."); bad "$MCP_ENTRY not found"
     else ok "$(basename "$MCP_ENTRY") present"; fi
-    [[ -f "$REPO_ROOT/.env" ]] && ok ".env present" || note ".env missing at repo root (server starts but tools may error)."
+    [[ -f "$MCP_ENV" ]] && ok "mcp .env present" || { problems+=("Missing $MCP_ENV. Fix: cd mqacemcpserver-single && cp .env.example .env && edit it"); bad "mqacemcpserver-single/.env not found"; }
 fi
 
 if [[ $SKIP_BACKEND -eq 0 ]]; then
     step "Checking chat backend prerequisites"
     [[ -x "$BACKEND_DIR/.venv/bin/python" ]] && ok "backend venv present" || { problems+=("Missing backend venv. Fix: ./scripts/start-all.sh --setup"); bad "backend/.venv/bin/python not found"; }
     [[ -f "$BACKEND_DIR/app.py" ]] && ok "backend app.py present" || { problems+=("Missing backend/app.py."); bad "backend/app.py not found"; }
-    [[ -f "$BACKEND_DIR/.env" ]] && ok "backend .env present" || { problems+=("Missing backend/.env. Fix: cd backend && cp .env.example .env && edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"); bad "backend/.env not found"; }
+    [[ -f "$BACKEND_ENV" ]] && ok "backend .env present" || { problems+=("Missing backend/.env. Fix: cd backend && cp .env.example .env && edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"); bad "backend/.env not found"; }
 fi
 
 if [[ $SKIP_FRONTEND -eq 0 ]]; then
     step "Checking Streamlit UI prerequisites"
     [[ -x "$FRONTEND_DIR/.venv/bin/python" ]] && ok "frontend venv present" || { problems+=("Missing Streamlit venv. Fix: ./scripts/start-all.sh --setup"); bad "frontend/.venv/bin/python not found"; }
     [[ -f "$FRONTEND_DIR/app.py" ]] && ok "frontend app.py present" || { problems+=("Missing frontend/app.py."); bad "frontend/app.py not found"; }
-    [[ -f "$FRONTEND_DIR/.env" ]] && ok "frontend .env present" || note "frontend/.env missing - defaults to MCP_BACKEND_URL=http://localhost:8001."
+    [[ -f "$FRONTEND_ENV" ]] && ok "frontend .env present" || note "frontend/.env missing - defaults to MCP_BACKEND_URL=http://localhost:8002."
 fi
 
 if [[ $SKIP_DASHBOARD -eq 0 ]]; then
     step "Checking dashboard prerequisites"
     [[ -x "$DASHBOARD_DIR/.venv/bin/python" ]] && ok "dashboard venv present" || { problems+=("Missing dashboard venv. Fix: ./scripts/start-all.sh --setup"); bad "dashboard/.venv/bin/python not found"; }
     [[ -f "$DASHBOARD_DIR/dashboard_server.py" ]] && ok "dashboard_server.py present" || { problems+=("Missing dashboard/dashboard_server.py."); bad "dashboard/dashboard_server.py not found"; }
+    [[ -f "$DASHBOARD_ENV" ]] && ok "dashboard .env present" || note "dashboard/.env missing - defaults used (host=0.0.0.0, port=8004)."
 fi
 
 if [[ ${#problems[@]} -gt 0 ]]; then
@@ -185,29 +185,31 @@ start_service() {
     ok "$title started (PID $(tail -n1 "$PID_FILE"))"
 }
 
+# 1. MCP server (mqacemcpserver-single)
 if [[ $SKIP_MCP -eq 0 ]]; then
-    # Run from repo root so .env/resources resolve.
-    ( cd "$REPO_ROOT" && MCP_TRANSPORT=sse nohup "$ROOT_VENV_PY" "$MCP_ENTRY" >"$LOG_DIR/mcp.log" 2>&1 & echo $! >>"$PID_FILE" )
+    # Run from the MCP directory so its .env is loaded automatically.
+    ( cd "$MCP_DIR" && MCP_TRANSPORT=sse nohup "$ROOT_VENV_PY" "$MCP_ENTRY" >"$LOG_DIR/mcp.log" 2>&1 & echo $! >>"$PID_FILE" )
     ok "MCP Server (SSE :$MCP_PORT_V) started (PID $(tail -n1 "$PID_FILE"))"
     sleep 2
 fi
 
+# 2. Chat backend
 if [[ $SKIP_BACKEND -eq 0 ]]; then
     start_service "Chat Backend (FastAPI :$BACKEND_PORT_V)" "$BACKEND_DIR" "backend" "$BACKEND_DIR/.venv/bin/python" app.py
     sleep 2
 fi
 
+# 3. Streamlit UI (frontend)
 if [[ $SKIP_FRONTEND -eq 0 ]]; then
     start_service "Streamlit UI (:$PORT)" "$FRONTEND_DIR" "frontend" \
         "$FRONTEND_DIR/.venv/bin/python" -m streamlit run app.py \
         --server.port "$PORT" --server.address 0.0.0.0 --server.headless true
 fi
 
+# 4. Dashboard
 if [[ $SKIP_DASHBOARD -eq 0 ]]; then
-    # Run from repo root so relative paths (TLS certs, resources) resolve as they
-    # do for the MCP server. Imports use __file__, so cwd doesn't affect them.
-    start_service "Dashboard (:$DASH_PORT_V)" "$REPO_ROOT" "dashboard" \
-        "$DASHBOARD_DIR/.venv/bin/python" "$DASHBOARD_DIR/dashboard_server.py"
+    start_service "Dashboard (:$DASH_PORT_V)" "$DASHBOARD_DIR" "dashboard" \
+        "$DASHBOARD_DIR/.venv/bin/python" dashboard_server.py
 fi
 
 echo
