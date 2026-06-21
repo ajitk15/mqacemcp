@@ -6,11 +6,15 @@
 # scripts/.logs/<service>.log and recording PIDs in scripts/.pids so
 # stop-all.sh can terminate them.
 #
-#   1. MCP server   (mqacemcpserver-single/single_server.py, SSE on :8000)
+#   1. MCP server   (mqacemcpserver-single/single_server.py, SSE on :8443)
 #                   (use --main to launch mqacemcpserver/mqacemcpserver.py)
-#   2. Chat backend (backend/app.py, FastAPI on :8001)
-#   3. Streamlit UI (frontend/app.py, on :8501)
-#   4. Dashboard    (dashboard/dashboard_server.py, on :8002)
+#   2. Chat backend (backend/app.py, FastAPI on :8002)
+#   3. Streamlit UI (frontend/app.py, on :8003)
+#   4. Dashboard    (dashboard/dashboard_server.py, on :8004)
+#
+# Ports/scheme for MCP, backend, and dashboard are read from the .env files at
+# runtime; the Streamlit port is --port (default 8003). Values above are this
+# repo's current configuration.
 #
 # Each component is self-contained with its own requirements.txt. The MCP server
 # shares the repo-root .venv; backend, frontend, and dashboard each have their
@@ -33,7 +37,7 @@ SKIP_BACKEND=0
 SKIP_FRONTEND=0
 SKIP_DASHBOARD=0
 CHECK_ONLY=0
-PORT=8501
+PORT=8003
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

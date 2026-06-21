@@ -5,11 +5,16 @@
 .DESCRIPTION
     Opens one new PowerShell window per service so each has its own visible log
     stream:
-      1. MCP server   (mqacemcpserver-single\single_server.py, SSE on :8000)
+      1. MCP server   (mqacemcpserver-single\single_server.py, SSE on :8443)
                       (use -Main to launch mqacemcpserver\mqacemcpserver.py instead)
-      2. Chat backend (backend\app.py, FastAPI on :8001)
-      3. Streamlit UI (frontend\app.py, on :8501)
-      4. Dashboard    (dashboard\dashboard_server.py, on :8002)
+      2. Chat backend (backend\app.py, FastAPI on :8002)
+      3. Streamlit UI (frontend\app.py, on :8003)
+      4. Dashboard    (dashboard\dashboard_server.py, on :8004)
+
+    Ports/scheme for MCP, backend, and dashboard are read from the .env files at
+    runtime (MCP_PORT/MCP_TLS_*, backend CHAT_PORT, MCP_DASHBOARD_PORT); the
+    Streamlit port is set by -Port below. The values above are this repo's
+    current configuration.
 
     Each component is self-contained with its own requirements.txt. The MCP
     server shares the repo-root .venv; backend, frontend, and dashboard each
@@ -44,7 +49,7 @@
     Run all pre-flight checks (and -Setup if given) and exit without starting.
 
 .PARAMETER Port
-    Streamlit port (default 8501).
+    Streamlit port (default 8003).
 
 .EXAMPLE
     .\scripts\start-all.ps1 -Setup          # first run: build venvs, then start all
@@ -64,7 +69,7 @@ param(
     [switch]$SkipFrontend,
     [switch]$SkipDashboard,
     [switch]$CheckOnly,
-    [int]$Port = 8501
+    [int]$Port = 8003
 )
 
 $ErrorActionPreference = "Stop"
