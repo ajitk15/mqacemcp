@@ -185,16 +185,16 @@ as separate products in one repo, each independently deployable (own
 `requirements.txt`, own `.env`, own venv). See `backend/README.md` for full docs.
 
 ### Architecture summary
-- `backend/` — FastAPI on `:8001`. LangGraph `create_react_agent`
+- `backend/` — FastAPI on `:8002`. LangGraph `create_react_agent`
   with `MemorySaver` (per-`thread_id` in-process). Tools loaded via
   `langchain-mcp-adapters.MultiServerMCPClient` pointed at `MCP_SSE_URL`.
 - `frontend/` — **Streamlit** app (Python: `app.py`, `client.py`,
-  `renderers.py`) on `:8501`. Streams from the backend over SSE via `httpx`.
+  `renderers.py`) on `:8003`. Streams from the backend over SSE via `httpx`.
   (There is no Next.js frontend in this repo despite older references; the
   Streamlit app lives directly in `frontend/`.)
 - `scripts/start-all.ps1` / `start-streamlit.ps1` / `stop-all.ps1` — launchers
-  that pre-flight prereqs and spawn the service windows (MCP :8000, backend
-  :8001, Streamlit UI :8501). Each `-Skip*` switch isolates a component so a
+  that pre-flight prereqs and spawn the service windows (MCP :8443, backend
+  :8002, Streamlit UI :8003, dashboard :8004). Each `-Skip*` switch isolates a component so a
   single tier can be (re)started on its own; with no switches the script brings
   up the whole stack. Both `start-all.ps1` and `start-streamlit.ps1` launch the
   Streamlit UI from `frontend/`.

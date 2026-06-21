@@ -13,7 +13,15 @@
       "PowerShell($tmp = \"C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\.tmp_ref\"; $zip = \"$tmp\\\\ref.zip\"; if \\(Test-Path $tmp\\) { Remove-Item -Recurse -Force $tmp }; New-Item -ItemType Directory -Path $tmp | Out-Null; Copy-Item \"C:\\\\Users\\\\ajitk\\\\Downloads\\\\Agentic_Platform_Intelligence_\\(4\\).pptx\" $zip; Expand-Archive -Path $zip -DestinationPath \"$tmp\\\\unpacked\"; Get-ChildItem -Recurse \"$tmp\\\\unpacked\\\\ppt\\\\media\" | Select-Object Name, Length | Sort-Object Length -Descending)",
       "PowerShell($src = \"C:\\\\Users\\\\ajitk\\\\Downloads\\\\Agentic_Platform_Intelligence_\\(4\\).pptx\"; $dest = \"C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\documents\\\\_ref_unpack\"; if \\(Test-Path $dest\\) { Remove-Item -Recurse -Force $dest }; New-Item -ItemType Directory -Path $dest | Out-Null; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory\\($src, $dest\\); Get-ChildItem -Recurse \"$dest\\\\ppt\\\\media\" | Select-Object Name, Length)",
       "Bash(../.venv/Scripts/python.exe -m pytest tests/test_composite_tools.py -q)",
-      "PowerShell($tokens=$null; $errs=$null; $null = [System.Management.Automation.Language.Parser]::ParseFile\\(\\(Resolve-Path 'scripts\\\\start-streamlit.ps1'\\).Path, [ref]$tokens, [ref]$errs\\); if \\($errs\\) { $errs | ForEach-Object { $_.Message } } else { \"start-streamlit.ps1: OK\" })"
+      "PowerShell($tokens=$null; $errs=$null; $null = [System.Management.Automation.Language.Parser]::ParseFile\\(\\(Resolve-Path 'scripts\\\\start-streamlit.ps1'\\).Path, [ref]$tokens, [ref]$errs\\); if \\($errs\\) { $errs | ForEach-Object { $_.Message } } else { \"start-streamlit.ps1: OK\" })",
+      "PowerShell(Get-NetTCPConnection *)",
+      "Bash(/c/Workspace/hready/mqacemcp/.venv/Scripts/python.exe single_server.py)",
+      "Bash(echo \"launched pid $!\")",
+      "Bash(grep -rn \"8001\" --include=\"*.ps1\" --include=\"*.env\" --include=\"*.example\" .)",
+      "Bash(grep -rni \"single\" scripts/)",
+      "Bash(grep -n \"MCP_SSE_URL\\\\|8010\\\\|8001\" backend/.env)",
+      "Bash(grep -n \"MCP_PORT\\\\|8010\\\\|8001\" .env)",
+      "PowerShell(& 'C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\scripts\\\\start-streamlit.ps1' -CheckOnly 2>&1 | Select-Object -First 30)"
     ]
   }
 }

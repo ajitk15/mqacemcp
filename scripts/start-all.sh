@@ -66,7 +66,10 @@ else
     MCP_ENTRY="$MCP_DIR/single_server.py"
 fi
 MCP_REQS="$MCP_DIR/requirements.txt"
-MCP_ENV="$MCP_DIR/.env"
+# The single build loads mqacemcpserver-single/.env (beside its code); the main
+# build has no .env there and loads the repo-root .env. Point MCP_ENV at whichever
+# the chosen build actually reads so the banner ports/scheme match.
+if [[ $USE_MAIN -eq 1 ]]; then MCP_ENV="$REPO_ROOT/.env"; else MCP_ENV="$MCP_DIR/.env"; fi
 BACKEND_DIR="$REPO_ROOT/backend"
 BACKEND_ENV="$BACKEND_DIR/.env"
 FRONTEND_DIR="$REPO_ROOT/frontend"

@@ -364,7 +364,7 @@ mqacemcpserver-single/
 │   ├── test_composite_tools.py # 25 offline tests
 │   └── test_csv_cache.py      # 4 tests — manifest auto-reload + freshness
 ├── requirements.txt           # Same as root: mcp, httpx, pandas, python-dotenv, uvicorn
-├── .env.example               # Template; LOG_DIR=logs-single, MCP_PORT=8443 (or 8010)
+├── .env.example               # Template; LOG_DIR=logs-single, MCP_PORT=8010
 └── README.md
 ```
 

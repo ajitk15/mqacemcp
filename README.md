@@ -11,8 +11,8 @@ consumes them. Each top-level folder is its own deliverable — own entry point,
 | --- | --- | --- |
 | **[`mqacemcpserver/`](mqacemcpserver/README.md)** | The main unified MQ + ACE MCP server (14 read-only diagnostic tools, one SSE endpoint). | [`mqacemcpserver/README.md`](mqacemcpserver/README.md) |
 | **[`mqacemcpserver-single/`](mqacemcpserver-single/README.md)** | A second build exposing one composite "single-call" tool. Runs side-by-side on its own port. | [`mqacemcpserver-single/README.md`](mqacemcpserver-single/README.md) |
-| **[`backend/`](backend/README.md)** | Chatbot agent backend — FastAPI + LangGraph (OpenAI), talks to an MCP server over SSE (`:8001`). | [`backend/README.md`](backend/README.md), [`backend/AGENTIC_AI.md`](backend/AGENTIC_AI.md) |
-| **[`frontend/`](frontend/README.md)** | Chatbot UI — Streamlit (`:8501`), MCP-server-agnostic. | [`frontend/README.md`](frontend/README.md) |
+| **[`backend/`](backend/README.md)** | Chatbot agent backend — FastAPI + LangGraph (OpenAI) on `:8002`, talks to an MCP server over SSE. | [`backend/README.md`](backend/README.md), [`backend/AGENTIC_AI.md`](backend/AGENTIC_AI.md) |
+| **[`frontend/`](frontend/README.md)** | Chatbot UI — Streamlit (`:8003`), MCP-server-agnostic. | [`frontend/README.md`](frontend/README.md) |
 | `scripts/` | PowerShell launchers (`start-all.ps1`, `start-streamlit.ps1`, `stop-all.ps1`) and ops tooling. Each `-Skip*` switch isolates a tier; no switches brings up the whole stack. | — |
 | `resources/` | Shared CSV manifests (`qmgr_dump`, `node_config`, `node_dump`, `cert_dump`) consumed by **both** server builds. Replaced by a daily extract job. | — |
 | `docs/` | Overview / supplementary docs: connecting clients, tool reference, narrative deck. | [`docs/README.md`](docs/README.md) |
@@ -34,7 +34,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r mqacemcpserver\requirements.txt
 
-# bring up MCP server (:8000) + chat backend (:8001) + Streamlit UI (:8501)
+# bring up MCP server (:8443) + chat backend (:8002) + Streamlit UI (:8003) + dashboard (:8004)
 .\scripts\start-all.ps1
 # stop everything
 .\scripts\stop-all.ps1
