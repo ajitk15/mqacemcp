@@ -105,16 +105,24 @@ def _resolve_ca_bundle() -> Path | None:
     return p
 
 
-def _make_pinned_factory(ca_path: Path):
-    """Return an httpx client factory that trusts only ``ca_path`` for TLS."""
-    ctx = ssl.create_default_context(cafile=str(ca_path))
+def _tls_insecure() -> bool:
+    """True when MCP TLS verification should be skipped (self-signed endpoints)."""
+    return os.getenv("MCP_TLS_INSECURE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _make_factory(verify: Any):
+    """Return an httpx client factory using ``verify`` for TLS.
+
+    ``verify`` is whatever httpx accepts: an ssl.SSLContext (pinned CA),
+    a path string, or False to disable verification entirely.
+    """
 
     def factory(
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
     ) -> httpx.AsyncClient:
-        kwargs: dict[str, Any] = {"follow_redirects": True, "verify": ctx}
+        kwargs: dict[str, Any] = {"follow_redirects": True, "verify": verify}
         kwargs["timeout"] = timeout if timeout is not None else httpx.Timeout(
             MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT
         )
@@ -125,6 +133,11 @@ def _make_pinned_factory(ca_path: Path):
         return httpx.AsyncClient(**kwargs)
 
     return factory
+
+
+def _make_pinned_factory(ca_path: Path):
+    """Return an httpx client factory that trusts only ``ca_path`` for TLS."""
+    return _make_factory(ssl.create_default_context(cafile=str(ca_path)))
 
 
 def build_client() -> MultiServerMCPClient:
@@ -138,10 +151,18 @@ def build_client() -> MultiServerMCPClient:
         "transport": "sse",
         "headers": _build_headers(),
     }
-    ca_path = _resolve_ca_bundle()
-    if ca_path is not None:
-        log.info("Pinning MCP TLS to CA bundle: %s", ca_path)
-        server_cfg["httpx_client_factory"] = _make_pinned_factory(ca_path)
+    if _tls_insecure():
+        log.warning(
+            "MCP_TLS_INSECURE is set — skipping TLS verification for %s. "
+            "Only use this for self-signed/internal endpoints.",
+            url,
+        )
+        server_cfg["httpx_client_factory"] = _make_factory(False)
+    else:
+        ca_path = _resolve_ca_bundle()
+        if ca_path is not None:
+            log.info("Pinning MCP TLS to CA bundle: %s", ca_path)
+            server_cfg["httpx_client_factory"] = _make_pinned_factory(ca_path)
 
     log.info("Connecting to MCP server at %s", url)
     return MultiServerMCPClient({_server_name(): server_cfg})
