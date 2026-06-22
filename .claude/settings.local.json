@@ -21,7 +21,17 @@
       "Bash(grep -rni \"single\" scripts/)",
       "Bash(grep -n \"MCP_SSE_URL\\\\|8010\\\\|8001\" backend/.env)",
       "Bash(grep -n \"MCP_PORT\\\\|8010\\\\|8001\" .env)",
-      "PowerShell(& 'C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\scripts\\\\start-streamlit.ps1' -CheckOnly 2>&1 | Select-Object -First 30)"
+      "PowerShell(& 'C:\\\\Workspace\\\\hready\\\\mqacemcp\\\\scripts\\\\start-streamlit.ps1' -CheckOnly 2>&1 | Select-Object -First 30)",
+      "Read(//c/Users/ajitk/Downloads/aws/**)",
+      "Bash(awk -F'|' 'NR>1 && $4==\"QLOCAL\"{ name=$5; sub\\(/.*QLOCAL\\\\\\(.?/,\"\",name\\); sub\\(/.?\\\\\\).*/,\"\",name\\); print $3\" : \"name }' qmgr_dump.csv)",
+      "Bash(awk -F'|' 'NR>1 && $4==\"QREMOTE\"{ name=$5; sub\\(/.*QREMOTE\\\\\\(.?/,\"\",name\\); sub\\(/.?\\\\\\).*/,\"\",name\\); print $3\" : \"name }' qmgr_dump.csv)",
+      "Bash(awk -F'|' 'NR>1 && $4==\"QALIAS\"{ name=$5; sub\\(/.*QALIAS\\\\\\(.?/,\"\",name\\); sub\\(/.?\\\\\\).*/,\"\",name\\); print $3\" : \"name }' qmgr_dump.csv)",
+      "Bash(awk -F'|' 'NR>1 && $4==\"CHANNEL\"{ name=$5; sub\\(/.*CHANNEL\\\\\\(.?/,\"\",name\\); sub\\(/.?\\\\\\).*/,\"\",name\\); chtype=$5; if\\(name !~ /^SYSTEM/\\) print $3\" : \"name }' qmgr_dump.csv)",
+      "Bash(awk -F'|' 'NR>1 && $4==\"CHANNEL\"{ name=$5; sub\\(/.*CHANNEL\\\\\\(.?/,\"\",name\\); sub\\(/.?\\\\\\).*/,\"\",name\\); t=$5; sub\\(/.*CHLTYPE\\\\\\(/,\"\",t\\); sub\\(/\\\\\\).*/,\"\",t\\); if\\(name !~ /^SYSTEM/\\) print $3\" : \"name\" [\"t\"]\" }' qmgr_dump.csv)",
+      "Bash(awk -F'|' 'NR>1{print $3\"  @  \"$2}' node_dump.csv)",
+      "Bash(awk -F'|' 'NR>1{print $4}' node_dump.csv)",
+      "Bash(awk -F'|' 'NR>1 && /BIP1286I/{ s=$4; sub\\(/.*server ./,\"\",s\\); sub\\(/. on.*/,\"\",s\\); print $3\" : \"s }' node_dump.csv)",
+      "Bash(awk -F'|' 'NR>1 && /BIP1275I/{ a=$4; sub\\(/.*Application ./,\"\",a\\); sub\\(/. on integration server ./,\" @ \",a\\); sub\\(/. is running.*/,\"\",a\\); print $3\" | \"a }' node_dump.csv)"
     ]
   }
 }
