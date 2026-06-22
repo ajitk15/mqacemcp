@@ -9,8 +9,11 @@
 # Secrets (OPENAI_API_KEY, MCP_AUTH_PASSWORD, MCP_SSE_URL, MCP_AUTH_USER) use
 # `sync: false` — set them in the Render dashboard, never in this file.
 #
-# First deploy: the backend comes up first; then set MCP_BACKEND_URL on the UI
-# service to the backend's public URL (https://<backend-name>.onrender.com).
+# The UI's MCP_BACKEND_URL is auto-wired to the backend service via
+# `fromService` (Render resolves it to the backend's public hostname), so the
+# ONLY value you must supply by hand is the MCP server endpoint: set MCP_SSE_URL
+# (and MCP_AUTH_USER / MCP_AUTH_PASSWORD if the tunnel uses Basic Auth) on the
+# backend service in the Render dashboard.
 
 services:
   # ---- FastAPI + LangGraph agent backend ----------------------------------
@@ -31,8 +34,10 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-5.5
-      - key: MCP_SSE_URL           # on-prem tunnel URL, e.g. https://mcp-demo.you.com/sse
-        sync: false
+      # MCP server endpoint (on-prem tunnel's public SSE URL). Edit this value
+      # in-place when the endpoint changes — it is a plain env var, not a secret.
+      - key: MCP_SSE_URL
+        value: https://CHANGE-ME.example.com/sse
       - key: MCP_AUTH_USER
         sync: false
       - key: MCP_AUTH_PASSWORD     # secret
@@ -61,9 +66,12 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
-      # After the backend's first deploy, set this to its public URL:
-      #   https://mqace-chat-backend.onrender.com
-      # (The UI calls the backend server-side via httpx, so no CORS wiring is
-      # needed between the two services.)
+      # Auto-resolved to the backend's public hostname (e.g.
+      # mqace-chat-backend.onrender.com). The UI's client prepends https:// when
+      # the value has no scheme. The UI calls the backend server-side via httpx,
+      # so no CORS wiring is needed between the two services.
       - key: MCP_BACKEND_URL
-        sync: false
+        fromService:
+          type: web
+          name: mqace-chat-backend
+          property: host

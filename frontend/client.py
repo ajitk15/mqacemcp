@@ -18,7 +18,12 @@ import httpx
 
 
 def _backend_url() -> str:
-    return os.getenv("MCP_BACKEND_URL", "http://localhost:8001").rstrip("/")
+    # Render's `fromService property: host` injects a bare hostname (no scheme);
+    # prepend https:// so the value works whether or not a scheme is present.
+    url = os.getenv("MCP_BACKEND_URL", "http://localhost:8001").rstrip("/")
+    if url and "://" not in url:
+        url = f"https://{url}"
+    return url
 
 
 # Read indefinitely while streaming (the backend keeps the SSE connection open
