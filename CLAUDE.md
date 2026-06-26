@@ -198,6 +198,14 @@ as separate products in one repo, each independently deployable (own
   single tier can be (re)started on its own; with no switches the script brings
   up the whole stack. Both `start-all.ps1` and `start-streamlit.ps1` launch the
   Streamlit UI from `frontend/`.
+- The dashboard process (`dashboard/dashboard_server.py`) does **not** load
+  `dashboard/.env` itself — it reads `MCP_DASHBOARD_PORT` / `MCP_SERVER_DIR` from
+  the process environment and gets `LOG_DIR` + TLS from the imported build's
+  `server.config`. `start-all.*` therefore injects `MCP_SERVER_DIR` (the build it
+  launched — single by default, `mqacemcpserver` with `-Main`) and
+  `MCP_DASHBOARD_PORT` (read from `dashboard/.env`) so the dashboard reads the
+  running build's logs on :8004. If you launch the dashboard another way, set
+  both env vars yourself or it falls back to `../mqacemcpserver` + :8002.
 
 ### Hard rules when working in this repo
 - **Do not modify any file under `mqacemcpserver/` or `resources/` from

@@ -31,7 +31,12 @@
       "Bash(awk -F'|' 'NR>1{print $3\"  @  \"$2}' node_dump.csv)",
       "Bash(awk -F'|' 'NR>1{print $4}' node_dump.csv)",
       "Bash(awk -F'|' 'NR>1 && /BIP1286I/{ s=$4; sub\\(/.*server ./,\"\",s\\); sub\\(/. on.*/,\"\",s\\); print $3\" : \"s }' node_dump.csv)",
-      "Bash(awk -F'|' 'NR>1 && /BIP1275I/{ a=$4; sub\\(/.*Application ./,\"\",a\\); sub\\(/. on integration server ./,\" @ \",a\\); sub\\(/. is running.*/,\"\",a\\); print $3\" | \"a }' node_dump.csv)"
+      "Bash(awk -F'|' 'NR>1 && /BIP1275I/{ a=$4; sub\\(/.*Application ./,\"\",a\\); sub\\(/. on integration server ./,\" @ \",a\\); sub\\(/. is running.*/,\"\",a\\); print $3\" | \"a }' node_dump.csv)",
+      "Bash(export MCP_SSE_URL=\"https://98.92.173.143:8001/sse\")",
+      "Bash(export MCP_AUTH_USER=\"mcpadmin\")",
+      "Bash(export MCP_AUTH_PASSWORD=\"mcpadmin\")",
+      "Bash(export MCP_TLS_INSECURE=\"true\")",
+      "Bash(export MCP_TLS_CA_BUNDLE=\"\")"
     ]
   }
 }

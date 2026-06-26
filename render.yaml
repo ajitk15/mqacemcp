@@ -34,13 +34,15 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-5.5
-      # MCP server endpoint (public SSE URL). Edit this value in-place when the
-      # endpoint changes — it is a plain env var, not a secret.
+      # MCP server endpoint (public SSE URL). The MCP server serves HTTPS once
+      # MCP_TLS_CERT/MCP_TLS_KEY are set on the AWS box (see deploy runbook).
+      # The scheme here MUST match the server: https:// only after TLS is live,
+      # otherwise the backend handshakes TLS against plain HTTP -> 0 tools.
       - key: MCP_SSE_URL
         value: https://98.92.173.143:8001/sse
-      # Set to "true" when the MCP endpoint uses a self-signed cert or is reached
-      # by raw IP (no cert hostname match) — skips TLS verification on the
-      # backend->MCP hop. Leave false/unset once a real public cert is in place.
+      # The MCP server's cert is self-signed (IP SAN, not CA-issued), so the
+      # backend must skip chain verification. Switch to "false" if you later
+      # move to a real CA-issued cert behind a hostname.
       - key: MCP_TLS_INSECURE
         value: "true"
       - key: MCP_AUTH_USER

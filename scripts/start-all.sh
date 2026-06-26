@@ -211,7 +211,17 @@ fi
 
 # 4. Dashboard
 if [[ $SKIP_DASHBOARD -eq 0 ]]; then
+    # Point the dashboard at the SAME build we launched ($MCP_DIR) via
+    # MCP_SERVER_DIR so it loads that build's server.config (and its LOG_DIR).
+    # Otherwise it defaults to the main build's config, reads a different log
+    # dir than the running server, and renders "No data".
+    #
+    # Pass MCP_DASHBOARD_PORT explicitly too: dashboard_server.py never loads
+    # dashboard/.env itself — it only reads the build's server.config .env (which
+    # has no dashboard port) plus process env. Without this it falls back to its
+    # hardcoded 8002 default instead of the $DASH_PORT_V shown in the banner.
     start_service "Dashboard (:$DASH_PORT_V)" "$DASHBOARD_DIR" "dashboard" \
+        env "MCP_SERVER_DIR=$MCP_DIR" "MCP_DASHBOARD_PORT=$DASH_PORT_V" \
         "$DASHBOARD_DIR/.venv/bin/python" dashboard_server.py
 fi
 

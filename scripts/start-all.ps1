@@ -107,8 +107,9 @@ function Get-EnvValue {
 
 # Derive the real bind ports/scheme. MCP and the dashboard share MCP_TLS_* (so
 # both serve HTTPS when a cert is configured); the backend is plain HTTP.
-$RootEnv     = Join-Path $RepoRoot ".env"
-$BackendEnv  = Join-Path $BackendDir ".env"
+$RootEnv      = Join-Path $RepoRoot ".env"
+$BackendEnv   = Join-Path $BackendDir ".env"
+$DashboardEnv = Join-Path $DashboardDir ".env"
 # The MCP server reads its own .env: the single build loads mqacemcpserver-single\.env,
 # while the main build (no .env beside it) loads the repo-root .env. Read MCP_PORT /
 # MCP_TLS_CERT from whichever the chosen build actually uses so the banner matches.
@@ -116,7 +117,10 @@ $McpEnv      = if ($Main) { $RootEnv } else { Join-Path $McpDir ".env" }
 $McpPort     = Get-EnvValue $McpEnv "MCP_PORT" "8000"
 $McpScheme   = if (Get-EnvValue $McpEnv "MCP_TLS_CERT" "") { "https" } else { "http" }
 $BackendPort = Get-EnvValue $BackendEnv "CHAT_PORT" "8001"
-$DashPort    = Get-EnvValue $RootEnv "MCP_DASHBOARD_PORT" "8002"
+# The dashboard's own port lives in dashboard\.env (its authoritative config);
+# fall back to the root .env, then the code default. Keep this the single source
+# so the banner matches the port we hand the process below.
+$DashPort    = Get-EnvValue $DashboardEnv "MCP_DASHBOARD_PORT" (Get-EnvValue $RootEnv "MCP_DASHBOARD_PORT" "8002")
 $DashScheme  = $McpScheme
 
 # ---------------------------------------------------------------------------
@@ -265,7 +269,17 @@ if (-not $SkipFrontend) {
 if (-not $SkipDashboard) {
     # Run from repo root so relative paths (e.g. TLS certs/cert.pem, resources)
     # resolve the same way they do for the MCP server. Imports use __file__.
-    $cmd = ".\dashboard\.venv\Scripts\python.exe dashboard\dashboard_server.py"
+    # Point the dashboard at the SAME build we launched ($McpDir) via
+    # MCP_SERVER_DIR so it loads that build's server.config — and therefore its
+    # LOG_DIR. Without this the dashboard always uses the main build's config
+    # (root .env LOG_DIR), which differs from the single build's log dir, so it
+    # reads an empty directory and renders "No data".
+    #
+    # dashboard_server.py never loads dashboard\.env itself — it only reads the
+    # build's server.config .env (which has no dashboard port) plus process env.
+    # Pass the port we resolved ($DashPort, from dashboard\.env) explicitly so the
+    # bind matches the banner instead of falling back to the hardcoded 8002 default.
+    $cmd = "`$env:MCP_SERVER_DIR='$McpDir'; `$env:MCP_DASHBOARD_PORT='$DashPort'; .\dashboard\.venv\Scripts\python.exe dashboard\dashboard_server.py"
     $pids += Start-Service-Window -Title "Dashboard (:$DashPort)" `
         -WorkingDirectory $RepoRoot -Command $cmd
 }

@@ -215,7 +215,7 @@ the Inspector would. Use it when you want a brandable web chat surface for
 operators rather than a desktop client.
 
 ```powershell
-.\scripts\start-all.ps1   # MCP server + chat backend + UI in 3 windows
+.\scripts\start-all.ps1   # MCP server + chat backend + Streamlit UI + dashboard in 4 windows
 ```
 
 The chat backend is configured via `backend/.env`. The two values
