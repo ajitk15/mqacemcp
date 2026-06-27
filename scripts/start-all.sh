@@ -8,29 +8,35 @@
 #
 # Startup order (each component reads its own .env from its own directory):
 #
-#   1. MCP server   (mqacemcpserver-single/single_server.py, SSE on :8010)
-#                   (use --main to launch mqacemcpserver/mqacemcpserver.py on :8443)
-#   2. Chat backend (backend/app.py, FastAPI on :8002)
-#   3. Streamlit UI (frontend/app.py, on :8003)
-#   4. Dashboard    (dashboard/dashboard_server.py, on :8004)
+#   1. MCP main     (mqacemcpserver/mqacemcpserver.py, SSE on :8009)
+#   2. MCP single   (mqacemcpserver-single/single_server.py, SSE on :8010)
+#   3. Chat backend (backend/app.py, FastAPI on :8002)
+#   4. Streamlit UI (frontend/app.py, on :8003)
+#   5. Dashboard    (dashboard/dashboard_server.py, on :8004)
+#
+# Both MCP builds run side by side: the main build reads the repo-root .env
+# (:8009), the single build reads mqacemcpserver-single/.env (:8010). The backend
+# defaults to the main build; users can switch to the single build or a custom
+# server from the Streamlit sidebar.
 #
 # Each component is self-contained with its own .env and requirements.txt.
-# The MCP server uses the repo-root .venv; backend, frontend, and dashboard
+# The MCP builds share the repo-root .venv; backend, frontend, and dashboard
 # each have their own .venv. Pass --setup to create missing venvs and pip
 # install each component's requirements before launching.
 #
 # Usage:
 #   ./scripts/start-all.sh --setup            # first run: build venvs, then start
-#   ./scripts/start-all.sh                    # start all (single MCP build)
-#   ./scripts/start-all.sh --main --skip-dashboard
+#   ./scripts/start-all.sh                    # start both MCP builds + the stack
+#   ./scripts/start-all.sh --skip-mcp-single --skip-dashboard
 #   ./scripts/start-all.sh --check-only
 #
 set -euo pipefail
 
 # --- options ---------------------------------------------------------------
-USE_MAIN=0
 DO_SETUP=0
 SKIP_MCP=0
+SKIP_MCP_MAIN=0
+SKIP_MCP_SINGLE=0
 SKIP_BACKEND=0
 SKIP_FRONTEND=0
 SKIP_DASHBOARD=0
@@ -39,37 +45,40 @@ PORT=8003
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --main)          USE_MAIN=1 ;;
-        --setup)         DO_SETUP=1 ;;
-        --skip-mcp)      SKIP_MCP=1 ;;
-        --skip-backend)  SKIP_BACKEND=1 ;;
-        --skip-frontend) SKIP_FRONTEND=1 ;;
-        --skip-dashboard) SKIP_DASHBOARD=1 ;;
-        --check-only)    CHECK_ONLY=1 ;;
-        --port)          PORT="$2"; shift ;;
-        -h|--help)       grep '^#' "$0" | sed 's/^#//'; exit 0 ;;
+        --setup)           DO_SETUP=1 ;;
+        --skip-mcp)        SKIP_MCP=1 ;;
+        --skip-mcp-main)   SKIP_MCP_MAIN=1 ;;
+        --skip-mcp-single) SKIP_MCP_SINGLE=1 ;;
+        --skip-backend)    SKIP_BACKEND=1 ;;
+        --skip-frontend)   SKIP_FRONTEND=1 ;;
+        --skip-dashboard)  SKIP_DASHBOARD=1 ;;
+        --check-only)      CHECK_ONLY=1 ;;
+        --port)            PORT="$2"; shift ;;
+        -h|--help)         grep '^#' "$0" | sed 's/^#//'; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
     shift
 done
+
+# --skip-mcp is the master switch: skip both builds.
+if [[ $SKIP_MCP -eq 1 ]]; then SKIP_MCP_MAIN=1; SKIP_MCP_SINGLE=1; fi
+ANY_MCP=0
+[[ $SKIP_MCP_MAIN -eq 0 || $SKIP_MCP_SINGLE -eq 0 ]] && ANY_MCP=1
 
 # --- paths -----------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-if [[ $USE_MAIN -eq 1 ]]; then
-    MCP_DIR="$REPO_ROOT/mqacemcpserver"
-    MCP_ENTRY="$MCP_DIR/mqacemcpserver.py"
-else
-    MCP_DIR="$REPO_ROOT/mqacemcpserver-single"
-    MCP_ENTRY="$MCP_DIR/single_server.py"
-fi
-MCP_REQS="$MCP_DIR/requirements.txt"
-# The single build loads mqacemcpserver-single/.env (beside its code); the main
-# build has no .env there and loads the repo-root .env. Point MCP_ENV at whichever
-# the chosen build actually reads so the banner ports/scheme match.
-if [[ $USE_MAIN -eq 1 ]]; then MCP_ENV="$REPO_ROOT/.env"; else MCP_ENV="$MCP_DIR/.env"; fi
+# Both MCP builds run side by side. Each reads its own .env: the main build the
+# repo-root .env, the single build mqacemcpserver-single/.env.
+MCP_MAIN_DIR="$REPO_ROOT/mqacemcpserver"
+MCP_MAIN_ENTRY="$MCP_MAIN_DIR/mqacemcpserver.py"
+MCP_MAIN_ENV="$REPO_ROOT/.env"
+MCP_SINGLE_DIR="$REPO_ROOT/mqacemcpserver-single"
+MCP_SINGLE_ENTRY="$MCP_SINGLE_DIR/single_server.py"
+MCP_SINGLE_ENV="$MCP_SINGLE_DIR/.env"
+MCP_REQS="$MCP_MAIN_DIR/requirements.txt"
 BACKEND_DIR="$REPO_ROOT/backend"
 BACKEND_ENV="$BACKEND_DIR/.env"
 FRONTEND_DIR="$REPO_ROOT/frontend"
@@ -97,12 +106,17 @@ get_env() {
     [[ -n "$val" ]] && echo "$val" || echo "$default"
 }
 
-# Derive the real bind ports/scheme from per-app .env files.
-MCP_PORT_V="$(get_env "$MCP_ENV" MCP_PORT 8443)"
-if [[ -n "$(get_env "$MCP_ENV" MCP_TLS_CERT '')" ]]; then MCP_SCHEME=https; else MCP_SCHEME=http; fi
+# Derive the real bind ports/scheme/log dirs from per-build .env files.
+MCP_MAIN_PORT="$(get_env "$MCP_MAIN_ENV" MCP_PORT 8009)"
+MCP_SINGLE_PORT="$(get_env "$MCP_SINGLE_ENV" MCP_PORT 8010)"
+if [[ -n "$(get_env "$MCP_MAIN_ENV" MCP_TLS_CERT '')" ]]; then MCP_MAIN_SCHEME=https; else MCP_MAIN_SCHEME=http; fi
+if [[ -n "$(get_env "$MCP_SINGLE_ENV" MCP_TLS_CERT '')" ]]; then MCP_SINGLE_SCHEME=https; else MCP_SINGLE_SCHEME=http; fi
+MCP_MAIN_LOGDIR="$(get_env "$MCP_MAIN_ENV" LOG_DIR "$REPO_ROOT/custom-logs")"
+MCP_SINGLE_LOGDIR="$(get_env "$MCP_SINGLE_ENV" LOG_DIR "$MCP_SINGLE_DIR/logs")"
 BACKEND_PORT_V="$(get_env "$BACKEND_ENV" CHAT_PORT 8002)"
 DASH_PORT_V="$(get_env "$DASHBOARD_ENV" MCP_DASHBOARD_PORT 8004)"
-if [[ -n "$(get_env "$DASHBOARD_ENV" MCP_TLS_CERT '')" ]]; then DASH_SCHEME=https; else DASH_SCHEME=http; fi
+# The dashboard shares the main build's TLS config (MCP_SERVER_DIR points there).
+if [[ -n "$(get_env "$MCP_MAIN_ENV" MCP_TLS_CERT '')" ]]; then DASH_SCHEME=https; else DASH_SCHEME=http; fi
 
 # --- setup helper ----------------------------------------------------------
 # init_venv <label> <venv_dir> <requirements_file>
@@ -121,7 +135,8 @@ init_venv() {
 
 if [[ $DO_SETUP -eq 1 ]]; then
     step "Setup: installing per-component requirements"
-    [[ $SKIP_MCP -eq 0 ]]       && init_venv "mcp"       "$REPO_ROOT"     "$MCP_REQS"
+    # Both MCP builds share the repo-root .venv (same dependency set).
+    [[ $ANY_MCP -eq 1 ]]        && init_venv "mcp"       "$REPO_ROOT"     "$MCP_REQS"
     [[ $SKIP_BACKEND -eq 0 ]]   && init_venv "backend"   "$BACKEND_DIR"   "$BACKEND_DIR/requirements.txt"
     [[ $SKIP_FRONTEND -eq 0 ]]  && init_venv "frontend"  "$FRONTEND_DIR"  "$FRONTEND_DIR/requirements.txt"
     [[ $SKIP_DASHBOARD -eq 0 ]] && init_venv "dashboard" "$DASHBOARD_DIR" "$DASHBOARD_DIR/requirements.txt"
@@ -131,15 +146,18 @@ fi
 # --- pre-flight ------------------------------------------------------------
 problems=()
 
-if [[ $SKIP_MCP -eq 0 ]]; then
-    step "Checking MCP server prerequisites ($([[ $USE_MAIN -eq 1 ]] && echo 'main build' || echo 'single build'))"
+if [[ $ANY_MCP -eq 1 ]]; then
+    step "Checking MCP server prerequisites (main + single builds)"
     if [[ ! -x "$ROOT_VENV_PY" ]]; then
         problems+=("Missing MCP venv. Fix: ./scripts/start-all.sh --setup"); bad ".venv/bin/python not found"
     else ok ".venv present"; fi
-    if [[ ! -f "$MCP_ENTRY" ]]; then
-        problems+=("Missing MCP entry $MCP_ENTRY."); bad "$MCP_ENTRY not found"
-    else ok "$(basename "$MCP_ENTRY") present"; fi
-    [[ -f "$MCP_ENV" ]] && ok "mcp .env present" || { problems+=("Missing $MCP_ENV. Fix: cd mqacemcpserver-single && cp .env.example .env && edit it"); bad "mqacemcpserver-single/.env not found"; }
+    if [[ $SKIP_MCP_MAIN -eq 0 ]]; then
+        [[ -f "$MCP_MAIN_ENTRY" ]] && ok "mqacemcpserver.py present (:$MCP_MAIN_PORT)" || { problems+=("Missing main MCP entry $MCP_MAIN_ENTRY."); bad "$MCP_MAIN_ENTRY not found"; }
+    fi
+    if [[ $SKIP_MCP_SINGLE -eq 0 ]]; then
+        [[ -f "$MCP_SINGLE_ENTRY" ]] && ok "single_server.py present (:$MCP_SINGLE_PORT)" || { problems+=("Missing single MCP entry $MCP_SINGLE_ENTRY."); bad "$MCP_SINGLE_ENTRY not found"; }
+    fi
+    [[ -f "$MCP_MAIN_ENV" ]] && ok "root .env present" || note "root .env missing (main build will start but tools may error)."
 fi
 
 if [[ $SKIP_BACKEND -eq 0 ]]; then
@@ -188,40 +206,51 @@ start_service() {
     ok "$title started (PID $(tail -n1 "$PID_FILE"))"
 }
 
-# 1. MCP server (mqacemcpserver-single)
-if [[ $SKIP_MCP -eq 0 ]]; then
-    # Run from the MCP directory so its .env is loaded automatically.
-    ( cd "$MCP_DIR" && MCP_TRANSPORT=sse nohup "$ROOT_VENV_PY" "$MCP_ENTRY" >"$LOG_DIR/mcp.log" 2>&1 & echo $! >>"$PID_FILE" )
-    ok "MCP Server (SSE :$MCP_PORT_V) started (PID $(tail -n1 "$PID_FILE"))"
-    sleep 2
+# 1. MCP main build (reads repo-root .env via __file__ -> :8009)
+if [[ $SKIP_MCP_MAIN -eq 0 ]]; then
+    ( cd "$REPO_ROOT" && MCP_TRANSPORT=sse nohup "$ROOT_VENV_PY" "$MCP_MAIN_ENTRY" >"$LOG_DIR/mcp-main.log" 2>&1 & echo $! >>"$PID_FILE" )
+    ok "MCP Main (SSE :$MCP_MAIN_PORT) started (PID $(tail -n1 "$PID_FILE"))"
 fi
 
-# 2. Chat backend
+# 2. MCP single build (reads mqacemcpserver-single/.env via __file__ -> :8010)
+if [[ $SKIP_MCP_SINGLE -eq 0 ]]; then
+    ( cd "$REPO_ROOT" && MCP_TRANSPORT=sse nohup "$ROOT_VENV_PY" "$MCP_SINGLE_ENTRY" >"$LOG_DIR/mcp-single.log" 2>&1 & echo $! >>"$PID_FILE" )
+    ok "MCP Single (SSE :$MCP_SINGLE_PORT) started (PID $(tail -n1 "$PID_FILE"))"
+fi
+
+[[ $ANY_MCP -eq 1 ]] && sleep 2
+
+# 3. Chat backend
 if [[ $SKIP_BACKEND -eq 0 ]]; then
     start_service "Chat Backend (FastAPI :$BACKEND_PORT_V)" "$BACKEND_DIR" "backend" "$BACKEND_DIR/.venv/bin/python" app.py
     sleep 2
 fi
 
-# 3. Streamlit UI (frontend)
+# 4. Streamlit UI (frontend)
 if [[ $SKIP_FRONTEND -eq 0 ]]; then
     start_service "Streamlit UI (:$PORT)" "$FRONTEND_DIR" "frontend" \
         "$FRONTEND_DIR/.venv/bin/python" -m streamlit run app.py \
         --server.port "$PORT" --server.address 0.0.0.0 --server.headless true
 fi
 
-# 4. Dashboard
+# 5. Dashboard
 if [[ $SKIP_DASHBOARD -eq 0 ]]; then
-    # Point the dashboard at the SAME build we launched ($MCP_DIR) via
-    # MCP_SERVER_DIR so it loads that build's server.config (and its LOG_DIR).
-    # Otherwise it defaults to the main build's config, reads a different log
-    # dir than the running server, and renders "No data".
-    #
-    # Pass MCP_DASHBOARD_PORT explicitly too: dashboard_server.py never loads
-    # dashboard/.env itself — it only reads the build's server.config .env (which
-    # has no dashboard port) plus process env. Without this it falls back to its
-    # hardcoded 8002 default instead of the $DASH_PORT_V shown in the banner.
+    # Render one tab per MCP build: hand it both builds' log dirs via
+    # MCP_DASHBOARD_SERVERS_JSON. MCP_SERVER_DIR points at the main build for
+    # shared TLS config. dashboard_server.py never loads dashboard/.env itself —
+    # it reads these from process env. Build the JSON with python so paths and
+    # quotes are escaped correctly.
+    DASH_SERVERS_JSON="$("$PYTHON_BIN" -c 'import json,sys; print(json.dumps([{"name":sys.argv[1],"key":"main","log_dir":sys.argv[2]},{"name":sys.argv[3],"key":"single","log_dir":sys.argv[4]}]))' \
+        "mqacemcpserver (:$MCP_MAIN_PORT)" "$MCP_MAIN_LOGDIR" \
+        "mqacemcpserver-single (:$MCP_SINGLE_PORT)" "$MCP_SINGLE_LOGDIR")"
+    # Head-to-head benchmark results (backend/tests/compare_servers.py) feed the
+    # dashboard's Compare tab.
+    COMPARE_JSON="$MCP_MAIN_LOGDIR/compare_results.json"
     start_service "Dashboard (:$DASH_PORT_V)" "$DASHBOARD_DIR" "dashboard" \
-        env "MCP_SERVER_DIR=$MCP_DIR" "MCP_DASHBOARD_PORT=$DASH_PORT_V" \
+        env "MCP_SERVER_DIR=$MCP_MAIN_DIR" "MCP_DASHBOARD_PORT=$DASH_PORT_V" \
+        "MCP_DASHBOARD_SERVERS_JSON=$DASH_SERVERS_JSON" \
+        "MCP_DASHBOARD_COMPARE_JSON=$COMPARE_JSON" \
+        "MCP_DASHBOARD_REFRESH_SECONDS=60" \
         "$DASHBOARD_DIR/.venv/bin/python" dashboard_server.py
 fi
 
@@ -229,10 +258,15 @@ echo
 ok "All requested services launched."
 echo
 echo "Endpoints"
-if [[ $SKIP_MCP -eq 0 ]]; then
-    echo "  MCP server (:$MCP_PORT_V)"
-    echo "    SSE        : $MCP_SCHEME://localhost:$MCP_PORT_V/sse"
-    echo "    Health     : $MCP_SCHEME://localhost:$MCP_PORT_V/healthz"
+if [[ $SKIP_MCP_MAIN -eq 0 ]]; then
+    echo "  MCP main (:$MCP_MAIN_PORT)"
+    echo "    SSE        : $MCP_MAIN_SCHEME://localhost:$MCP_MAIN_PORT/sse"
+    echo "    Health     : $MCP_MAIN_SCHEME://localhost:$MCP_MAIN_PORT/healthz"
+fi
+if [[ $SKIP_MCP_SINGLE -eq 0 ]]; then
+    echo "  MCP single (:$MCP_SINGLE_PORT)"
+    echo "    SSE        : $MCP_SINGLE_SCHEME://localhost:$MCP_SINGLE_PORT/sse"
+    echo "    Health     : $MCP_SINGLE_SCHEME://localhost:$MCP_SINGLE_PORT/healthz"
 fi
 if [[ $SKIP_BACKEND -eq 0 ]]; then
     echo "  Chat backend (:$BACKEND_PORT_V)"
