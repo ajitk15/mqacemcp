@@ -18,7 +18,7 @@ load_dotenv()  # picks up MCP_BACKEND_URL / PAGE_TITLE from .env if present
 
 import streamlit as st
 
-from client import get_health, reset_thread, stream_chat
+from client import connect_server, get_health, get_servers, reset_thread, stream_chat
 from renderers import render_assistant_body, render_block, render_markdown, render_tool_step
 
 
@@ -28,6 +28,16 @@ from renderers import render_assistant_body, render_block, render_markdown, rend
 
 _PAGE_TITLE_OVERRIDE = os.getenv("PAGE_TITLE", "").strip()
 _PAGE_ICON = os.getenv("PAGE_ICON", "").strip() or "💬"
+
+# Sidebar quick-links (open in a new browser tab). The sample-questions page is
+# served by Streamlit's static file server (frontend/static/, enabled in
+# .streamlit/config.toml) at a relative URL.
+_DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://localhost:8004/dashboard").strip()
+_SAMPLE_QUESTIONS_URL = os.getenv(
+    "SAMPLE_QUESTIONS_URL", "app/static/mq_ace_cert_questions.html"
+).strip()
+
+_CUSTOM_SERVER_LABEL = "Custom…"
 
 st.set_page_config(
     page_title=_PAGE_TITLE_OVERRIDE or "MCP Chatbot",
@@ -111,6 +121,8 @@ st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
 
 if "info" not in st.session_state:
     st.session_state.info = get_health()
+if "servers" not in st.session_state:
+    st.session_state.servers = get_servers()
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = str(uuid.uuid4())
 if "turns" not in st.session_state:
@@ -122,6 +134,7 @@ if "pending" not in st.session_state:
 
 def _refresh_health() -> None:
     st.session_state.info = get_health()
+    st.session_state.servers = get_servers()
 
 
 info = st.session_state.info or {}
@@ -178,6 +191,62 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
+    st.markdown("### MCP Server")
+    servers_info = st.session_state.servers or {}
+    known = servers_info.get("servers") or []
+    active_url = (servers_info.get("active_url") or "").strip()
+    active_name = (servers_info.get("active_name") or active_url).strip()
+
+    options = [s.get("name") or s.get("url") for s in known] + [_CUSTOM_SERVER_LABEL]
+    # Preselect whichever known server is currently active.
+    active_idx = next(
+        (i for i, s in enumerate(known) if (s.get("url") or "").strip() == active_url),
+        0,
+    )
+    choice = st.selectbox("Connect to", options, index=active_idx)
+
+    if choice == _CUSTOM_SERVER_LABEL:
+        target_url = st.text_input("SSE URL", placeholder="https://host:port/sse").strip()
+        target_name = None
+        with st.expander("Auth (optional)", expanded=False):
+            custom_user = st.text_input("Username", key="mcp_custom_user").strip() or None
+            custom_pwd = st.text_input(
+                "Password", type="password", key="mcp_custom_pwd"
+            ).strip() or None
+    else:
+        selected = next((s for s in known if (s.get("name") or s.get("url")) == choice), {})
+        target_url = (selected.get("url") or "").strip()
+        target_name = selected.get("name")
+        custom_user = custom_pwd = None
+
+    if st.button("Connect", type="primary", use_container_width=True):
+        if not target_url:
+            st.warning("Enter an SSE URL first.")
+        else:
+            with st.spinner(f"Connecting to {target_url}…"):
+                result = connect_server(
+                    target_url, name=target_name,
+                    auth_user=custom_user, auth_password=custom_pwd,
+                )
+            if result.get("status") == "ok":
+                st.success(
+                    f"Connected to {result.get('active_name') or target_url} "
+                    f"({result.get('tool_count', 0)} tools)."
+                )
+                _refresh_health()
+                # Switching servers changes the toolset — start a fresh thread.
+                reset_thread(st.session_state.thread_id)
+                st.session_state.thread_id = str(uuid.uuid4())
+                st.session_state.turns = []
+                st.session_state.pending = None
+                st.rerun()
+            else:
+                st.error(result.get("message") or "Connect failed.")
+
+    if active_name:
+        st.caption(f"Active: {active_name}")
+
+    st.divider()
     st.markdown("### Backend")
     tool_count = info.get("tool_count", 0)
     st.caption(f"Status: {'connected' if backend_reachable else 'unreachable'}")
@@ -205,6 +274,18 @@ with st.sidebar:
             if denylist:
                 st.caption("Denylist:")
                 st.code("\n".join(denylist), language="text")
+
+    st.divider()
+    st.markdown("### Links")
+    st.markdown(
+        f"""
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <a href="{escape(_DASHBOARD_URL)}" target="_blank" rel="noopener">📊 Log dashboard</a>
+          <a href="{escape(_SAMPLE_QUESTIONS_URL)}" target="_blank" rel="noopener">❓ Sample questions</a>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.divider()
     st.caption(f"Thread: `{st.session_state.thread_id[:8]}…`")

@@ -34,6 +34,20 @@ class ResetRequest(BaseModel):
     thread_id: str
 
 
+class ConnectRequest(BaseModel):
+    """Switch the backend's active MCP server at runtime.
+
+    Only ``url`` is required. ``prompt_file`` is ignored when ``url`` matches a
+    known server (the registry's prompt wins); auth args fall back to env.
+    """
+
+    url: str
+    name: Optional[str] = None
+    prompt_file: Optional[str] = None
+    auth_user: Optional[str] = None
+    auth_password: Optional[str] = None
+
+
 # ---- Streaming events (one per SSE `data:` line) ---------------------------
 
 

@@ -35,6 +35,21 @@ ACE_TOOLS = {
 }
 
 
+def _refresh_meta() -> str:
+    """`<meta http-equiv=refresh>` tag so dashboard pages reload themselves.
+
+    Interval (seconds) comes from MCP_DASHBOARD_REFRESH_SECONDS (default 60);
+    0 disables auto-refresh. The tag lives on the *inner* pages (per-server and
+    Compare), so reloading happens inside the iframe and the selected tab in the
+    wrapper is preserved.
+    """
+    try:
+        secs = int(os.getenv("MCP_DASHBOARD_REFRESH_SECONDS", "60"))
+    except ValueError:
+        secs = 60
+    return f'<meta http-equiv="refresh" content="{secs}">' if secs > 0 else ""
+
+
 def load_env_config() -> Path:
     """Load configuration from the local .env file and resolve the LOG_DIR."""
     # Find .env in the project root (parent of scripts/)
@@ -482,6 +497,7 @@ def build_html_dashboard(metrics: dict) -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {_refresh_meta()}
     <title>IBM MQ+ACE MCP Server — Log Insights Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -527,16 +543,21 @@ def build_html_dashboard(metrics: dict) -> str:
     </header>
 
     <!-- Key Metrics Grid -->
+    <div class="mb-4">
+        <h2 class="text-xl font-bold text-white">Key Metrics at a Glance</h2>
+        <p class="text-xs text-slate-400 mt-0.5">The four headline health numbers for this MCP server. Hover any title (&#9432;) for its definition.</p>
+    </div>
     <section class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
         <!-- Card 1: Total Calls -->
         <div class="glass rounded-2xl p-6 relative overflow-hidden group hover:border-blue-500/30 transition-all duration-300">
             <div class="absolute -right-4 -bottom-4 opacity-5 text-white">
                 <svg class="w-24 h-24" fill="currentColor" viewBox="0 0 20 20"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"></path></svg>
             </div>
-            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Total Invocations</span>
+            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block" title="Total number of MCP tool calls recorded in the logs for the selected date range.">Total Invocations <span class="text-slate-600">&#9432;</span></span>
             <h2 class="text-4xl font-black mt-2 text-white">{total_calls}</h2>
+            <p class="text-[11px] text-slate-500 mt-1.5 leading-snug">How many times a diagnostic tool was called over the period shown.</p>
             <div class="text-[10px] text-blue-400 font-semibold mt-3 flex items-center gap-1">
-                <span>⚡ 100% parsed successfully from custom-logs/</span>
+                <span>&#9889; Parsed live from JSONL query logs</span>
             </div>
         </div>
         
@@ -545,8 +566,9 @@ def build_html_dashboard(metrics: dict) -> str:
             <div class="absolute -right-4 -bottom-4 opacity-5 text-white">
                 <svg class="w-24 h-24" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>
             </div>
-            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Request Success Rate</span>
+            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block" title="Share of calls whose tool function returned without raising an error. Note: ACE tools return a JSON error envelope instead of raising, so upstream ACE failures can still count as success — see 'How to read this dashboard'.">Request Success Rate <span class="text-slate-600">&#9432;</span></span>
             <h2 class="text-4xl font-black mt-2 text-emerald-400">{success_rate:.2f}%</h2>
+            <p class="text-[11px] text-slate-500 mt-1.5 leading-snug">Percent of calls that completed without raising an error.</p>
             <div class="text-[10px] text-slate-400 mt-3 flex justify-between font-semibold">
                 <span>Success: {success_calls}</span>
                 <span>Errors: {error_calls}</span>
@@ -558,8 +580,9 @@ def build_html_dashboard(metrics: dict) -> str:
             <div class="absolute -right-4 -bottom-4 opacity-5 text-white">
                 <svg class="w-24 h-24" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path></svg>
             </div>
-            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">P95 Response Latency</span>
+            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block" title="95th-percentile response time: 95% of calls finished faster than this. A tail-latency metric — more representative of worst-case user experience than the average.">P95 Response Latency <span class="text-slate-600">&#9432;</span></span>
             <h2 class="text-4xl font-black mt-2 text-yellow-400">{p95_latency:,.1f}<span class="text-xs font-bold text-slate-500 uppercase ml-1">ms</span></h2>
+            <p class="text-[11px] text-slate-500 mt-1.5 leading-snug">95% of calls were faster than this (worst-case feel, not the average).</p>
             <div class="text-[10px] text-slate-400 mt-3 flex justify-between font-semibold">
                 <span>Avg: {mean_latency:.1f}ms</span>
                 <span>Median: {median_latency:.1f}ms</span>
@@ -571,8 +594,9 @@ def build_html_dashboard(metrics: dict) -> str:
             <div class="absolute -right-4 -bottom-4 opacity-5 text-white">
                 <svg class="w-24 h-24" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M2.166 11.37A1 1 0 013 10h1.833l.857-1.714a1 1 0 011.566-.235l2.748 2.749L12.5 5.5a1 1 0 011.664-.746l3.3 3.3A1 1 0 0117 10h-1.833l-.857 1.714a1 1 0 01-1.566.235l-2.748-2.749L7.5 14.5a1 1 0 01-1.664.746l-3.3-3.3a1 1 0 01-.37-.776z" clip-rule="evenodd"></path></svg>
             </div>
-            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">SLA Compliance (&lt;1.0s)</span>
+            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block" title="Share of calls that completed within the 1.0-second target. A 'breach' is any call slower than 1000 ms. 'Active Callers' is the number of distinct authenticated users seen in the logs.">SLA Compliance (&lt;1.0s) <span class="text-slate-600">&#9432;</span></span>
             <h2 class="text-4xl font-black mt-2 text-violet-400">{sla_compliance:.2f}%</h2>
+            <p class="text-[11px] text-slate-500 mt-1.5 leading-snug">Percent of calls finishing under the 1-second target.</p>
             <div class="text-[10px] text-slate-400 mt-3 flex justify-between font-semibold">
                 <span>Breaches: {sla_breaches}</span>
                 <span>Active Callers: {active_callers}</span>
@@ -587,7 +611,7 @@ def build_html_dashboard(metrics: dict) -> str:
             <div class="flex items-center justify-between mb-6">
                 <div>
                     <h3 class="text-base font-extrabold text-white">Daily Query Volume Trend</h3>
-                    <p class="text-xs text-slate-400 mt-0.5">Aggregate calls segmented by middleware platform</p>
+                    <p class="text-xs text-slate-400 mt-0.5">Calls per day, split by platform. Shows whether usage is growing and which platform drives it. Each line is one day's total for IBM MQ vs IBM ACE.</p>
                 </div>
                 <div class="flex gap-4 text-xs font-semibold">
                     <span class="flex items-center gap-1.5 text-blue-400"><span class="h-2 w-2 rounded-full bg-blue-500"></span> IBM MQ</span>
@@ -632,7 +656,7 @@ def build_html_dashboard(metrics: dict) -> str:
         <div class="glass rounded-3xl p-6 flex flex-col">
             <div>
                 <h3 class="text-base font-extrabold text-white">Diagnostic Tool Popularity</h3>
-                <p class="text-xs text-slate-400 mt-0.5">Execution volume share per MCP tool</p>
+                <p class="text-xs text-slate-400 mt-0.5">Which tools are used most. Each slice is one tool's share of all calls (top 5 shown, the rest grouped as &ldquo;Others&rdquo;).</p>
             </div>
             <div class="h-72 w-full mt-auto flex flex-col md:flex-row items-center justify-around gap-6">
                 <!-- SVG Pie Chart (data-driven sectors) -->
@@ -654,7 +678,7 @@ def build_html_dashboard(metrics: dict) -> str:
         <div class="glass rounded-3xl p-6 flex flex-col">
             <div>
                 <h3 class="text-base font-extrabold text-white">P95 Response Latency Profile (ms)</h3>
-                <p class="text-xs text-slate-400 mt-0.5">Execution overhead per diagnostic tool</p>
+                <p class="text-xs text-slate-400 mt-0.5">Slowest tools by tail latency. Each bar is a tool's P95 (95% of its calls were faster). Bars past the red line breach the 1.0s SLA target.</p>
             </div>
             <div class="h-72 w-full mt-auto flex items-center justify-center">
                 <svg viewBox="0 0 500 250" class="w-full h-full">
@@ -684,7 +708,7 @@ def build_html_dashboard(metrics: dict) -> str:
         <div class="glass rounded-3xl p-6 flex flex-col">
             <div>
                 <h3 class="text-base font-extrabold text-white">Remote REST Endpoints Hit</h3>
-                <p class="text-xs text-slate-400 mt-0.5">Distribution of physical hosts targeted by MCP routing</p>
+                <p class="text-xs text-slate-400 mt-0.5">Which back-end hosts (MQ web / ACE nodes) the server actually called. &ldquo;Local resolves&rdquo; are calls answered offline or rejected before any network hop.</p>
             </div>
             <div class="mt-6 space-y-4">
                 {endpoints_html}
@@ -697,7 +721,7 @@ def build_html_dashboard(metrics: dict) -> str:
         <div class="flex items-center justify-between mb-6">
             <div>
                 <h3 class="text-base font-extrabold text-white">Daily Traffic Profile Pattern</h3>
-                <p class="text-xs text-slate-400 mt-0.5">Average invocation volume spread over a 24-hour UTC scale</p>
+                <p class="text-xs text-slate-400 mt-0.5">When traffic happens. Calls bucketed by hour of day (UTC), summed across every day in range — the peak marks your busiest hour.</p>
             </div>
             <span class="text-xs bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-2.5 py-0.5 rounded-full font-bold">{peak_hour_badge}</span>
         </div>
@@ -722,7 +746,8 @@ def build_html_dashboard(metrics: dict) -> str:
     </section>
 
     <!-- Tool Performance Table -->
-    <h2 class="text-xl font-bold mb-4 text-white">Diagnostic Tool Performance Matrix</h2>
+    <h2 class="text-xl font-bold mb-1 text-white">Diagnostic Tool Performance Matrix</h2>
+    <p class="text-xs text-slate-400 mb-4">Per-tool breakdown, busiest first. <span class="text-slate-300">Success %</span> green &gt;95, amber &gt;80, red below. <span class="text-slate-300">P95</span> turns red when it breaches the 1.0s SLA.</p>
     <section class="glass rounded-3xl p-6 overflow-hidden mb-10">
         <div class="overflow-x-auto">
             <table class="w-full text-left text-sm text-slate-300">
@@ -759,7 +784,8 @@ def build_html_dashboard(metrics: dict) -> str:
     <h2 class="text-xl font-bold mb-4 text-white">Active Operational Accounts</h2>
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
         <div class="glass rounded-3xl p-6">
-            <h3 class="text-base font-extrabold text-white mb-4">Caller Leaderboard</h3>
+            <h3 class="text-base font-extrabold text-white mb-1">Caller Leaderboard</h3>
+            <p class="text-xs text-slate-400 mb-4">Who is using the server. Authenticated user accounts (from SSE Basic Auth) ranked by call count; <code>unauthenticated</code> covers stdio or anonymous calls.</p>
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm text-slate-300">
                     <thead class="bg-slate-800/40 text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -812,6 +838,46 @@ def build_html_dashboard(metrics: dict) -> str:
         </div>
     </section>
 
+    <!-- Metric Definitions Glossary -->
+    <h2 class="text-xl font-bold mb-1 text-white">Metric Definitions</h2>
+    <p class="text-xs text-slate-400 mb-4">Plain-English meaning of every number on this page.</p>
+    <section class="glass rounded-3xl p-6 mb-10">
+        <dl class="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-5 text-sm">
+            <div>
+                <dt class="font-bold text-white">Total Invocations</dt>
+                <dd class="text-slate-400 text-xs mt-1">Count of every tool call in the logs for the selected date range. One row in a <code>queries-*.jsonl</code> file = one invocation.</dd>
+            </div>
+            <div>
+                <dt class="font-bold text-white">Request Success Rate</dt>
+                <dd class="text-slate-400 text-xs mt-1">Successful calls &divide; total calls. &ldquo;Success&rdquo; means the tool returned without raising. ACE tools return an error envelope instead of raising, so this can over-count ACE health &mdash; cross-check the error counts per tool.</dd>
+            </div>
+            <div>
+                <dt class="font-bold text-white">Mean / Median Latency</dt>
+                <dd class="text-slate-400 text-xs mt-1">Average and middle response time (ms). Median ignores outliers; a mean much higher than the median signals a few very slow calls.</dd>
+            </div>
+            <div>
+                <dt class="font-bold text-white">P95 / P99 Latency</dt>
+                <dd class="text-slate-400 text-xs mt-1">95% (or 99%) of calls were faster than this value. These &ldquo;tail&rdquo; numbers reflect worst-case experience better than the average.</dd>
+            </div>
+            <div>
+                <dt class="font-bold text-white">SLA Compliance &amp; Breaches</dt>
+                <dd class="text-slate-400 text-xs mt-1">Share of calls completing under the 1.0-second target. A <em>breach</em> is any call slower than 1000 ms.</dd>
+            </div>
+            <div>
+                <dt class="font-bold text-white">Active Callers</dt>
+                <dd class="text-slate-400 text-xs mt-1">Number of distinct authenticated users seen in the logs over the range.</dd>
+            </div>
+            <div>
+                <dt class="font-bold text-white">Endpoints Hit / Local Resolves</dt>
+                <dd class="text-slate-400 text-xs mt-1">Back-end hosts the server called over the network, ranked by hit count. <em>Local resolves</em> are calls answered from offline CSV data or rejected by the allow-list before any network call.</dd>
+            </div>
+            <div>
+                <dt class="font-bold text-white">Platform (IBM MQ / IBM ACE)</dt>
+                <dd class="text-slate-400 text-xs mt-1">Which middleware a tool targets, derived from the tool name. Lets you see MQ vs ACE demand at a glance.</dd>
+            </div>
+        </dl>
+    </section>
+
     <!-- Footer -->
     <footer class="text-center text-slate-500 text-xs mt-12 border-t border-slate-800/80 pt-6">
         <p>IBM MQ+ACE MCP Server Log Insights Engine &copy; 2026. Processed dynamically from local JSONL query files.</p>
@@ -852,11 +918,211 @@ def compute_dashboard_html(log_dir: Path | None = None) -> str:
 def _empty_dashboard_html(reason: str) -> str:
     return (
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
+        f"{_refresh_meta()}"
         "<title>IBM MQ+ACE MCP Server — Dashboard</title></head>"
         "<body style=\"font-family: sans-serif; padding: 2em; "
         "background:#0B0F19; color:#E2E8F0;\">"
         "<h1>Dashboard not available</h1>"
         f"<p>{reason}</p></body></html>"
+    )
+
+
+# Shared dark-theme <head> used by the per-server dashboard and the comparison
+# page so they stay visually consistent.
+_PAGE_HEAD = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {refresh}
+    <title>{title}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {{ font-family: 'Plus Jakarta Sans', sans-serif; background-color: #0B0F19; color: #E2E8F0; }}
+        .glass {{ background: rgba(17,24,39,0.7); backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 4px 30px rgba(0,0,0,0.4); }}
+    </style>
+</head>
+"""
+
+
+def compute_comparison_html(compare_json_path: Path) -> str:
+    """Render the head-to-head comparison page from a benchmark results JSON.
+
+    The JSON is produced by ``backend/tests/compare_servers.py``. When it is
+    missing or unreadable a friendly empty-state explains how to generate it,
+    so the Compare tab never 500s before the first benchmark run.
+    """
+    from html import escape
+
+    compare_json_path = Path(compare_json_path)
+    cmd = "backend\\.venv\\Scripts\\python.exe backend\\tests\\compare_servers.py --limit 6"
+    if not compare_json_path.exists():
+        return _comparison_empty_html(
+            f"No benchmark results yet at <code>{escape(str(compare_json_path))}</code>.",
+            cmd,
+        )
+    try:
+        data = json.loads(compare_json_path.read_text(encoding="utf-8"))
+        servers = data.get("servers") or []
+    except Exception as exc:  # noqa: BLE001
+        return _comparison_empty_html(f"Could not read results: {escape(str(exc))}", cmd)
+    if not servers:
+        return _comparison_empty_html("The benchmark results file has no servers.", cmd)
+
+    generated = escape(str(data.get("generated_at", "—")))
+    q_total = data.get("questions_total", "—")
+
+    # --- Aggregate cards (one column per server) ---
+    ACCENTS = ["text-blue-400", "text-emerald-400", "text-violet-400", "text-amber-400"]
+    cards = ""
+    for i, s in enumerate(servers):
+        agg = s.get("aggregate") or {}
+        accent = ACCENTS[i % len(ACCENTS)]
+        prompt = s.get("prompt_source") or "—"
+        prompt_base = escape(Path(prompt).name if prompt and prompt != "—" else "—")
+        cards += f"""
+        <div class="glass rounded-2xl p-6 flex-1">
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Server {i + 1}</div>
+            <h3 class="text-lg font-extrabold {accent} mt-1">{escape(str(s.get("name", "?")))}</h3>
+            <p class="text-[11px] text-slate-500 mt-0.5">{escape(str(s.get("url", "")))}</p>
+            <div class="grid grid-cols-2 gap-3 mt-5 text-sm">
+                <div><div class="text-[10px] uppercase text-slate-500">Pass rate</div><div class="font-bold text-white">{agg.get("pass_rate", 0)}% <span class="text-[11px] text-slate-500">({agg.get("pass", 0)}/{agg.get("questions", 0)})</span></div></div>
+                <div><div class="text-[10px] uppercase text-slate-500">Tools exposed</div><div class="font-bold text-white">{s.get("tool_count", "—")}</div></div>
+                <div><div class="text-[10px] uppercase text-slate-500">Mean latency</div><div class="font-bold text-white">{agg.get("mean_latency_s", 0)}s</div></div>
+                <div><div class="text-[10px] uppercase text-slate-500">Median latency</div><div class="font-bold text-white">{agg.get("median_latency_s", 0)}s</div></div>
+                <div><div class="text-[10px] uppercase text-slate-500">P95 latency</div><div class="font-bold text-white">{agg.get("p95_latency_s", 0)}s</div></div>
+                <div><div class="text-[10px] uppercase text-slate-500">Avg round-trips</div><div class="font-bold text-white">{agg.get("mean_tool_calls", 0)} <span class="text-[11px] text-slate-500">/ Q</span></div></div>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-4">Prompt: <code>{prompt_base}</code> · {agg.get("total_tool_calls", 0)} total tool calls</p>
+        </div>"""
+
+    # --- Winner banner (compare the first two servers) ---
+    banner = ""
+    if len(servers) >= 2:
+        a, b = servers[0], servers[1]
+        aa, ba = a.get("aggregate", {}), b.get("aggregate", {})
+        an, bn = escape(str(a.get("name", "A"))), escape(str(b.get("name", "B")))
+        notes = []
+        notes.append(_winner_line("Median latency", aa.get("median_latency_s", 0), ba.get("median_latency_s", 0), an, bn, "s", lower_is_better=True))
+        notes.append(_winner_line("Avg round-trips / question", aa.get("mean_tool_calls", 0), ba.get("mean_tool_calls", 0), an, bn, "", lower_is_better=True))
+        notes.append(_winner_line("Pass rate", aa.get("pass_rate", 0), ba.get("pass_rate", 0), an, bn, "%", lower_is_better=False))
+        banner = (
+            '<section class="glass rounded-2xl p-6 mb-8 border border-emerald-500/10">'
+            '<h2 class="text-base font-extrabold text-white mb-3">Head-to-head</h2>'
+            '<ul class="space-y-2 text-sm text-slate-300">'
+            + "".join(f'<li class="flex gap-2"><span>{n}</span></li>' for n in notes)
+            + "</ul></section>"
+        )
+
+    # --- Per-question table (join by question id) ---
+    ids = [r["id"] for r in (servers[0].get("results") or [])]
+    by_server = [{r["id"]: r for r in (s.get("results") or [])} for s in servers]
+    headers = "".join(
+        f'<th class="p-3 text-center" colspan="3">{escape(str(s.get("name", "?")))}</th>'
+        for s in servers
+    )
+    subheaders = "".join(
+        '<th class="p-2 text-center font-medium">Latency</th>'
+        '<th class="p-2 text-center font-medium">Calls</th>'
+        '<th class="p-2 text-center font-medium">Result</th>'
+        for _ in servers
+    )
+    rows = ""
+    for qid in ids:
+        recs = [bs.get(qid) for bs in by_server]
+        title = next((r["title"] for r in recs if r), "")
+        # Determine fastest latency among present records for highlighting.
+        lat_vals = [(i, r["latency_s"]) for i, r in enumerate(recs) if r]
+        best_i = min(lat_vals, key=lambda t: t[1])[0] if lat_vals else -1
+        # Determine fewest calls for highlighting.
+        call_vals = [(i, r["tool_calls"]) for i, r in enumerate(recs) if r]
+        best_calls_i = min(call_vals, key=lambda t: t[1])[0] if call_vals else -1
+        cells = ""
+        for i, r in enumerate(recs):
+            if not r:
+                cells += '<td class="p-2 text-center text-slate-600" colspan="3">—</td>'
+                continue
+            lat_cls = "text-emerald-400 font-bold" if i == best_i else "text-slate-300"
+            call_cls = "text-emerald-400 font-bold" if i == best_calls_i else "text-slate-300"
+            v_cls = "text-emerald-400" if r["verdict"] == "PASS" else "text-red-400"
+            cells += (
+                f'<td class="p-2 text-center {lat_cls}">{r["latency_s"]}s</td>'
+                f'<td class="p-2 text-center {call_cls}">{r["tool_calls"]}</td>'
+                f'<td class="p-2 text-center {v_cls} font-semibold">{escape(r["verdict"])}</td>'
+            )
+        rows += (
+            '<tr class="hover:bg-slate-800/20">'
+            f'<td class="p-3 font-bold text-white">{escape(qid)}</td>'
+            f'<td class="p-3 text-slate-300">{escape(title)}</td>'
+            f'{cells}</tr>'
+        )
+
+    body = f"""<body class="p-6 md:p-12 min-h-screen">
+    <header class="mb-8">
+        <span class="px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Head-to-Head Benchmark</span>
+        <h1 class="text-3xl font-extrabold mt-3 text-white tracking-tight">MCP Build Performance Comparison</h1>
+        <p class="text-slate-400 mt-1 text-sm">End-to-end through the chatbot agent · {q_total} question(s) · generated {generated}</p>
+        <p class="text-slate-500 mt-1 text-xs">Same questions sent to each build. <strong>Calls</strong> = tool round-trips the agent needed (fewer is better — the single build answers in one composite call). <strong>Latency</strong> = wall-clock to the final answer (includes the LLM).</p>
+    </header>
+    <section class="flex flex-col md:flex-row gap-6 mb-8">{cards}
+    </section>
+    {banner}
+    <h2 class="text-xl font-bold mb-1 text-white">Per-question breakdown</h2>
+    <p class="text-xs text-slate-400 mb-4">Fastest latency and fewest calls per question are highlighted in green.</p>
+    <section class="glass rounded-2xl p-4 overflow-x-auto mb-10">
+        <table class="w-full text-left text-sm text-slate-300">
+            <thead class="text-xs uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr><th class="p-3" rowspan="2">Q</th><th class="p-3" rowspan="2">Question</th>{headers}</tr>
+                <tr class="text-[10px] text-slate-500">{subheaders}</tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">{rows}</tbody>
+        </table>
+    </section>
+    <footer class="text-center text-slate-500 text-xs mt-8 border-t border-slate-800/80 pt-6">
+        <p>Generated by <code>backend/tests/compare_servers.py</code>. Re-run it to refresh, then reload this tab.</p>
+    </footer>
+</body>
+</html>"""
+
+    return _PAGE_HEAD.format(title="MCP Build Performance Comparison", refresh=_refresh_meta()) + body
+
+
+def _winner_line(label, a_val, b_val, a_name, b_name, unit, lower_is_better):
+    """Return an HTML fragment describing which server wins ``label``."""
+    try:
+        a_val = float(a_val)
+        b_val = float(b_val)
+    except (TypeError, ValueError):
+        return f"<strong>{label}:</strong> —"
+    if a_val == b_val:
+        return f"<strong>{label}:</strong> tie ({a_val}{unit})"
+    a_better = (a_val < b_val) if lower_is_better else (a_val > b_val)
+    win_name, win_val, lose_val = (
+        (a_name, a_val, b_val) if a_better else (b_name, b_val, a_val)
+    )
+    if lower_is_better and win_val > 0:
+        ratio = lose_val / win_val if win_val else 0
+        delta = f" ({ratio:.2f}× better — {win_val}{unit} vs {lose_val}{unit})"
+    else:
+        delta = f" ({win_val}{unit} vs {lose_val}{unit})"
+    return f'<strong class="text-white">{label}:</strong> <span class="text-emerald-400 font-semibold">{win_name}</span>{delta}'
+
+
+def _comparison_empty_html(reason: str, cmd: str) -> str:
+    from html import escape
+
+    return _PAGE_HEAD.format(title="MCP Build Performance Comparison", refresh=_refresh_meta()) + (
+        '<body class="p-6 md:p-12 min-h-screen">'
+        '<h1 class="text-2xl font-extrabold text-white">MCP Build Performance Comparison</h1>'
+        f'<p class="text-slate-400 mt-3 text-sm">{reason}</p>'
+        '<p class="text-slate-400 mt-4 text-sm">Generate the comparison by running the benchmark '
+        '(both MCP builds + the chat backend must be up):</p>'
+        f'<pre class="glass rounded-xl p-4 mt-3 text-xs text-emerald-300 overflow-x-auto">{escape(cmd)}</pre>'
+        '<p class="text-slate-500 mt-3 text-xs">It sends the same questions to each build, writes the '
+        'results JSON, and restores the default server. Reload this tab when it finishes.</p>'
+        '</body></html>'
     )
 
 

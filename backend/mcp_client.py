@@ -24,16 +24,21 @@ from mcp.shared._httpx_utils import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TI
 log = logging.getLogger("chatbot.mcp")
 
 
-def _build_headers() -> dict[str, str]:
+def _build_headers(
+    auth_user: str | None = None,
+    auth_pwd: str | None = None,
+    headers_json: str | None = None,
+) -> dict[str, str]:
+    """Build request headers. Each arg falls back to its env var when None."""
     headers: dict[str, str] = {}
 
-    user = os.getenv("MCP_AUTH_USER", "").strip()
-    pwd = os.getenv("MCP_AUTH_PASSWORD", "").strip()
+    user = (auth_user if auth_user is not None else os.getenv("MCP_AUTH_USER", "")).strip()
+    pwd = (auth_pwd if auth_pwd is not None else os.getenv("MCP_AUTH_PASSWORD", "")).strip()
     if user and pwd:
         token = base64.b64encode(f"{user}:{pwd}".encode("utf-8")).decode("ascii")
         headers["Authorization"] = f"Basic {token}"
 
-    extra_raw = os.getenv("MCP_HEADERS_JSON", "").strip()
+    extra_raw = (headers_json if headers_json is not None else os.getenv("MCP_HEADERS_JSON", "")).strip()
     if extra_raw:
         try:
             extra: dict[str, Any] = json.loads(extra_raw)
@@ -140,16 +145,25 @@ def _make_pinned_factory(ca_path: Path):
     return _make_factory(ssl.create_default_context(cafile=str(ca_path)))
 
 
-def build_client() -> MultiServerMCPClient:
-    """Construct a MultiServerMCPClient pointed at the configured SSE URL."""
-    url = os.getenv("MCP_SSE_URL", "").strip()
+def build_client(
+    url: str | None = None,
+    auth_user: str | None = None,
+    auth_pwd: str | None = None,
+    headers_json: str | None = None,
+) -> MultiServerMCPClient:
+    """Construct a MultiServerMCPClient pointed at an SSE URL.
+
+    ``url`` defaults to MCP_SSE_URL; auth args default to their env vars. This
+    lets the backend switch the active MCP server at runtime without restart.
+    """
+    url = (url or os.getenv("MCP_SSE_URL", "")).strip()
     if not url:
         raise RuntimeError("MCP_SSE_URL is not set. See .env.example.")
 
     server_cfg: dict[str, Any] = {
         "url": url,
         "transport": "sse",
-        "headers": _build_headers(),
+        "headers": _build_headers(auth_user, auth_pwd, headers_json),
     }
     if _tls_insecure():
         log.warning(
@@ -168,9 +182,14 @@ def build_client() -> MultiServerMCPClient:
     return MultiServerMCPClient({_server_name(): server_cfg})
 
 
-async def load_tools() -> list[BaseTool]:
-    """Fetch MCP tools, then apply env-driven allow/deny filtering."""
-    client = build_client()
+async def load_tools(
+    url: str | None = None,
+    auth_user: str | None = None,
+    auth_pwd: str | None = None,
+    headers_json: str | None = None,
+) -> list[BaseTool]:
+    """Fetch MCP tools from ``url`` (default MCP_SSE_URL), then apply filtering."""
+    client = build_client(url, auth_user, auth_pwd, headers_json)
     raw = await client.get_tools()
     log.info("Discovered %d MCP tools: %s", len(raw), [t.name for t in raw])
     tools = _filter_tools(raw)

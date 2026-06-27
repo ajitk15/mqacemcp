@@ -1,0 +1,8 @@
+# Streamlit configuration for the MCP chat UI.
+#
+# enableStaticServing exposes files placed in frontend/static/ at the URL path
+# "app/static/<file>". The sidebar "Sample questions" link relies on this to
+# open frontend/static/mq_ace_cert_questions.html in a new browser tab
+# (a file:// link would be blocked by browsers from an http page).
+[server]
+enableStaticServing = true

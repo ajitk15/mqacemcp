@@ -193,19 +193,26 @@ as separate products in one repo, each independently deployable (own
   (There is no Next.js frontend in this repo despite older references; the
   Streamlit app lives directly in `frontend/`.)
 - `scripts/start-all.ps1` / `start-streamlit.ps1` / `stop-all.ps1` — launchers
-  that pre-flight prereqs and spawn the service windows (MCP :8443, backend
-  :8002, Streamlit UI :8003, dashboard :8004). Each `-Skip*` switch isolates a component so a
-  single tier can be (re)started on its own; with no switches the script brings
-  up the whole stack. Both `start-all.ps1` and `start-streamlit.ps1` launch the
-  Streamlit UI from `frontend/`.
+  that pre-flight prereqs and spawn the service windows. `start-all.ps1` brings up
+  **both** MCP builds side by side — the main build (`mqacemcpserver`, :8009,
+  reads root `.env`) and the single build (`mqacemcpserver-single`, :8010, reads
+  its own `.env`) — plus backend :8002, Streamlit UI :8003, dashboard :8004. The
+  backend defaults to the main build (:8009); the Streamlit sidebar lets a user
+  switch to the single build or a custom MCP URL at runtime (see backend
+  `MCP_SERVERS_JSON` and `/api/mcp/connect`). `-SkipMcp` skips both MCP builds;
+  `-SkipMcpMain` / `-SkipMcpSingle` skip one. Other `-Skip*` switches isolate a
+  tier. Both `start-all.ps1` and `start-streamlit.ps1` launch the Streamlit UI
+  from `frontend/`.
 - The dashboard process (`dashboard/dashboard_server.py`) does **not** load
-  `dashboard/.env` itself — it reads `MCP_DASHBOARD_PORT` / `MCP_SERVER_DIR` from
-  the process environment and gets `LOG_DIR` + TLS from the imported build's
-  `server.config`. `start-all.*` therefore injects `MCP_SERVER_DIR` (the build it
-  launched — single by default, `mqacemcpserver` with `-Main`) and
-  `MCP_DASHBOARD_PORT` (read from `dashboard/.env`) so the dashboard reads the
-  running build's logs on :8004. If you launch the dashboard another way, set
-  both env vars yourself or it falls back to `../mqacemcpserver` + :8002.
+  `dashboard/.env` itself — it reads `MCP_DASHBOARD_PORT` / `MCP_SERVER_DIR` /
+  `MCP_DASHBOARD_SERVERS_JSON` from the process environment and gets TLS from the
+  imported build's `server.config`. It renders **one tab per MCP build**: `/dashboard`
+  is a tabbed wrapper, `/dashboard/<key>` is that build's full dashboard for its log
+  dir. `start-all.*` injects `MCP_SERVER_DIR` (the main build, for TLS),
+  `MCP_DASHBOARD_PORT`, and `MCP_DASHBOARD_SERVERS_JSON` (both builds' log dirs:
+  main → `custom-logs`, single → `mqacemcpserver-single/logs`). If you launch the
+  dashboard another way, set those env vars yourself or it falls back to a single
+  tab from the imported `server.config` `LOG_DIR`.
 
 ### Hard rules when working in this repo
 - **Do not modify any file under `mqacemcpserver/` or `resources/` from
@@ -224,8 +231,9 @@ as separate products in one repo, each independently deployable (own
 ### Configuration knobs (all live in `backend/.env`)
 | Var | Purpose |
 | --- | --- |
-| `MCP_SSE_URL` | Which MCP server to talk to. |
-| `MCP_AUTH_USER` / `MCP_AUTH_PASSWORD` | Basic Auth for SSE. |
+| `MCP_SSE_URL` | The DEFAULT MCP server activated at startup. |
+| `MCP_SERVERS_JSON` | Registry of selectable servers (`name`/`url`/`prompt_file`/`default`) shown in the sidebar dropdown. Each can map to its own prompt. Falls back to a single entry from `MCP_SSE_URL`. |
+| `MCP_AUTH_USER` / `MCP_AUTH_PASSWORD` | Basic Auth for SSE (shared by all registry servers). |
 | `MCP_HEADERS_JSON` | Bearer / custom headers (escape hatch). |
 | `HEADER_TITLE` / `HEADER_SUBTITLE` | UI title bar; subtitle override. |
 | `BOT_DOMAIN` | Scope guardrail; empty = unrestricted. |

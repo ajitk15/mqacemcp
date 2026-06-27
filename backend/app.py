@@ -29,6 +29,7 @@ from renderers import render
 from schemas import (
     Block,
     ChatRequest,
+    ConnectRequest,
     DoneEvent,
     ErrorEvent,
     FinalEvent,
@@ -50,19 +51,95 @@ log = logging.getLogger("chatbot.app")
 _state: dict[str, Any] = {}
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    log.info("Loading MCP tools at startup...")
-    try:
-        tools = await mcp_client.load_tools()
-    except Exception as err:  # noqa: BLE001
-        log.exception("Failed to load MCP tools: %s", err)
-        tools = []
-    agent, checkpointer = build_agent(tools)
+# ---------------------------------------------------------------------------
+# MCP server registry + runtime activation
+# ---------------------------------------------------------------------------
+
+
+def _known_servers() -> list[dict[str, Any]]:
+    """Parse MCP_SERVERS_JSON into a list of server dicts.
+
+    Falls back to a single entry derived from MCP_SSE_URL when the var is
+    unset or malformed, so the backend always has at least one server.
+    """
+    raw = os.getenv("MCP_SERVERS_JSON", "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            servers = [s for s in parsed if isinstance(s, dict) and s.get("url")]
+            if servers:
+                return servers
+        except Exception:  # noqa: BLE001
+            log.warning("MCP_SERVERS_JSON is not valid JSON; falling back to MCP_SSE_URL.")
+    url = os.getenv("MCP_SSE_URL", "").strip()
+    return [{"name": url or "mcp", "url": url, "default": True}] if url else []
+
+
+def _default_server() -> dict[str, Any]:
+    """Return the server activated at startup: the default flag, else the first."""
+    servers = _known_servers()
+    if not servers:
+        return {"name": "mcp", "url": os.getenv("MCP_SSE_URL", "").strip()}
+    for s in servers:
+        if s.get("default"):
+            return s
+    return servers[0]
+
+
+def _find_server(url: str) -> dict[str, Any] | None:
+    """Look up a known server by exact URL match."""
+    url = (url or "").strip()
+    return next((s for s in _known_servers() if (s.get("url") or "").strip() == url), None)
+
+
+async def _activate(
+    url: str,
+    name: str | None = None,
+    prompt_file: str | None = None,
+    auth_user: str | None = None,
+    auth_pwd: str | None = None,
+) -> list[Any]:
+    """Connect to ``url``, (re)build the agent, and store it in _state.
+
+    Raises on failure so callers can surface a clean error; _state is only
+    mutated once the new agent is successfully built.
+    """
+    tools = await mcp_client.load_tools(url, auth_user, auth_pwd)
+    agent, checkpointer = build_agent(tools, prompt_file=prompt_file)
     _state["tools"] = tools
     _state["agent"] = agent
     _state["checkpointer"] = checkpointer
-    log.info("Backend ready (tools=%d)", len(tools))
+    _state["active_url"] = url
+    _state["active_name"] = name or url
+    _state["active_prompt"] = prompt_file
+    log.info("Activated MCP server %s (%s) with %d tool(s)", name or url, url, len(tools))
+    return tools
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    default = _default_server()
+    log.info("Loading MCP tools at startup from %s...", default.get("url"))
+    try:
+        await _activate(
+            url=default.get("url", ""),
+            name=default.get("name"),
+            prompt_file=default.get("prompt_file"),
+        )
+    except Exception as err:  # noqa: BLE001
+        log.exception("Failed to load MCP tools at startup: %s", err)
+        # Build an empty agent so the service still answers /health and can be
+        # pointed at a working server via /api/mcp/connect.
+        agent, checkpointer = build_agent([], prompt_file=default.get("prompt_file"))
+        _state.update(
+            tools=[],
+            agent=agent,
+            checkpointer=checkpointer,
+            active_url=default.get("url", ""),
+            active_name=default.get("name") or default.get("url", ""),
+            active_prompt=default.get("prompt_file"),
+        )
+    log.info("Backend ready (tools=%d)", len(_state.get("tools") or []))
     try:
         yield
     finally:
@@ -89,18 +166,81 @@ app.add_middleware(
 async def health() -> JSONResponse:
     tools = _state.get("tools") or []
     allow, deny = mcp_client.get_tool_filters()
+    active_url = _state.get("active_url") or os.getenv("MCP_SSE_URL", "")
     return JSONResponse(
         {
             "status": "ok",
-            "mcp_sse_url": os.getenv("MCP_SSE_URL", ""),
+            "mcp_sse_url": active_url,
+            "mcp_server_name": _state.get("active_name") or active_url,
             "tool_count": len(tools),
             "tools": [t.name for t in tools],
             "bot_domain": os.getenv("BOT_DOMAIN", "").strip(),
             "header_title": os.getenv("HEADER_TITLE", "").strip() or "MCP Chatbot",
             "header_subtitle": os.getenv("HEADER_SUBTITLE", "").strip(),
-            "prompt_source": get_prompt_source(),
+            "prompt_source": get_prompt_source(_state.get("active_prompt")),
             "tool_allowlist": allow,
             "tool_denylist": deny,
+        }
+    )
+
+
+@app.get("/api/mcp/servers")
+async def mcp_servers() -> JSONResponse:
+    """List selectable MCP servers and which one is currently active."""
+    servers = [{"name": s.get("name") or s.get("url"), "url": s.get("url")} for s in _known_servers()]
+    active_url = _state.get("active_url") or os.getenv("MCP_SSE_URL", "")
+    return JSONResponse(
+        {
+            "servers": servers,
+            "active_url": active_url,
+            "active_name": _state.get("active_name") or active_url,
+        }
+    )
+
+
+@app.post("/api/mcp/connect")
+async def mcp_connect(req: ConnectRequest) -> JSONResponse:
+    """Switch the active MCP server. Reloads tools and rebuilds the agent.
+
+    A known server's registered prompt_file always wins; for an ad-hoc custom
+    URL the request's prompt_file (or none) is used. Connection failures return
+    a 200 with status="error" so the UI can show the message without the
+    backend 500-ing (the previously active agent stays in place).
+    """
+    url = (req.url or "").strip()
+    if not url:
+        return JSONResponse({"status": "error", "message": "A server URL is required."})
+
+    known = _find_server(url)
+    name = (known or {}).get("name") or req.name or url
+    prompt_file = (known or {}).get("prompt_file") if known else req.prompt_file
+
+    try:
+        tools = await _activate(
+            url=url,
+            name=name,
+            prompt_file=prompt_file,
+            auth_user=req.auth_user,
+            auth_pwd=req.auth_password,
+        )
+    except Exception as err:  # noqa: BLE001
+        log.exception("Failed to connect to MCP server %s: %s", url, err)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": f"Could not connect to {url}: {err.__class__.__name__}",
+                "active_url": _state.get("active_url", ""),
+                "active_name": _state.get("active_name", ""),
+            }
+        )
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "active_url": url,
+            "active_name": name,
+            "tool_count": len(tools),
+            "tools": [t.name for t in tools],
         }
     )
 

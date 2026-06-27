@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IBM MQ / ACE / Certificate — Question Bank</title>
+<style>
+  :root {
+    --mq-color: #0043CE; --mq-bg: #EFF4FF; --mq-border: #4589FF;
+    --ace-color: #0E6027; --ace-bg: #DEFBE6; --ace-border: #24A148;
+    --cert-color: #6929C4; --cert-bg: #F6F2FF; --cert-border: #8A3FFC;
+    --text: #161616; --subtext: #525252; --divider: #E0E0E0;
+    --white: #FFFFFF; --tag-bg: #F4F4F4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'IBM Plex Sans','Segoe UI',system-ui,sans-serif; background:#F2F4F8; color:var(--text); padding:32px 20px 64px; }
+  header { max-width:900px; margin:0 auto 40px; text-align:center; }
+  header h1 { font-size:2rem; font-weight:700; letter-spacing:-0.5px; margin-bottom:8px; }
+  header p { color:var(--subtext); font-size:0.95rem; }
+  .legend { display:flex; justify-content:center; gap:24px; margin-top:18px; flex-wrap:wrap; }
+  .legend-item { display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:600; }
+  .dot { width:12px; height:12px; border-radius:50%; }
+  .dot-mq { background:var(--mq-border); } .dot-ace { background:var(--ace-border); } .dot-cert { background:var(--cert-border); }
+  .section { max-width:900px; margin:0 auto 40px; }
+  .section-header { display:flex; align-items:center; gap:14px; padding:14px 20px; border-radius:10px 10px 0 0; }
+  .section-header.mq { background:var(--mq-color); color:#fff; }
+  .section-header.ace { background:var(--ace-color); color:#fff; }
+  .section-header.cert { background:var(--cert-color); color:#fff; }
+  .section-header .icon { font-size:1.5rem; }
+  .section-header h2 { font-size:1.15rem; font-weight:700; }
+  .section-header .count { margin-left:auto; font-size:0.8rem; background:rgba(255,255,255,0.2); padding:3px 10px; border-radius:20px; font-weight:600; }
+  .card-list { background:var(--white); border:1px solid var(--divider); border-top:none; border-radius:0 0 10px 10px; overflow:hidden; }
+  .subsection-label { font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; padding:10px 20px 6px; color:var(--subtext); background:#FAFAFA; border-top:1px solid var(--divider); border-bottom:1px solid var(--divider); }
+  .q-row { display:flex; align-items:flex-start; gap:14px; padding:14px 20px; border-bottom:1px solid var(--divider); transition:background 0.15s; }
+  .q-row:last-child { border-bottom:none; }
+  .q-row:hover { background:#FAFAFA; }
+  .q-num { min-width:28px; height:28px; border-radius:50%; font-size:0.75rem; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px; }
+  .mq  .q-num { background:var(--mq-bg);   color:var(--mq-color);   border:1.5px solid var(--mq-border); }
+  .ace .q-num { background:var(--ace-bg);   color:var(--ace-color);  border:1.5px solid var(--ace-border); }
+  .cert .q-num{ background:var(--cert-bg);  color:var(--cert-color); border:1.5px solid var(--cert-border); }
+  .q-body { flex:1; }
+  .q-text { font-size:0.92rem; line-height:1.55; color:var(--text); }
+  .q-tags { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
+  .tag { font-size:0.68rem; font-weight:600; padding:2px 8px; border-radius:4px; background:var(--tag-bg); color:var(--subtext); border:1px solid var(--divider); text-transform:uppercase; letter-spacing:0.5px; }
+  .tag.mq-tag   { background:var(--mq-bg);   color:var(--mq-color);   border-color:var(--mq-border); }
+  .tag.ace-tag  { background:var(--ace-bg);   color:var(--ace-color);  border-color:var(--ace-border); }
+  .tag.cert-tag { background:var(--cert-bg);  color:var(--cert-color); border-color:var(--cert-border); }
+  .summary-bar { max-width:900px; margin:0 auto 28px; background:var(--white); border:1px solid var(--divider); border-radius:10px; padding:18px 24px; display:flex; gap:32px; flex-wrap:wrap; }
+  .stat { display:flex; flex-direction:column; gap:2px; }
+  .stat-num { font-size:1.8rem; font-weight:700; line-height:1; }
+  .stat-label { font-size:0.78rem; color:var(--subtext); font-weight:500; }
+  .stat-num.mq { color:var(--mq-color); } .stat-num.ace { color:var(--ace-color); } .stat-num.cert { color:var(--cert-color); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>IBM MQ &nbsp;/&nbsp; ACE &nbsp;/&nbsp; Certificate — Question Bank</h1>
+  <p>Generated from node_config, node_dump, qmgr_dump &amp; cert_dump · 25 Jun 2026</p>
+  <div class="legend">
+    <div class="legend-item"><span class="dot dot-mq"></span> IBM MQ</div>
+    <div class="legend-item"><span class="dot dot-ace"></span> IBM ACE</div>
+    <div class="legend-item"><span class="dot dot-cert"></span> Certificate</div>
+  </div>
+</header>
+
+<div class="summary-bar">
+  <div class="stat"><span class="stat-num mq">22</span><span class="stat-label">MQ Questions</span></div>
+  <div class="stat"><span class="stat-num ace">15</span><span class="stat-label">ACE Questions</span></div>
+  <div class="stat"><span class="stat-num cert">9</span><span class="stat-label">Certificate Questions</span></div>
+  <div class="stat"><span class="stat-num" style="color:#161616">46</span><span class="stat-label">Total Questions</span></div>
+</div>
+
+<!-- ======= IBM MQ ======= -->
+<div class="section mq">
+  <div class="section-header mq">
+    <span class="icon">🔷</span>
+    <h2>IBM MQ Questions</h2>
+    <span class="count">22 Questions</span>
+  </div>
+  <div class="card-list">
+
+    <div class="subsection-label">Queue Manager</div>
+
+    <div class="q-row mq">
+      <div class="q-num">1</div>
+      <div class="q-body">
+        <div class="q-text">What is the current status of queue managers MQNODE1 and MQNODE2?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE1</span><span class="tag mq-tag">MQNODE2</span><span class="tag">Status</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">2</div>
+      <div class="q-body">
+        <div class="q-text">What are all the queue managers configured in this environment and which hosts are they running on?</div>
+        <div class="q-tags"><span class="tag mq-tag">QMGR</span><span class="tag">Inventory</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">3</div>
+      <div class="q-body">
+        <div class="q-text">What cluster do MQREPO1 and MQREPO2 belong to and what is the role of each?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQREPO1</span><span class="tag mq-tag">MQREPO2</span><span class="tag">Cluster</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">4</div>
+      <div class="q-body">
+        <div class="q-text">What is the SSL key repository path configured on queue manager MQREPO1?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQREPO1</span><span class="tag">SSL / TLS</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">5</div>
+      <div class="q-body">
+        <div class="q-text">Is channel authentication enabled on queue manager MQREPO1?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQREPO1</span><span class="tag">Security</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">6</div>
+      <div class="q-body">
+        <div class="q-text">What is the maximum message length configured on QM1?</div>
+        <div class="q-tags"><span class="tag mq-tag">QM1</span><span class="tag">Config</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Queues</div>
+
+    <div class="q-row mq">
+      <div class="q-num">7</div>
+      <div class="q-body">
+        <div class="q-text">What is the current depth of queue QL.INPUT on MQNODE1?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE1</span><span class="tag">Queue Depth</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">8</div>
+      <div class="q-body">
+        <div class="q-text">What is the maximum depth configured for queue QL.INPUT on MQNODE1?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE1</span><span class="tag">Queue Config</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">9</div>
+      <div class="q-body">
+        <div class="q-text">What is the current depth of queues QL.OUT and QL.OUT.SPLIT on MQNODE2?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE2</span><span class="tag">Queue Depth</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">10</div>
+      <div class="q-body">
+        <div class="q-text">List all non-system local queues defined on MQNODE1 with their GET and PUT status.</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE1</span><span class="tag">QLOCAL</span><span class="tag">Inventory</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">11</div>
+      <div class="q-body">
+        <div class="q-text">What is the maximum depth of each QL.TARGET queue on MQNODE1?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE1</span><span class="tag">QLOCAL</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">12</div>
+      <div class="q-body">
+        <div class="q-text">Is QL.REPO.BACKUP on MQREPO2 a local queue or an alias queue?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQREPO2</span><span class="tag">QALIAS</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">13</div>
+      <div class="q-body">
+        <div class="q-text">What is the current depth of queue DEV.QUEUE.1 on QM1?</div>
+        <div class="q-tags"><span class="tag mq-tag">QM1</span><span class="tag">Queue Depth</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Channels</div>
+
+    <div class="q-row mq">
+      <div class="q-num">14</div>
+      <div class="q-body">
+        <div class="q-text">What is the status of channel MQNODE1.CLUSSDR on MQNODE1?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE1</span><span class="tag">CLUSSDR</span><span class="tag">Channel Status</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">15</div>
+      <div class="q-body">
+        <div class="q-text">How many connections are currently active on channels DEV.APP.SVRCONN and DEV.ADMIN.SVRCONN on QM1?</div>
+        <div class="q-tags"><span class="tag mq-tag">QM1</span><span class="tag">SVRCONN</span><span class="tag">Connections</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">16</div>
+      <div class="q-body">
+        <div class="q-text">On which queue managers does the channel MQREPO1.CLUSRCVR exist?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQREPO1</span><span class="tag">CLUSRCVR</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">17</div>
+      <div class="q-body">
+        <div class="q-text">List all channels configured on MQNODE2 and their types.</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE2</span><span class="tag">Channel Inventory</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Topics &amp; Pub/Sub</div>
+
+    <div class="q-row mq">
+      <div class="q-num">18</div>
+      <div class="q-body">
+        <div class="q-text">List all topics defined on MQNODE1 with their topic strings.</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE1</span><span class="tag">Topic</span><span class="tag">Pub/Sub</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">19</div>
+      <div class="q-body">
+        <div class="q-text">Is Pub/Sub mode enabled on queue manager MQREPO1?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQREPO1</span><span class="tag">PSMODE</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Listeners &amp; Services</div>
+
+    <div class="q-row mq">
+      <div class="q-num">20</div>
+      <div class="q-body">
+        <div class="q-text">What port is the listener on MQNODE1 configured on and is it currently active?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQNODE1</span><span class="tag">Listener</span></div>
+      </div>
+    </div>
+
+    <div class="q-row mq">
+      <div class="q-num">21</div>
+      <div class="q-body">
+        <div class="q-text">What services are defined on MQREPO1?</div>
+        <div class="q-tags"><span class="tag mq-tag">MQREPO1</span><span class="tag">SERVICE</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Security</div>
+
+    <div class="q-row mq">
+      <div class="q-num">22</div>
+      <div class="q-body">
+        <div class="q-text">What authentication object is configured on QM1 and what type of authentication does it enforce?</div>
+        <div class="q-tags"><span class="tag mq-tag">QM1</span><span class="tag">AUTHINFO</span><span class="tag">Security</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ======= IBM ACE ======= -->
+<div class="section ace">
+  <div class="section-header ace">
+    <span class="icon">🟢</span>
+    <h2>IBM ACE Questions</h2>
+    <span class="count">15 Questions</span>
+  </div>
+  <div class="card-list">
+
+    <div class="subsection-label">Node &amp; Integration Server Status</div>
+
+    <div class="q-row ace">
+      <div class="q-num">1</div>
+      <div class="q-body">
+        <div class="q-text">List all integration servers running on NODE1 and NODE2 with their current status.</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE1</span><span class="tag ace-tag">NODE2</span><span class="tag">EG Status</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">2</div>
+      <div class="q-body">
+        <div class="q-text">What port number is configured for NODE1 in the node configuration?</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE1</span><span class="tag">Config</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Application &amp; Message Flow Status</div>
+
+    <div class="q-row ace">
+      <div class="q-num">3</div>
+      <div class="q-body">
+        <div class="q-text">What is the status of application ACE_flow_Cache and message flow akp.Flow_Cache on integration server ACE_DEMO_CACHE in NODE1?</div>
+        <div class="q-tags"><span class="tag ace-tag">ACE_DEMO_CACHE</span><span class="tag ace-tag">NODE1</span><span class="tag">Application</span><span class="tag">Message Flow</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">4</div>
+      <div class="q-body">
+        <div class="q-text">List all applications deployed to integration server ACE_DEMO_TRANSFORM on NODE1 and their status.</div>
+        <div class="q-tags"><span class="tag ace-tag">ACE_DEMO_TRANSFORM</span><span class="tag ace-tag">NODE1</span><span class="tag">Applications</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">5</div>
+      <div class="q-body">
+        <div class="q-text">What is the status of application IBMACEJMSInput on integration server ACE_DEMO_MESSAGING in NODE2?</div>
+        <div class="q-tags"><span class="tag ace-tag">ACE_DEMO_MESSAGING</span><span class="tag ace-tag">NODE2</span><span class="tag">Application</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">6</div>
+      <div class="q-body">
+        <div class="q-text">What is the status of message flow CreateItem on integration server ACE_DEMO_CONNECTORS in NODE1?</div>
+        <div class="q-tags"><span class="tag ace-tag">ACE_DEMO_CONNECTORS</span><span class="tag ace-tag">NODE1</span><span class="tag">Message Flow</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">7</div>
+      <div class="q-body">
+        <div class="q-text">List all applications deployed to ACE_DEMO_CONNECTORS on NODE2 and their statuses.</div>
+        <div class="q-tags"><span class="tag ace-tag">ACE_DEMO_CONNECTORS</span><span class="tag ace-tag">NODE2</span><span class="tag">Applications</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">8</div>
+      <div class="q-body">
+        <div class="q-text">What is the status of message flow global_cache on integration server ACE_DEMO_CACHE in NODE2?</div>
+        <div class="q-tags"><span class="tag ace-tag">ACE_DEMO_CACHE</span><span class="tag ace-tag">NODE2</span><span class="tag">Message Flow</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Deployed Artifacts &amp; Files</div>
+
+    <div class="q-row ace">
+      <div class="q-num">9</div>
+      <div class="q-body">
+        <div class="q-text">What ESQL files are deployed to ACE_DEMO_CACHE under application ACE_flow_Cache on NODE1?</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE1</span><span class="tag">ESQL</span><span class="tag">Deployed Files</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">10</div>
+      <div class="q-body">
+        <div class="q-text">What mapping files are deployed to ACE_DEMO_CACHE on NODE2?</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE2</span><span class="tag">Mapping</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">11</div>
+      <div class="q-body">
+        <div class="q-text">What JSON schema files are deployed under application HTTP_Multiple_Requests in ACE_DEMO_CONNECTORS on NODE1?</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE1</span><span class="tag">JSON Schema</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">12</div>
+      <div class="q-body">
+        <div class="q-text">List all XSD files deployed to integration server ACE_DEMO_CACHE across NODE1 and NODE2.</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE1</span><span class="tag ace-tag">NODE2</span><span class="tag">XSD</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Cross-Node Comparison</div>
+
+    <div class="q-row ace">
+      <div class="q-num">13</div>
+      <div class="q-body">
+        <div class="q-text">Are the same applications deployed on both NODE1 and NODE2 for integration server ACE_DEMO_TRANSFORM?</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE1</span><span class="tag ace-tag">NODE2</span><span class="tag">Comparison</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">14</div>
+      <div class="q-body">
+        <div class="q-text">How many applications are deployed across all integration servers on NODE1?</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE1</span><span class="tag">Count</span></div>
+      </div>
+    </div>
+
+    <div class="q-row ace">
+      <div class="q-num">15</div>
+      <div class="q-body">
+        <div class="q-text">When was the data last collected for NODE1 and NODE2?</div>
+        <div class="q-tags"><span class="tag ace-tag">NODE1</span><span class="tag ace-tag">NODE2</span><span class="tag">Timestamp</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ======= CERTIFICATE ======= -->
+<div class="section cert">
+  <div class="section-header cert">
+    <span class="icon">🔐</span>
+    <h2>Certificate Questions</h2>
+    <span class="count">9 Questions</span>
+  </div>
+  <div class="card-list">
+
+    <div class="subsection-label">Expiry &amp; Validity</div>
+
+    <div class="q-row cert">
+      <div class="q-num">1</div>
+      <div class="q-body">
+        <div class="q-text">Which certificates in the environment have already expired?</div>
+        <div class="q-tags"><span class="tag cert-tag">Expiry</span><span class="tag">All Hosts</span></div>
+      </div>
+    </div>
+
+    <div class="q-row cert">
+      <div class="q-num">2</div>
+      <div class="q-body">
+        <div class="q-text">Which certificates will expire within the next 30 days?</div>
+        <div class="q-tags"><span class="tag cert-tag">Expiry</span><span class="tag">Critical</span></div>
+      </div>
+    </div>
+
+    <div class="q-row cert">
+      <div class="q-num">3</div>
+      <div class="q-body">
+        <div class="q-text">What is the validity period and remaining days for certificate mq-ssl-2026 on lodmq01.example.com?</div>
+        <div class="q-tags"><span class="tag cert-tag">mq-ssl-2026</span><span class="tag">MQ Host</span></div>
+      </div>
+    </div>
+
+    <div class="q-row cert">
+      <div class="q-num">4</div>
+      <div class="q-body">
+        <div class="q-text">Since when has certificate ace-admin-tls on lodace01.example.com been expired and how many days overdue is it?</div>
+        <div class="q-tags"><span class="tag cert-tag">ace-admin-tls</span><span class="tag">ACE Host</span><span class="tag">Expired</span></div>
+      </div>
+    </div>
+
+    <div class="q-row cert">
+      <div class="q-num">5</div>
+      <div class="q-body">
+        <div class="q-text">How many days of validity remain for certificate mqweb-https on loqmq02.example.com?</div>
+        <div class="q-tags"><span class="tag cert-tag">mqweb-https</span><span class="tag">Expiry</span></div>
+      </div>
+    </div>
+
+    <div class="q-row cert">
+      <div class="q-num">6</div>
+      <div class="q-body">
+        <div class="q-text">Which certificate has the longest remaining validity in the environment?</div>
+        <div class="q-tags"><span class="tag cert-tag">Comparison</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Host &amp; Certificate Mapping</div>
+
+    <div class="q-row cert">
+      <div class="q-num">7</div>
+      <div class="q-body">
+        <div class="q-text">List all certificates configured on MQ and ACE hosts with their alias and remaining validity days.</div>
+        <div class="q-tags"><span class="tag cert-tag">MQ Hosts</span><span class="tag cert-tag">ACE Hosts</span><span class="tag">Inventory</span></div>
+      </div>
+    </div>
+
+    <div class="subsection-label">Certificate Details</div>
+
+    <div class="q-row cert">
+      <div class="q-num">8</div>
+      <div class="q-body">
+        <div class="q-text">What is the subject DN of the internal CA certificate mq-internal-ca on lotmq05.example.com and when does it expire?</div>
+        <div class="q-tags"><span class="tag cert-tag">mq-internal-ca</span><span class="tag">CA Certificate</span></div>
+      </div>
+    </div>
+
+    <div class="q-row cert">
+      <div class="q-num">9</div>
+      <div class="q-body">
+        <div class="q-text">Provide a summary of all certificates showing hostname, alias, valid from, valid until and expiry status.</div>
+        <div class="q-tags"><span class="tag cert-tag">All Certs</span><span class="tag">Summary</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

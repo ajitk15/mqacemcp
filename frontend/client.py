@@ -43,6 +43,44 @@ def get_health() -> Dict[str, Any]:
         return {}
 
 
+def get_servers() -> Dict[str, Any]:
+    """Fetch the selectable MCP servers and the active one. Returns {} on failure."""
+    try:
+        with httpx.Client(timeout=_SHORT_TIMEOUT) as client:
+            response = client.get(f"{_backend_url()}/api/mcp/servers")
+            response.raise_for_status()
+            return response.json()
+    except Exception:
+        return {}
+
+
+def connect_server(
+    url: str,
+    name: str | None = None,
+    auth_user: str | None = None,
+    auth_password: str | None = None,
+) -> Dict[str, Any]:
+    """Ask the backend to switch its active MCP server.
+
+    Returns the backend's JSON ({"status": "ok"|"error", ...}); on transport
+    failure returns a synthesised error dict so the caller can always show one.
+    """
+    payload: Dict[str, Any] = {"url": url}
+    if name:
+        payload["name"] = name
+    if auth_user:
+        payload["auth_user"] = auth_user
+    if auth_password:
+        payload["auth_password"] = auth_password
+    try:
+        with httpx.Client(timeout=_STREAM_TIMEOUT) as client:
+            response = client.post(f"{_backend_url()}/api/mcp/connect", json=payload)
+            response.raise_for_status()
+            return response.json()
+    except Exception as err:  # noqa: BLE001
+        return {"status": "error", "message": f"Backend unreachable: {err.__class__.__name__}"}
+
+
 def reset_thread(thread_id: str) -> bool:
     try:
         with httpx.Client(timeout=_SHORT_TIMEOUT) as client:

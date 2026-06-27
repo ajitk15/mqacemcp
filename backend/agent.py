@@ -78,19 +78,29 @@ def _format_tool_catalog(tools: list[BaseTool]) -> str:
     return "\n".join(lines) if lines else "(no tools loaded)"
 
 
-def _load_system_prompt_template() -> tuple[str, str]:
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_system_prompt_template(prompt_file: str | None = None) -> tuple[str, str]:
     """Return (template_text, source_label).
 
     Resolution order:
-      1. Path in SYSTEM_PROMPT_FILE env, if set and the file exists.
-      2. backend/prompts/system.md next to this module.
-      3. Inline SYSTEM_PROMPT_TEMPLATE (always works, last resort).
+      1. Explicit ``prompt_file`` arg (per-server override), if it exists.
+      2. Path in SYSTEM_PROMPT_FILE env, if set and the file exists.
+      3. backend/prompts/system.md next to this module.
+      4. Inline SYSTEM_PROMPT_TEMPLATE (always works, last resort).
+
+    Relative ``prompt_file`` paths resolve against the repo root so a registry
+    entry like "backend/prompts/system.md" works regardless of cwd.
 
     Any candidate missing the required placeholders is rejected with a
     warning so an editing mistake can never crash the backend at startup.
     """
-    explicit = os.getenv("SYSTEM_PROMPT_FILE", "").strip()
     candidates: list[Path] = []
+    if prompt_file and prompt_file.strip():
+        p = Path(prompt_file.strip())
+        candidates.append(p if p.is_absolute() else (_REPO_ROOT / p))
+    explicit = os.getenv("SYSTEM_PROMPT_FILE", "").strip()
     if explicit:
         candidates.append(Path(explicit))
     candidates.append(Path(__file__).parent / "prompts" / "system.md")
@@ -131,8 +141,13 @@ def _render_system_prompt(
     )
 
 
-def build_agent(tools: list[BaseTool]) -> tuple[object, MemorySaver]:
+def build_agent(
+    tools: list[BaseTool], prompt_file: str | None = None
+) -> tuple[object, MemorySaver]:
     """Build the LangGraph agent. Returns (agent, checkpointer).
+
+    ``prompt_file`` optionally overrides the system-prompt template (used to
+    match a per-server prompt to the active MCP server's tool set).
 
     The checkpointer is returned so `app.py` can clear a thread on /reset.
     """
@@ -149,7 +164,7 @@ def build_agent(tools: list[BaseTool]) -> tuple[object, MemorySaver]:
         else ""
     )
 
-    template, prompt_source = _load_system_prompt_template()
+    template, prompt_source = _load_system_prompt_template(prompt_file)
     system_prompt = _render_system_prompt(
         template,
         scope_block=scope_block,
@@ -174,7 +189,7 @@ def build_agent(tools: list[BaseTool]) -> tuple[object, MemorySaver]:
     return agent, checkpointer
 
 
-def get_prompt_source() -> str:
+def get_prompt_source(prompt_file: str | None = None) -> str:
     """Public helper for /api/health to surface the resolved prompt source."""
-    _, source = _load_system_prompt_template()
+    _, source = _load_system_prompt_template(prompt_file)
     return source
