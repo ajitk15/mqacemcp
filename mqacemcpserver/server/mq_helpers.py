@@ -1,7 +1,7 @@
 """IBM MQ helpers: REST client, CSV manifest, formatters, and friendly errors.
 
 All functions here are pure utilities — they do not register MCP tools.
-The tool wrappers live in `server.mq_tools`.
+The composite tool wrappers live in `server.composite_tools`.
 """
 from __future__ import annotations
 
@@ -19,20 +19,16 @@ from server.config import (
     MQ_URL_BASE,
     MQ_USER_NAME,
 )
-from server.csv_cache import CsvCache
 from server.errors import safe_error_message
+from server.csv_cache import CsvCache
 from server.logger import get_logger
 from server.query_log import record_endpoint
 from server.safety import is_hostname_allowed
 
 logger = get_logger("mqacemcpserver.mq")
 
-# Standard CSRF token value accepted by IBM MQ REST API (any non-empty value works)
 CSRF_TOKEN = "token"
 
-# ---------------------------------------------------------------------------
-# Shared HTTP client
-# ---------------------------------------------------------------------------
 _HTTP_CLIENT: httpx.AsyncClient | None = None
 
 
@@ -63,9 +59,6 @@ async def mq_post(url: str, **kwargs):
     return await get_http_client().post(url, **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# CSV manifest (qmgr_dump.csv) — auto-reloads when the file changes
-# ---------------------------------------------------------------------------
 def _load_csv_from_disk() -> pd.DataFrame | None:
     if not MQ_QMGR_DUMP_PATH.exists():
         logger.warning("MQ manifest not found at %s", MQ_QMGR_DUMP_PATH)
@@ -106,9 +99,6 @@ def load_csv() -> pd.DataFrame:
     return _csv_cache.get()
 
 
-# ---------------------------------------------------------------------------
-# URL building
-# ---------------------------------------------------------------------------
 def build_url(target_hostname: str, path: str) -> str:
     """Replace the hostname in MQ_URL_BASE with target_hostname and append path."""
     parsed = urlparse(MQ_URL_BASE)
@@ -123,24 +113,12 @@ def hostname_allowed(hostname: str) -> tuple[bool, str]:
     return is_hostname_allowed(hostname, MQ_ALLOWED_HOSTNAME_PREFIXES)
 
 
-# ---------------------------------------------------------------------------
-# Friendly error formatting
-# ---------------------------------------------------------------------------
 def friendly_error(err: Exception, hostname: str = "") -> str:
-    """Return a user-safe message and log the raw error.
-
-    User-facing strings never contain the raw exception, response body,
-    or full URL. Mapped HTTP-status / network categories get a curated
-    sentence; everything else falls through to ``safe_error_message`` which
-    tags the response with a request_id for correlation in the app log.
-    """
+    """Return a user-safe message and log the raw error."""
     extra = {"hostname": hostname} if hostname else {}
     return safe_error_message(err, hint="MQ REST API call failed", extra=extra)
 
 
-# ---------------------------------------------------------------------------
-# Response prettifiers
-# ---------------------------------------------------------------------------
 def prettify_dspmq(payload: bytes) -> str:
     json_output = json.loads(payload.decode("utf-8"))
     lines = []
@@ -162,7 +140,6 @@ def prettify_dspmqver(payload: bytes) -> str:
     return "\n".join(lines)
 
 
-# Headers stripped from MQSC responses for a cleaner output
 _STRIP_HEADERS = [
     "AMQ8409I: Display Queue details.",
     "AMQ8450I: Display Channel details.",
@@ -177,7 +154,6 @@ def prettify_runmqsc(payload: bytes) -> str:
 
     for x in json_output.get("commandResponse", []):
         text_list = x.get("text", [])
-        # z/OS responses start with CSQN205I
         if text_list and text_list[0].startswith("CSQN205I"):
             text_list.pop(0)
             if text_list:
@@ -190,11 +166,9 @@ def prettify_runmqsc(payload: bytes) -> str:
                 if not line_s:
                     continue
 
-                # 1. Skip echoes (e.g. "1 : DISPLAY ...")
                 if line_s[0].isdigit() and " : " in line_s:
                     continue
 
-                # 2. Strip known headers
                 for h in _STRIP_HEADERS:
                     if line_s.startswith(h):
                         line_s = line_s[len(h):].strip()
@@ -203,7 +177,6 @@ def prettify_runmqsc(payload: bytes) -> str:
                 if not line_s:
                     continue
 
-                # 3. Split data-rich lines on 2+ spaces
                 parts = [p.strip() for p in re.split(r"\s{2,}", line_s) if p.strip()]
                 lines.extend(parts)
 
@@ -215,9 +188,6 @@ def prettify_runmqsc(payload: bytes) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Manifest search & raw runner — used by composite tools
-# ---------------------------------------------------------------------------
 def search_objects_structured(
     search_string: str, object_type: str | None = None
 ) -> list[dict]:
@@ -301,9 +271,6 @@ async def run_mqsc_raw(
         return friendly_error(err, hostname=target_hostname)
 
 
-# ---------------------------------------------------------------------------
-# Startup connectivity check
-# ---------------------------------------------------------------------------
 async def verify_connectivity() -> None:
     """Ping the MQ REST API once at startup; log result. Never raises."""
     if not (MQ_URL_BASE and MQ_USER_NAME):

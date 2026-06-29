@@ -1,4 +1,4 @@
-"""Benchmark the two MCP builds head-to-head through the chatbot backend.
+"""Benchmark two or more MCP servers head-to-head through the chatbot backend.
 
 Runs the SAME set of natural-language questions against each MCP server by
 flipping the backend's active server via ``POST /api/mcp/connect`` between
@@ -6,19 +6,20 @@ runs, and records end-to-end performance per question (latency, number of tool
 calls / round-trips, verdict). The output JSON feeds the dashboard's
 "Compare" tab (``dashboard/analyze_logs.py:compute_comparison_html``).
 
-Why end-to-end (through the LLM agent): the two builds are not tool-for-tool
-comparable — ``mqacemcpserver`` exposes granular tools and usually needs several
-calls to answer a question, while ``mqacemcpserver-single`` answers in one
-composite call. Measuring through the agent captures that real difference.
+Why end-to-end (through the LLM agent): MCP servers are not tool-for-tool
+comparable — a build that exposes granular tools usually needs several calls to
+answer a question, while one that exposes a composite tool answers in a single
+call. Measuring through the agent captures that real difference. With a single
+server registered it still works as a one-server baseline run.
 
-Assumes the full stack is already running (both MCP builds, backend, dashboard).
-Probes ``/api/health`` first and exits non-zero if unreachable.
+Assumes the stack is already running (the MCP server(s) under test, backend,
+dashboard). Probes ``/api/health`` first and exits non-zero if unreachable.
 
 Usage (from repo root, with the backend venv that has httpx):
 
   backend\\.venv\\Scripts\\python.exe backend\\tests\\compare_servers.py --limit 6
   ...\\python.exe backend\\tests\\compare_servers.py --only ace --out custom-logs\\compare_results.json
-  ...\\python.exe backend\\tests\\compare_servers.py --servers https://localhost:8009/sse,https://localhost:8010/sse
+  ...\\python.exe backend\\tests\\compare_servers.py --servers https://localhost:8010/sse,https://remote-host:8010/sse
 
 NOTE: this drives the real LLM (costs tokens) and temporarily switches the
 backend's active server. By default it restores the startup default server when

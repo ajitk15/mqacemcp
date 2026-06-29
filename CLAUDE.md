@@ -4,18 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single Model Context Protocol (MCP) server (`mqacemcpserver`) that exposes
-read-only diagnostic tools for **IBM MQ** and **IBM App Connect Enterprise (ACE)**
-under one endpoint. The hosting orchestrator's LLM picks the right tool from the
-unified tool list — there is no in-server router. Production posture: the central
-team consumes one SSE endpoint; everything else (logging, sanitised errors, allow-list,
-read-only enforcement) is in-process.
+A single Model Context Protocol (MCP) server (`mqacemcpserver`) that
+exposes read-only diagnostic tools for **IBM MQ** and **IBM App Connect
+Enterprise (ACE)** under one endpoint. It exposes a small set of **composite
+"single-call" tools** (one tool per common diagnostic intent) so a client that
+can only invoke ONE tool per user turn still completes discovery-plus-execution
+workflows in a single call. The hosting orchestrator's LLM picks the right tool
+from the unified tool list — there is no in-server router. Production posture:
+the central team consumes one SSE endpoint; everything else (logging, sanitised
+errors, allow-list, read-only enforcement) is in-process.
 
 ## Development commands
 
-The main build lives in `mqacemcpserver/`. Its dev `.venv` stays at the **repo
+The build lives in `mqacemcpserver/`. Its dev `.venv` stays at the **repo
 root** (shared), but its code, tests, and `requirements.txt` live in the build
-folder. Paths in the architecture section below are relative to `mqacemcpserver/`.
+folder. Paths in the architecture section below are relative to
+`mqacemcpserver/`.
 
 ```powershell
 # venv + deps (Windows) — venv at repo root, requirements in the build folder
@@ -23,24 +27,24 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r mqacemcpserver\requirements.txt
 
-# Run (stdio, default) — from repo root; cwd stays root so .env/resources resolve
+# Run (stdio, default) — from repo root; cwd stays root so shared resources/ resolve.
+# The build reads its own mqacemcpserver/.env regardless of cwd.
 .venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 
 # Run (SSE — endpoint at http://MCP_HOST:MCP_PORT/sse, healthz at /healthz)
 $env:MCP_TRANSPORT = "sse"
 .venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 
-# Smoke check that all 14 tools register (run from inside the build folder)
+# Smoke check that the tools register (run from inside the build folder)
 cd mqacemcpserver
 ..\.venv\Scripts\python.exe -c "import mqacemcpserver as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
 
-# Tests — run from INSIDE mqacemcpserver/. Both mqacemcpserver/ and
-# mqacemcpserver-single/ ship a top-level `server` package, so running pytest
-# from the repo root collides on the import name — run each suite in its folder.
+# Tests — run from INSIDE mqacemcpserver/ (the suite imports the build's
+# top-level `server` package, so run pytest from the build folder).
 cd mqacemcpserver
 ..\.venv\Scripts\python.exe -m pip install pytest pytest-asyncio   # one-time
 ..\.venv\Scripts\python.exe -m pytest -q                           # full suite
-..\.venv\Scripts\python.exe -m pytest tests/test_mq_queue_depth.py -q  # single file
+..\.venv\Scripts\python.exe -m pytest tests/test_composite_tools.py -q  # single file
 ..\.venv\Scripts\python.exe -m pytest -k "redacts" -q              # by name
 ```
 
@@ -54,8 +58,7 @@ itself — the env vars must be set first.
 ### Tool routing without a dispatcher
 Every MQ tool's docstring opens with `IBM MQ:`, every ACE tool's with `IBM ACE:`,
 and the certificate tool's with `Certificate:`.
-Tool **names** are also disambiguated (`dspmq`, `runmqsc`, `list_ace_nodes`,
-`get_cert_details`, …).
+Tool **names** are also disambiguated.
 The orchestrator's LLM uses these to route — preserve both conventions whenever
 adding or renaming a tool, otherwise routing degrades silently.
 
@@ -67,7 +70,8 @@ async def my_tool(...): ...
 ```
 Order matters. FastMCP introspects `inspect.signature` which follows
 `functools.wraps`'s `__wrapped__` set by `@logged_tool`. Reversing the order
-breaks tool registration.
+breaks tool registration. The composite tools live in `server/composite_tools.py`
+inside `register(mcp)`.
 
 ### Safety is enforced in three places, do not bypass any of them
 1. **Hostname allow-list** (`server/safety.py:is_hostname_allowed`) — every outbound
@@ -76,14 +80,13 @@ breaks tool registration.
    **two separate allow-lists** (MQ and ACE infra typically live on different host
    families). Wrappers in `mq_helpers.py` (`hostname_allowed`) and `ace_helpers.py`
    (`hostname_allowed`) call into the shared primitive with the right list.
-2. **Read-only MQSC** (`server/safety.py:is_modification_command`) — `runmqsc` and
-   `run_mqsc_for_object` block ALTER/DEFINE/DELETE/CLEAR/MOVE/SET/RESET/START/STOP/
+2. **Read-only MQSC** (`server/safety.py:is_modification_command`) — MQSC paths
+   block ALTER/DEFINE/DELETE/CLEAR/MOVE/SET/RESET/START/STOP/
    PURGE/REFRESH/RESOLVE/ARCHIVE/BACKUP and return `MODIFY_BLOCKED_MSG` instead.
-3. **Allow-list precedes every HTTP call**, including the unknown-QM path in
-   `runmqsc`. The previous version had a silent fall-through (used the QM name as
-   a hostname when the manifest didn't list it) — that's a security bug. The
-   current code rejects unknown QMs with no explicit hostname; do not reintroduce
-   the fallback.
+3. **Allow-list precedes every HTTP call**, including the unknown-QM path. There
+   must be no silent fall-through that uses the QM name as a hostname when the
+   manifest doesn't list it — that's a security bug. The current code rejects
+   unknown QMs with no explicit hostname; do not reintroduce the fallback.
 
 ### Error sanitisation contract
 **No tool ever returns raw exception text or upstream response bodies.** Both
@@ -108,8 +111,7 @@ When adding a new code path that catches an exception, route it through
 ### CSV manifests are offline (and auto-reload on change)
 `resources/qmgr_dump.csv`, `resources/node_dump.csv`, `resources/node_config.csv`,
 and `resources/cert_dump.csv` are extracts produced by external jobs. Tools that
-read them (`find_mq_object`, `search_ace_local_dump`, `get_cert_details`) say
-"OFFLINE" in their docstring — the freshness depends on the CSV's
+read them say "OFFLINE" in their docstring — the freshness depends on the CSV's
 `extractedat`/`timestamp` columns (or the extract's run time), not on a live system.
 
 These are replaced by a daily extract job, so the loaders **must not** cache
@@ -125,29 +127,24 @@ public `load_*()` returning `cache.get()`. Do **not** reintroduce a
 ### Two HTTP clients, one shutdown path
 `server/mq_helpers.py:get_http_client` and `server/ace_helpers.py:get_http_client`
 each maintain a singleton `httpx.AsyncClient` with their own credentials. Both
-are closed via `aclose_http_client` in `mqacemcpserver/mqacemcpserver.py:_shutdown`'s finally
-block. Do not create ad-hoc clients in tools — use `mq_get`/`mq_post` for MQ
-and `fetch_ace` for ACE.
+are closed via `aclose_http_client` in `mqacemcpserver/mqacemcpserver.py:_shutdown`'s
+finally block. Do not create ad-hoc clients in tools — use `mq_get`/`mq_post` for
+MQ and `fetch_ace` for ACE.
 
-### Adding a new MQ tool — minimum checklist
-1. Implement in `server/mq_tools.py` inside `register(mcp)`.
+### Adding a new tool — minimum checklist
+1. Implement in `server/composite_tools.py` inside `register(mcp)`.
 2. Both decorators in the right order (`@mcp.tool()` then `@logged_tool`).
-3. Docstring opens with `IBM MQ:`.
-4. Make HTTP calls via `mq_get` / `mq_post` (not the raw client) so the endpoint
-   gets recorded.
-5. Resolve hostname, then call `hostname_allowed(...)` before any HTTP call.
+3. Docstring opens with `IBM MQ:`, `IBM ACE:`, or `Certificate:` as appropriate.
+4. Make MQ HTTP calls via `mq_get` / `mq_post` (not the raw client) so the
+   endpoint gets recorded; make ACE REST calls via
+   `fetch_ace(node, path, component, ...)` which handles endpoint resolution,
+   allow-list, recording, and error sanitisation.
+5. For MQ, resolve hostname then call `hostname_allowed(...)` before any HTTP call.
 6. Wrap exceptions with `friendly_error` (which goes through `safe_error_message`).
-
-### Adding a new ACE tool — minimum checklist
-1. Implement in `server/ace_tools.py` inside `register(mcp)`.
-2. Both decorators (same order).
-3. Docstring opens with `IBM ACE:`. Tool name uses `ace_` prefix or contains `ace`.
-4. Make REST calls via `fetch_ace(node, path, component, ...)` — it handles
-   endpoint resolution, allow-list, recording, and error sanitisation.
 
 ## Logging contract for Power BI
 
-Two file-based logs in `LOG_DIR` (default `<project>/logs/`), daily-rotated:
+Two file-based logs in `LOG_DIR` (default `<build>/logs/`), daily-rotated:
 - `app-YYYY-MM-DD.log` — plain text, mirrors stderr.
 - `queries-YYYY-MM-DD.jsonl` — one JSON object per tool invocation. Schema in
   `mqacemcpserver/README.md` "Logging" section. Power BI ingests via "Get Data → From Folder".
@@ -158,11 +155,12 @@ with `"[REDACTED]"`. To opt a parameter into redaction, name it accordingly.
 
 ## Environment variables
 
-Loaded from `.env` (repo root) by `mqacemcpserver/server/config.py` at import
-time — the config auto-detects whether it's running standalone (its own
-`resources/` beside the code) or in the mono-repo (shared root `resources/` and
-`.env`). The full table is in `mqacemcpserver/README.md`. Two namespaces
-operators most often touch:
+Loaded by `mqacemcpserver/server/config.py` at import time from **this
+build's own** `mqacemcpserver/.env` (each app in the repo is independent
+and owns its `.env`; there is no repo-root `.env`). CSV-manifest/log paths still
+auto-detect standalone (own `resources/` beside the code) vs. mono-repo (shared
+root `resources/`). The full table is in `mqacemcpserver/README.md`. Two
+namespaces operators most often touch:
 - `MQ_ALLOWED_HOSTNAME_PREFIXES` / `ACE_ALLOWED_HOSTNAME_PREFIXES` — comma-separated
   hostname prefixes; defaults `lod,loq,lot` (excludes prod by convention).
 - `MCP_TRANSPORT` (`stdio` / `sse`), `MCP_AUTH_USER` + `MCP_AUTH_PASSWORD`
@@ -194,25 +192,22 @@ as separate products in one repo, each independently deployable (own
   Streamlit app lives directly in `frontend/`.)
 - `scripts/start-all.ps1` / `start-streamlit.ps1` / `stop-all.ps1` — launchers
   that pre-flight prereqs and spawn the service windows. `start-all.ps1` brings up
-  **both** MCP builds side by side — the main build (`mqacemcpserver`, :8009,
-  reads root `.env`) and the single build (`mqacemcpserver-single`, :8010, reads
-  its own `.env`) — plus backend :8002, Streamlit UI :8003, dashboard :8004. The
-  backend defaults to the main build (:8009); the Streamlit sidebar lets a user
-  switch to the single build or a custom MCP URL at runtime (see backend
-  `MCP_SERVERS_JSON` and `/api/mcp/connect`). `-SkipMcp` skips both MCP builds;
-  `-SkipMcpMain` / `-SkipMcpSingle` skip one. Other `-Skip*` switches isolate a
-  tier. Both `start-all.ps1` and `start-streamlit.ps1` launch the Streamlit UI
-  from `frontend/`.
+  the MCP server (`mqacemcpserver`, :8010, reads its own `.env`) plus
+  backend :8002, Streamlit UI :8003, dashboard :8004. The backend defaults to the
+  MCP server (:8010); the Streamlit sidebar lets a user switch to a custom MCP URL
+  at runtime (see backend `MCP_SERVERS_JSON` and `/api/mcp/connect`). `-SkipMcp`
+  skips the MCP server; other `-Skip*` switches isolate a tier. Both
+  `start-all.ps1` and `start-streamlit.ps1` launch the Streamlit UI from `frontend/`.
 - The dashboard process (`dashboard/dashboard_server.py`) does **not** load
   `dashboard/.env` itself — it reads `MCP_DASHBOARD_PORT` / `MCP_SERVER_DIR` /
   `MCP_DASHBOARD_SERVERS_JSON` from the process environment and gets TLS from the
-  imported build's `server.config`. It renders **one tab per MCP build**: `/dashboard`
-  is a tabbed wrapper, `/dashboard/<key>` is that build's full dashboard for its log
-  dir. `start-all.*` injects `MCP_SERVER_DIR` (the main build, for TLS),
-  `MCP_DASHBOARD_PORT`, and `MCP_DASHBOARD_SERVERS_JSON` (both builds' log dirs:
-  main → `custom-logs`, single → `mqacemcpserver-single/logs`). If you launch the
-  dashboard another way, set those env vars yourself or it falls back to a single
-  tab from the imported `server.config` `LOG_DIR`.
+  imported build's `server.config`. It renders **one tab per configured MCP server**:
+  `/dashboard` is a tabbed wrapper, `/dashboard/<key>` is that server's full
+  dashboard for its log dir. `start-all.*` injects `MCP_SERVER_DIR`
+  (`mqacemcpserver`, for TLS), `MCP_DASHBOARD_PORT`, and
+  `MCP_DASHBOARD_SERVERS_JSON` (the build's log dir, `mqacemcpserver/logs`).
+  If you launch the dashboard another way, set those env vars yourself or it falls
+  back to a single tab from the imported `server.config` `LOG_DIR`.
 
 ### Hard rules when working in this repo
 - **Do not modify any file under `mqacemcpserver/` or `resources/` from

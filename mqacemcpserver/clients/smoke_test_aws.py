@@ -1,4 +1,4 @@
-"""SSE smoke-test client for mqacemcpserver-single — AWS environment.
+"""SSE smoke-test client for mqacemcpserver — AWS environment.
 
 Same scaffolding as clients/smoke_test.py, but the call table is populated
 from the AWS extract files in C:\\Users\\ajitk\\Downloads\\aws:
@@ -44,7 +44,7 @@ load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 MCP_AUTH_USER = os.getenv("MCP_AUTH_USER", "")
 MCP_AUTH_PASSWORD = os.getenv("MCP_AUTH_PASSWORD", "")
 MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
-MCP_PORT = os.getenv("MCP_PORT", "8443")
+MCP_PORT = os.getenv("MCP_PORT", "8010")
 MCP_TLS_CERT = os.getenv("MCP_TLS_CERT", "")
 MCP_TLS_KEY = os.getenv("MCP_TLS_KEY", "")
 
@@ -299,7 +299,7 @@ async def main():
         auth = httpx.BasicAuth(MCP_AUTH_USER, MCP_AUTH_PASSWORD)
         print(f"Basic Auth user={MCP_AUTH_USER}")
 
-    heading(f"mqacemcpserver-single AWS smoke ({SSE_URL})")
+    heading(f"mqacemcpserver AWS smoke ({SSE_URL})")
 
     parsed = urlparse(SSE_URL)
     use_tls = parsed.scheme == "https"

@@ -1,8 +1,7 @@
-"""SSE smoke-test client for mqacemcpserver-single.
+"""SSE smoke-test client for mqacemcpserver.
 
-Connects to the composites-only server, lists tools, then exercises each of
-the seven tools. Mirrors the conventions of the root project's
-clients/test_https_client.py but the call table is tuned to this server.
+Connects to the composites server, lists tools, then exercises each of the
+composite tools.
 """
 from __future__ import annotations
 
@@ -24,7 +23,7 @@ load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 MCP_AUTH_USER = os.getenv("MCP_AUTH_USER", "")
 MCP_AUTH_PASSWORD = os.getenv("MCP_AUTH_PASSWORD", "")
 MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
-MCP_PORT = os.getenv("MCP_PORT", "8443")
+MCP_PORT = os.getenv("MCP_PORT", "8010")
 MCP_TLS_CERT = os.getenv("MCP_TLS_CERT", "")
 MCP_TLS_KEY = os.getenv("MCP_TLS_KEY", "")
 
@@ -232,7 +231,7 @@ async def main():
         auth = httpx.BasicAuth(MCP_AUTH_USER, MCP_AUTH_PASSWORD)
         print(f"Basic Auth user={MCP_AUTH_USER}")
 
-    heading(f"mqacemcpserver-single smoke ({SSE_URL})")
+    heading(f"mqacemcpserver smoke ({SSE_URL})")
 
     parsed = urlparse(SSE_URL)
     use_tls = parsed.scheme == "https"

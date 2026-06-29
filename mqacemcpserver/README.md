@@ -1,352 +1,632 @@
-# IBM MQ + IBM ACE — Unified MCP Server
+# mqacemcpserver
 
-A single Model Context Protocol (MCP) server that exposes read-only diagnostic
-tools for **IBM MQ** and **IBM App Connect Enterprise (ACE)**. Hand the central
-team one endpoint; their orchestrator/LLM picks the right tool from the unified
-tool list based on the user's question — no in-server routing required.
+The unified MQ + ACE MCP server, built for environments where the
+orchestrator/frontend can only invoke **one tool per user turn** — no parallel
+tool calls, no sequential ReAct-style chaining. Each of the seven tools below is
+self-sufficient: it performs the full discovery-plus-execution workflow
+internally and returns one consolidated answer.
 
-> New to MQ / ACE or unsure where they fit in an enterprise middleware
-> stack? See **[docs/MIDDLEWARE_STACK.md](../docs/MIDDLEWARE_STACK.md)**
-> for a short primer with ESB topology and layer-mapping diagrams.
+To cover "X **and** Y" questions without chaining, every tool takes a **list**
+for its primary target(s), so several objects of the same kind can be handled
+in a single call (e.g. `queue_names=["QL.IN.APP1","QL.IN.APP2"]`,
+`nodes=["NODE1","NODE2"]`, `qmgr_names=["QM1","QM2"]`). For `ace_server_explore`
+the servers list shares one `node`; for `mq_host_overview` the `mqsc_command`
+applies to every queue manager listed.
 
-> **Layout note:** this build lives in `mqacemcpserver/`. Its dev `.venv`
-> stays at the **repo root** (shared); commands below run from the repo root
-> unless stated otherwise. The server auto-detects whether it runs standalone
-> (its own `resources/` beside the code) or in the mono-repo (shared root
-> `resources/` and `.env`).
+## Tool catalogue at a glance
 
-## Setup
+Each composite tool consolidates several granular diagnostic steps into one call:
+
+| Tool | Consolidates | One-call intent |
+| --- | --- | --- |
+| `mq_queue_inspect` | `find_mq_object` + `get_queue_depth` + queue `runmqsc` | "what's the depth / config of queue X" (alias-aware) |
+| `mq_channel_inspect` | `find_mq_object` + `get_channel_status` + channel `runmqsc` | "is channel X up, with what SSL / CONNAME / batch settings" |
+| `mq_host_overview` | `dspmq` + `dspmqver` + read-only `runmqsc` | "tell me about this host / QM, optionally with one DISPLAY" |
+| `ace_node_overview` | `list_ace_nodes` + `get_ace_node_status` + `list_ace_servers` | "what's on node N1" |
+| `ace_server_explore` | `list_ace_applications` + `list_ace_message_flows` | "what's deployed on server X on N1" |
+| `ace_search` | `list_ace_nodes` (listing) + `search_ace_local_dump` | "find any ACE thing matching X (nodes / BIP log)" |
+| `get_cert_details` | certificate expiry lookup | "when does the cert on host / alias / CN X expire" |
+
+Each tool enforces the same safety contract:
+
+- Read-only MQSC enforced via `is_modification_command`.
+- Hostname allow-list enforced before every outbound HTTP call.
+- All exceptions routed through `safe_error_message` — never raw upstream text.
+- All endpoints recorded in `queries-YYYY-MM-DD.jsonl` for audit.
+
+---
+
+## Tool reference
+
+### 1. `mq_queue_inspect`
+
+**IBM MQ.** Inspect a queue end-to-end in a single call. Bundles manifest
+discovery + alias resolution + a **full attribute fetch** (`DISPLAY QLOCAL … ALL`),
+so it answers any queue-property question (depth, persistence `DEFPSIST`,
+`MAXMSGL`, priority, get/put, triggering, creation / last-altered dates, …).
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `queue_names` | `list[str]` | yes | One or more queue names (`QL.*`, `QA.*`, `QR.*`, or any other), as a list — e.g. `["QL.IN.APP1"]` or `["QL.IN.APP1","QL.IN.APP2"]`. Each is inspected independently and the results concatenated. |
+| `qmgr_name` | `str` | no | When given, skips manifest discovery and goes straight to that QM (FAST PATH). Applies to every queue in `queue_names`. |
+| `hostname` | `str` | no | Explicit host. Wins over manifest lookup when both are present. |
+
+**What it does internally**
+- If `qmgr_name` is supplied → resolves host, allow-list check, runs `DISPLAY QLOCAL(<Q>) ALL` / `QALIAS` / `QREMOTE(<Q>) ALL` (chosen by prefix or `object_type`) on that QM only.
+- Otherwise → searches `qmgr_dump.csv`, branches on count of hosting QMs, runs the inspection per accessible QM.
+- For `QA.*` aliases: runs `DISPLAY QALIAS(<Q>)`, parses `TARGET(...)`, then runs `DISPLAY QLOCAL(<target>) ALL` (the target's full attribute set).
+- Restricted hosts are surfaced explicitly (never "does not exist").
+
+**Sample user questions it answers in one call**
+- "What's the depth of QL.IN.APP1?"
+- "What's the depth of QL.IN.APP1 and QL.IN.APP2?" → `queue_names=["QL.IN.APP1","QL.IN.APP2"]` (both in one call)
+- "Depth of QL.ORDERS on MQQMGR1"
+- "Where is QL.IN.APP1 hosted?"
+- "Is QL.IN.APP1 triggered?"
+- "What is the persistence of QL.IN.APP1?" (reads `DEFPSIST` from the full attrs)
+- "When was QL.IN.APP1 created / last altered?" (`CRDATE CRTIME` / `ALTDATE ALTTIME`)
+- "Open handles / IPPROCS / OPPROCS on QL.ORDERS on QM1"
+- "What's the max depth of QL.ORDERS?"
+- "Resolve alias QA.IN.APP1 and give me its target's depth"
+- "Definition of QR.IN.APP2 (remote queue)"
+
+---
+
+### 2. `mq_channel_inspect`
+
+**IBM MQ.** Inspect a channel end-to-end in a single call. Returns BOTH
+runtime status AND configuration per hosting queue manager.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `channel_names` | `list[str]` | yes | One or more MQ channel names, as a list — e.g. `["CH.TO.PARTNER"]` or `["CH.TO.PARTNER","CH.SDR.TO.QM2"]`. Each is inspected independently and the results concatenated. |
+| `qmgr_name` | `str` | no | When given, FAST PATH on that QM. Applies to every channel in `channel_names`. |
+| `hostname` | `str` | no | Explicit host. Wins over manifest lookup. |
+
+**What it does internally**
+- Discovery branches the same way `mq_queue_inspect` does (FAST PATH if QM given, manifest discovery otherwise).
+- Per hosting QM, runs two MQSC commands concurrently:
+  - `DISPLAY CHSTATUS(<C>) ALL` — runtime status (state, msgs, lastmsg, conname, bytes).
+  - `DISPLAY CHANNEL(<C>) CHLTYPE CONNAME SSLCIPH SSLPEER CERTLABL MAXMSGL BATCHSZ HBINT` — configuration.
+
+**Sample user questions it answers in one call**
+- "Is channel CH.APP.SVRCONN up?"
+- "Are CH.APP.SVRCONN and CH.TO.PARTNER up?" → `channel_names=["CH.APP.SVRCONN","CH.TO.PARTNER"]` (both in one call)
+- "Status of CH.TO.PARTNER on QM3"
+- "SSL cipher on CH.TO.PARTNER on QM3"
+- "What's the CONNAME of CH.SDR.TO.QM2?"
+- "Batch size and heartbeat for CH.SDR.TO.QM2"
+- "Which channel type is CH.APP.SVRCONN?"
+- "Where does channel CH.TO.PARTNER run?" (no QM given → discovery)
+
+---
+
+### 3. `mq_host_overview`
+
+**IBM MQ.** Host-level overview — `dspmq` + `dspmqver`, plus one optional
+read-only MQSC command.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `qmgr_names` | `list[str]` | no | One or more queue managers to target (each resolved to a host via the manifest) — e.g. `["QM1"]` or `["QM1","QM2"]`. |
+| `hostnames` | `list[str]` | no | One or more explicit hosts — e.g. `["lopalhost"]`. An explicit host is used directly (skips manifest lookup). |
+| `mqsc_command` | `str` | no | One read-only `DISPLAY` MQSC. **Requires a queue manager** (applied to every QM in `qmgr_names`). Modification verbs (ALTER/DEFINE/…) are blocked. |
+
+**Target resolution (per target)**
+1. A single `qmgr_names` + single `hostnames` is treated as one paired target (run the MQSC on that QM via that explicit host).
+2. Otherwise each entry in `qmgr_names` (resolved via manifest) and each entry in `hostnames` (used directly) is a separate target.
+3. With no targets at all, the configured default `MQ_URL_BASE` is used.
+
+**What it returns**
+- `dspmq` section: every queue manager on the resolved host with its state.
+- `dspmqver` section: MQ installation name, version, architecture, install path.
+- If a queue-manager target + `mqsc_command` given: appends the MQSC output (or
+  `MODIFY_BLOCKED_MSG` if the verb is not read-only).
+- With multiple targets, the per-target overviews are concatenated under a banner.
+
+**Sample user questions it answers in one call**
+- "Run dspmq on host lopalhost"
+- "List queue managers on lopalhost"
+- "What MQ version is installed on QM1's host?"
+- "MQ version on QM1 and QM2" → `qmgr_names=["QM1","QM2"]` (both in one call)
+- "dspmqver on QM1"
+- "List all listeners on QM1" → `mqsc_command="DISPLAY LSSTATUS(*) ALL"`
+- "Show QM1's configuration" → `mqsc_command="DISPLAY QMGR ALL"`
+- "Is there a dead letter queue on QM1?" → `mqsc_command="DISPLAY QMGR DEADQ"`
+- "Show all channels on QM1" → `mqsc_command="DISPLAY CHANNEL(*) CHLTYPE"`
+
+---
+
+### 4. `ace_node_overview`
+
+**IBM ACE.** Node-level overview — node status + every integration server on
+that node, in one call.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `nodes` | `list[str]` | yes | One or more integration node names — e.g. `["NODE2"]` or `["NODE1","NODE2"]`. |
+
+**What it does internally**
+- For each node, concurrently issues `GET /apiv2` (node-level) and `GET /apiv2/servers?depth=2` against the node's admin REST endpoint.
+- A single node returns one envelope: `{node, status, properties, descriptiveProperties, servers:[{name, active, properties}]}`. Multiple nodes return `{status, count, nodes:[<envelope>, …]}`.
+
+**Sample user questions it answers in one call**
+- "What's running on NODE2?"
+- "What's running on NODE1 and NODE2?" → `nodes=["NODE1","NODE2"]` (both in one call)
+- "Is integration server IS001 active on NODE2?"
+- "What ACE version is NODE2 running?"
+- "What's NODE2's REST admin port?"
+- "List all integration servers on NODE2"
+- "Is NODE2's broker up?"
+- "How many integration servers does NODE2 have?"
+
+---
+
+### 5. `ace_server_explore`
+
+**IBM ACE.** Explore one or more integration servers — applications + message
+flows in one call.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `node` | `str` | yes | Integration node name (shared by all servers). |
+| `servers` | `list[str]` | yes | One or more integration server names on that node — e.g. `["IS001"]` or `["IS001","IS002"]`. |
+| `application` | `str` | no | Optional. When given, message flows are scoped to that application (applied to every server); otherwise flows directly on the server are returned alongside the application list. |
+
+**What it does internally**
+- For each server, concurrently fetches applications and message flows (scoped or unscoped).
+- A single server returns one envelope: `{node, server, application?, applications:[…], message_flows:[…]}`. Multiple servers return `{status, node, count, servers:[<envelope>, …]}`.
+
+**Sample user questions it answers in one call**
+- "What apps are deployed on IS001 on NODE2?"
+- "What apps are on IS001 and IS002 on NODE2?" → `node="NODE2", servers=["IS001","IS002"]` (both in one call)
+- "List flows on IS001 on NODE2"
+- "What message flows are in snaplogic1 on IS001 on NODE2?"
+- "Is application snaplogic1 running on IS001?"
+- "What's deployed under server snaps on NODE2?"
+
+---
+
+### 6. `ace_search`
+
+**IBM ACE.** Combined OFFLINE search across configured nodes and the BIP
+message dump, in one call.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `search_strings` | `list[str]` | yes | One or more substrings to match, case-insensitive (a row matches if it matches ANY of them; matches are merged + de-duplicated). Pass `[""]` (or an empty list) with `scope="nodes"` to list every configured node. |
+| `scope` | `str` | no | `"nodes"` / `"dump"` / `"all"` (default `"all"`). |
+
+**What it does internally**
+- `scope="nodes"` → reads `node_config.csv`, ORing the substrings across rows.
+- `scope="dump"` → calls `search_node_dump(s)` per string over `node_dump.csv`, merged + de-duplicated.
+- `scope="all"` (default) → both sections in one envelope.
+
+**Sample user questions it answers in one call**
+- "List all integration nodes" → `search_strings=[""], scope="nodes"`
+- "Find any node matching lodace01.example.com" → `scope="nodes"`
+- "Any BIP errors mentioning OrderFlow?" → `scope="dump"`
+- "Any BIP errors mentioning OrderFlow or PaymentFlow?" → `search_strings=["OrderFlow","PaymentFlow"], scope="dump"` (match either, one call)
+- "Find BIP1290 messages" → `scope="dump"`
+- "Search every ACE source for 'snaplogic1'" → `scope="all"` (default)
+- "Which nodes are on port 4415?" → `scope="nodes"`, `search_strings=["4415"]`
+
+---
+
+### 7. `get_cert_details`
+
+**Certificates.** OFFLINE lookup of TLS/SSL certificate details from
+`resources/cert_dump.csv`, in one call.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `search_strings` | `list[str]` | yes | One or more hostname/alias/CN substrings to match (case-insensitive, against ALL columns), as a list — e.g. `["lodmq01"]` or `["lodmq01","lotace03"]`. Matches from all queries are merged and de-duplicated. |
+
+**What it does internally**
+- `search_certs(s)` → case-insensitive substring search across every column of
+  `cert_dump.csv`, run once per supplied string; matches are merged and
+  de-duplicated by `(hostname, alias, cn_name)`.
+- Returns a JSON envelope: `{status, message, results:[{hostname, alias,
+  cn_name, valid_from, valid_until, expirydays, ace_nodes, matched_query}]}`.
+  `valid_until` is the certificate's expiry date; `expirydays` is the whole-day
+  count until it, recomputed live against today (negative if already expired);
+  `ace_nodes` is the ACE node(s) running on that hostname per `node_dump.csv`
+  (empty for a pure-MQ host); `matched_query` lists which of the supplied search
+  strings matched this row. No live endpoint is inspected.
+
+**Sample user questions it answers in one call**
+- "When does the certificate on lodmq01 expire?"
+- "When do the certs on lodmq01 and lotace03 expire?" → `search_strings=["lodmq01","lotace03"]` (both in one call)
+- "Show cert details for alias mqweb-https"
+- "Which certs are issued for example.com?"
+- "What's the CN on the lotace03 certificate?"
+
+---
+
+## Internal function call graph
+
+For each composite tool, the helpers it invokes (in call order) and what
+flows in/out of each. Format: `N.M  helper : description | input | output`.
+
+Helpers prefixed with `_` are private to `server/composite_tools.py`. All
+others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
+`server/safety.py`, or `server/errors.py`.
+
+### 1. `mq_queue_inspect` : inspect a queue end-to-end (manifest discovery + alias resolution + full attrs via `DISPLAY QLOCAL … ALL`)
+
+  1.1 `_resolve_target_host` : look up the hostname for a known QM (FAST PATH only) | in: `qmgr_name`, optional `explicit_hostname` | out: `(hostname: str | None, error_message: str | None)`
+
+  1.2 `hostname_allowed` (MQ) : check resolved hostname against `MQ_ALLOWED_HOSTNAME_PREFIXES` before any HTTP | in: `hostname` | out: `(allowed: bool, blocked_message: str)`
+
+  1.3 `search_objects_structured` : DISCOVERY PATH — search `qmgr_dump.csv` for the queue | in: `search_string`, optional `object_type` | out: `list[{qmgr, hostname, object_type, restricted}]`
+
+  1.4 `_inspect_queue_on_qm` : run the queue-inspect MQSC chain on ONE queue manager (auto-detects QA/QR/QL and follows the alias `TARGET` when present) | in: `qmgr`, `queue_name`, `hostname`, optional `hint_type` | out: formatted text block (alias mapping if applicable + QLOCAL/QREMOTE details)
+
+  1.5 `run_mqsc_raw` (called by 1.4) : execute one read-only MQSC against MQ REST and prettify | in: `qmgr_name`, `mqsc_command`, `target_hostname` | out: prettified MQSC text (or sanitised error message on failure)
+
+  1.6 `_restricted_footer` : build the "🚫 also on restricted hosts" trailer | in: `list[restricted_entries]` | out: text (empty when no restricted hits)
+
+### 2. `mq_channel_inspect` : inspect a channel end-to-end (runtime status + configuration per hosting QM)
+
+  2.1 `_resolve_target_host` (FAST PATH only) — same as 1.1
+
+  2.2 `hostname_allowed` (MQ) — same as 1.2
+
+  2.3 `search_objects_structured` : DISCOVERY PATH | in: `channel_name`, `object_type="CHANNEL"` (with fallback to no type) | out: same shape as 1.3
+
+  2.4 `_inspect_channel_on_qm` : run `DISPLAY CHSTATUS(<C>) ALL` and `DISPLAY CHANNEL(<C>) CHLTYPE CONNAME SSLCIPH SSLPEER CERTLABL MAXMSGL BATCHSZ HBINT` concurrently | in: `qmgr`, `channel_name`, `hostname` | out: formatted text block with status + config sections
+
+  2.5 `run_mqsc_raw` (called twice inside 2.4 via `asyncio.gather`) — same as 1.5
+
+  2.6 `_restricted_footer` — same as 1.6
+
+### 3. `mq_host_overview` : host-level overview (`dspmq` + `dspmqver` + optional read-only MQSC)
+
+  3.1 `_resolve_target_host` : only when `qmgr_name` is supplied without an explicit `hostname` — same as 1.1
+
+  3.2 `hostname_allowed` (MQ) : skipped only when the call falls through to the default `MQ_URL_BASE` (no host substitution) — same as 1.2
+
+  3.3 `build_url` : substitute the resolved host into `MQ_URL_BASE` and append a path | in: `target_hostname`, `path` | out: full URL string
+
+  3.4 `mq_get` (called twice via `asyncio.gather`) : HTTP GET to MQ REST; records the URL on the in-flight audit record | in: `url`, kwargs | out: `httpx.Response`
+
+  3.5 `prettify_dspmq` : flatten dspmq JSON into one-line-per-QM text | in: response bytes | out: `name=QM1, state=running\n...`
+
+  3.6 `prettify_dspmqver` : flatten dspmqver JSON into a multi-line block | in: response bytes | out: text with `Name / Version / Architecture / Installation Path`
+
+  3.7 `is_modification_command` : refuse `ALTER / DEFINE / DELETE / CLEAR / MOVE / SET / RESET / START / STOP / PURGE / REFRESH / RESOLVE / ARCHIVE / BACKUP` | in: `mqsc_command` | out: `bool` (when True, the composite returns `MODIFY_BLOCKED_MSG` instead of running it)
+
+  3.8 `run_mqsc_raw` : only when both `mqsc_command` and `qmgr_name` are supplied AND the verb is read-only — same as 1.5
+
+  3.9 `friendly_error` : sanitise any upstream exception so the user never sees raw text | in: `Exception`, optional `hostname` | out: `⚠️ <hint> (ref <id>)` text
+
+### 4. `ace_node_overview` : node overview (node status + integration servers in one envelope)
+
+  4.1 `fetch_ace` (called twice concurrently via `asyncio.gather`) : call ACE Admin REST and wrap the result in a JSON envelope | in: `target_node`, `path`, `component`, **kwargs | out: JSON string `{status, component, runtime_state, raw_response}` on success, or `{status:"error", message, details}` on failure
+   - call A — `path=""` → node-level properties + version
+   - call B — `path="/servers?depth=2"` → integration-server list with `name`, `active`, `properties`
+
+  Internals that `fetch_ace` itself triggers (for traceability):
+   - `get_node_endpoint` : resolve node → `(host, port)` from `node_config.csv` | in: `node` | out: `(host: str, port: int)` (raises `ValueError` if unknown — caught and wrapped)
+   - `hostname_allowed` (ACE) : ACE-specific allow-list (`ACE_ALLOWED_HOSTNAME_PREFIXES`) | in: `hostname` | out: `(bool, blocked_message)`
+   - `record_endpoint` : append URL to the audit-log record | in: `url` | out: side-effect, no return
+   - `safe_error_message` : on any caught exception | in: `Exception`, optional `hint`, optional `extra` | out: `⚠️ ... (ref ...)` text
+
+### 5. `ace_server_explore` : explore one integration server (applications + message flows)
+
+  5.1 `fetch_ace` (called twice concurrently via `asyncio.gather`) — same shape as 4.1
+   - call A — `path="/servers/{server}/applications?depth=2"` → apps with `name`, `active`, `properties`, `descriptiveProperties`
+   - call B — either `path="/servers/{server}/applications/{app}/messageflows?depth=2"` (when `application` arg supplied) or `path="/servers/{server}/messageflows?depth=2"` (server-direct flows)
+
+### 6. `ace_search` : combined OFFLINE search across configured nodes + BIP dump (no upstream HTTP)
+
+  6.1 `load_node_config` : cached read of `resources/node_config.csv` (loads on first call, then returns the cached DataFrame) | in: none | out: pandas DataFrame with columns `node, host, nodeport`
+
+  6.2 `load_node_dump` : cached read of `resources/node_dump.csv` (used here as an "empty / missing" check before searching) | in: none | out: pandas DataFrame
+
+  6.3 `search_node_dump` : case-insensitive substring search across all string columns of `node_dump.csv` | in: `search_string` | out: `list[{timestamp, host, node, status}]`
+
+### 7. `get_cert_details` : OFFLINE certificate inventory lookup (no upstream HTTP)
+
+  7.1 `load_cert_dump` : cached read of `resources/cert_dump.csv` (used as an "empty / missing" check before searching) | in: none | out: pandas DataFrame with columns `hostname, alias, cn_name, valid_from, valid_until, expirydays`
+
+  7.2 `search_certs` : case-insensitive substring search across all columns of `cert_dump.csv`; recomputes `expirydays` live from `valid_until` | in: `search_string` | out: `list[{hostname, alias, cn_name, valid_from, valid_until, expirydays}]`
+
+  7.3 `nodes_on_host` (from `ace_helpers`) : distinct ACE node names on a hostname (exact match against `node_dump.csv`), used to add `ace_nodes` to each cert result | in: `hostname` | out: `list[str]`
+
+---
+
+## Layout
+
+```
+mqacemcpserver/
+├── mqacemcpserver.py           # Entry point (stdio / SSE / Basic Auth / TLS / healthz)
+├── server/
+│   ├── composite_tools.py     # The 6 composite tools + get_cert_details (the only new code in this build)
+│   ├── config.py              # env loader, with RESOURCES_DIR override pointing at ../resources/
+│   ├── mq_helpers.py          # MQ REST client, qmgr_dump.csv reader, MQSC prettifiers
+│   ├── ace_helpers.py         # ACE Admin REST client, node CSVs, fetch_ace
+│   ├── cert_helpers.py        # cert_dump.csv reader + substring search + live expiry-days
+│   ├── csv_cache.py           # mtime-based auto-reload cache for all CSV manifests (+ /healthz freshness)
+│   ├── safety.py              # hostname allow-list + modification-MQSC guard
+│   ├── errors.py              # safe_error_message — sanitises every upstream exception
+│   ├── query_log.py           # @logged_tool decorator + per-call JSONL audit log
+│   ├── logger.py              # rotating app log
+│   └── auth.py                # SSE Basic Auth middleware
+├── clients/
+│   └── smoke_test.py          # 37-case live SSE smoke client (see Testing → Online smoke)
+├── prompts/
+│   └── composite_system.md    # Reference system prompt ({scope_block}/{tool_catalog} placeholders) — see "System prompt"
+├── tests/
+│   ├── conftest.py            # Sets temp LOG_DIR before importing server.*
+│   ├── test_composite_tools.py # 25 offline tests
+│   └── test_csv_cache.py      # 4 tests — manifest auto-reload + freshness
+├── requirements.txt           # Same as root: mcp, httpx, pandas, python-dotenv, uvicorn
+├── .env.example               # Template; LOG_DIR=logs-single, MCP_PORT=8010
+└── README.md
+```
+
+## System prompt (`prompts/composite_system.md`)
+
+`composite_system.md` is a **reference** system prompt for whatever orchestrator
+drives this server's tools. **The MCP server itself never reads it** — this build
+is a pure tool server with no LLM. It is provided so a host can adopt the same
+routing/rendering guidance the tools were designed for.
+
+It carries two substitution placeholders (the same contract the bundled chatbot
+uses — see `backend/agent.py`):
+
+| Placeholder | Replaced with |
+| --- | --- |
+| `{scope_block}` | A domain-guardrail block when `BOT_DOMAIN` is set (the assistant refuses out-of-scope questions and points to a support team); an **empty string** when `BOT_DOMAIN` is unset. It's the on/off switch for the scope guardrail, keeping the refusal wording centralised in the host rather than hard-coded in the prompt. |
+| `{tool_catalog}` | The bullet list of currently exposed tools, generated from the live catalogue. |
+
+Contract notes:
+- A consumer must perform the substitution before sending the prompt to the LLM.
+  The chatbot's loader (`agent.py`) **validates both placeholders are present and
+  skips any prompt file missing them**, so keep both if you point a host at this
+  file via `SYSTEM_PROMPT_FILE`.
+- If your orchestrator feeds the markdown to the model **without** substitution,
+  the literal `{scope_block}` would leak into the prompt — delete that line or
+  replace it with your own static scope instructions.
+
+## Quickstart (Windows / PowerShell)
 
 ```powershell
-# from the project root: C:\Workspace\hready\mqacemcp
+cd C:\Workspace\hready\mqacemcp\mqacemcpserver
+
+# venv + deps (same versions as root)
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r mqacemcpserver\requirements.txt
-copy .env.example .env
-# then edit .env with real MQ / ACE credentials and allow-list prefixes
-```
+pip install -r requirements.txt
 
-Drop the inventory CSVs into `resources/`:
+# Configure
+Copy-Item .env.example .env
+# edit .env to set MQ_URL_BASE / MQ_USER_NAME / MQ_PASSWORD, and
+# (for SSE) MCP_AUTH_USER / MCP_AUTH_PASSWORD
 
-| File | Purpose | Format |
-| --- | --- | --- |
-| `resources/qmgr_dump.csv` | MQ object manifest | header row: `extractedat\|hostname\|qmname\|objecttype\|objectdef` |
-| `resources/node_config.csv` | ACE node → host:port mapping | header row: `node\|host\|nodeport` |
-| `resources/node_dump.csv` | ACE offline status dump | no header: `timestamp\|host\|node\|status` |
+# Run (stdio, default)
+.venv\Scripts\python.exe mqacemcpserver.py
 
-Sample versions of all three are checked into `resources/` so the server runs
-out of the box for testing. Replace them with the real production extracts in a
-real deployment.
-
-## Connect a client
-
-See **[docs/CONNECTING.md](../docs/CONNECTING.md)** for copy-paste configs for
-Claude Desktop, Claude Code (CLI + VS Code extension), VS Code GitHub Copilot
-agent mode, Cursor, the MCP Inspector, and the Python MCP SDK — plus a
-troubleshooting matrix.
-
-## Web chat UI (optional)
-
-A standalone, MCP-server-agnostic chat UI lives in
-**[backend/](../backend/README.md)** + **[frontend/](../frontend/README.md)**.
-It pairs a FastAPI + LangGraph backend (OpenAI) with a Streamlit frontend in
-`frontend/` (`app.py`, :8501). Features include: session memory, structured
-rendering (tables / Mermaid / code blocks), a configurable scope guardrail
-(`BOT_DOMAIN`), an externalised system prompt (`prompts/system.md`), and a tool
-allow/deny list — all driven from `backend/.env`. The MCP server itself is
-untouched; the chatbot talks to it over SSE like any other MCP client.
-
-Launch the whole stack (MCP server + chat backend + UI) with:
-
-```powershell
-.\scripts\start-all.ps1
-```
-
-If you need to explain *why* the chatbot qualifies as agentic AI (vs. "a
-chat box wrapping APIs"), point readers at
-**[backend/AGENTIC_AI.md](../backend/AGENTIC_AI.md)** — a single doc that maps
-the canonical agentic-AI components to specific files here. Curated demo
-prompts live in **[backend/SAMPLE_QUESTIONS.md](../backend/SAMPLE_QUESTIONS.md)**.
-
-## Run
-
-**stdio (local/dev, default):**
-```powershell
-.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
-```
-
-**SSE (HTTP endpoint for the central team):**
-```powershell
+# Run (SSE on :8010, with /healthz at /healthz)
 $env:MCP_TRANSPORT = "sse"
-$env:MCP_AUTH_USER = "..."
-$env:MCP_AUTH_PASSWORD = "..."
-.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
-# endpoint: http://<MCP_HOST>:<MCP_PORT>/sse
+.venv\Scripts\python.exe mqacemcpserver.py
+
+# Smoke check — must print exactly 7 tool names
+.venv\Scripts\python.exe -c "import mqacemcpserver as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
+
+# Live smoke test (37 cases via SSE) — see "Testing → Online smoke" below
+.venv\Scripts\python.exe clients\smoke_test.py
 ```
 
-**SSE over HTTPS:** set `MCP_TLS_CERT` and `MCP_TLS_KEY` (both required) to
-PEM-encoded files; the endpoint is then served at
-`https://<MCP_HOST>:<MCP_PORT>/sse`. Use an unencrypted PEM key. Quick
-self-signed cert for dev:
+## Testing
+
+The test suite is **fully offline** — no live MQ or ACE infrastructure is
+required. Tests run against the shared CSV manifests under `../resources/`
+and verify catalogue stability, allow-list enforcement, read-only enforcement,
+and graceful error envelopes for the unreachable-upstream branches.
+
+`pytest` and `pytest-asyncio` are dev-only dependencies and are NOT in
+`requirements.txt`. Install them once in the venv you use to run the server:
+
 ```powershell
-openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 -subj "/CN=localhost"
+cd C:\Workspace\hready\mqacemcp\mqacemcpserver
+.venv\Scripts\python.exe -m pip install pytest pytest-asyncio
 ```
 
-The same env vars can live in `.env` instead of being exported.
+### Run the full suite
 
-## Environment variables
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+# Expected: 21 passed in ~3s
+```
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `MCP_TRANSPORT` | `stdio` | `stdio` or `sse` |
-| `MCP_HOST` | `0.0.0.0` | Bind address (SSE) |
-| `MCP_PORT` | `8000` | Bind port (SSE) |
-| `MCP_AUTH_USER` / `MCP_AUTH_PASSWORD` | — | Optional HTTP Basic Auth on the SSE endpoint. Both must be set to enable. |
-| `MCP_TLS_CERT` / `MCP_TLS_KEY` | — | PEM cert + key paths for HTTPS on the SSE endpoint. Both must be set to enable. |
-| `MQACE_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `LOG_DIR` | `./logs` | Directory for application + query logs |
-| `LOG_RETENTION_DAYS` | `30` | Old date-stamped log files are pruned at startup |
-| `QUERY_LOG_ENABLED` | `true` | Toggle the per-call JSONL query log |
-| `MQ_URL_BASE` | — | Base URL of an MQ web (mqweb) server. Trailing slash required. |
-| `MQ_USER_NAME` / `MQ_PASSWORD` | — | MQ REST API credentials |
-| `MQ_ALLOWED_HOSTNAME_PREFIXES` | `lod,loq,lot` | Comma-separated prefixes the MQ tools may talk to |
-| `MQ_SUPPORT_TEAM` | `MQ Infra Support` | Display name in the "modification blocked" message |
-| `MQ_ADMIN_GROUP` | `MQACE_ADMIN` | ServiceNow group in the same message |
-| `ACE_USER_NAME` / `ACE_PASSWORD` | — | ACE Admin REST API credentials (optional) |
-| `ACE_ALLOWED_HOSTNAME_PREFIXES` | `lod,loq,lot` | Comma-separated prefixes the ACE tools may talk to |
+### Useful pytest invocations
 
-## Security model
+```powershell
+# Verbose — one line per test with PASS/FAIL
+.venv\Scripts\python.exe -m pytest -v
 
-- **Read-only MQSC.** Modification verbs (`ALTER`, `DEFINE`, `DELETE`, `CLEAR`,
-  `MOVE`, `SET`, `RESET`, `START`, `STOP`, `PURGE`, `REFRESH`, `RESOLVE`,
-  `ARCHIVE`, `BACKUP`) are blocked at the tool layer; the user is redirected to
-  `MQ_SUPPORT_TEAM` / `MQ_ADMIN_GROUP`.
-- **Read-only ACE.** Every ACE tool issues only HTTP `GET` against the Admin
-  REST API. There is no deploy / start / stop tool.
-- **Hostname allow-list (both halves).** Every outbound call resolves a target
-  hostname, then checks the relevant `*_ALLOWED_HOSTNAME_PREFIXES`. Anything
-  outside the list returns a friendly "restricted" message instead of being
-  contacted. Tune the prefixes per environment (the defaults exclude
-  production by convention).
-- **Optional Basic Auth on SSE.** Only enabled when both `MCP_AUTH_USER` and
-  `MCP_AUTH_PASSWORD` are set; otherwise the SSE endpoint is unauthenticated
-  and a `WARNING` is logged at startup.
-- **User-facing errors are sanitized.** When a remote system fails, the user
-  sees a single short sentence ending in `(ref <id>)`. The full traceback,
-  response body, URL, and host are written only to `logs/app-YYYY-MM-DD.log`
-  tagged with the same `request_id` that appears in `queries-*.jsonl`, so
-  support can correlate. No raw exception text or upstream response body
-  reaches the user.
+# Single file
+.venv\Scripts\python.exe -m pytest tests\test_composite_tools.py -q
 
-## Tools
+# Filter by test name (substring match on the function name)
+.venv\Scripts\python.exe -m pytest -k "allow_list" -v
+.venv\Scripts\python.exe -m pytest -k "ace_search" -v
+.venv\Scripts\python.exe -m pytest -k "modification" -v
 
-### IBM MQ (7 tools, all read-only)
+# Stop on first failure, show full traceback
+.venv\Scripts\python.exe -m pytest -x --tb=long
 
-| Name | What it does |
+# Show stdout / log output (useful when a test prints diagnostics)
+.venv\Scripts\python.exe -m pytest -s
+```
+
+### What the 25 tests cover
+
+| # | Group | Test | What it asserts |
+| --- | --- | --- | --- |
+| 1 | catalogue | `test_exactly_seven_tools_registered` | tool set == exactly the 7 tools (no missing, no extras) |
+| 2 | catalogue | `test_mq_tool_docstrings_open_with_routing_prefix` | every MQ tool's docstring starts with `IBM MQ:` |
+| 3 | catalogue | `test_ace_tool_docstrings_open_with_routing_prefix` | every ACE tool's docstring starts with `IBM ACE:` |
+| 4 | catalogue | `test_cert_tool_docstring_opens_with_routing_prefix` | `get_cert_details` docstring starts with `Certificate:` |
+| 5 | mq_queue_inspect | `test_mq_queue_inspect_not_in_manifest` | unknown queue → "not found in the manifest" hint |
+| 6 | mq_queue_inspect | `test_mq_queue_inspect_restricted_only` | manifest hit on a restricted host → "restricted" message |
+| 7 | mq_queue_inspect | `test_mq_queue_inspect_fast_path_rejects_disallowed_host` | FAST PATH + `hostname="evil-host"` → allow-list reject |
+| 8 | mq_channel_inspect | `test_mq_channel_inspect_not_in_manifest` | unknown channel → not-found hint |
+| 9 | mq_channel_inspect | `test_mq_channel_inspect_fast_path_rejects_disallowed_host` | FAST PATH + bad host → allow-list reject |
+| 10 | mq_host_overview | `test_mq_host_overview_blocks_modification_mqsc` | `mqsc_command="DEFINE QLOCAL(X)"` → `MODIFY_BLOCKED_MSG` |
+| 11 | mq_host_overview | `test_mq_host_overview_rejects_disallowed_host` | `hostname="evil-host"` → allow-list reject before HTTP |
+| 12 | mq_host_overview | `test_mq_host_overview_warns_when_mqsc_without_qmgr` | `mqsc_command` without `qmgr_name` → warning, not executed |
+| 13 | ace_search | `test_ace_search_rejects_unknown_scope` | `scope="bogus"` → error envelope |
+| 14 | ace_search | `test_ace_search_nodes_scope_lists_configured_nodes` | `scope="nodes"` returns rows from `node_config.csv` |
+| 15 | ace_search | `test_ace_search_dump_scope_filters_by_substring` | `scope="dump"` matches genuinely contain the substring |
+| 16 | ace_search | `test_ace_search_default_scope_returns_both_sections` | no scope ⇒ both `nodes` and `dump_matches` present |
+| 17 | ace_node_overview | `test_ace_node_overview_unknown_node` | unknown node → graceful envelope (no exception) |
+| 18 | ace_server_explore | `test_ace_server_explore_unknown_node` | unknown node → graceful envelope (no exception) |
+| 19 | get_cert_details | `test_get_cert_details_no_match_returns_empty_results` | no-match → success envelope with empty `results` |
+| 20 | get_cert_details | `test_get_cert_details_match_returns_expected_fields` | match returns all six cert fields |
+| 21 | get_cert_details | `test_get_cert_details_searches_all_fields` | alias-only substring still matches (all-column search) |
+| 22 | ace_search | `test_ace_search_dump_pivots_cert_host_to_node` | a cert hostname (`lodace01.example.com`) resolves to its node (`NODE01`) via the aligned `node_dump.csv` |
+| 23 | get_cert_details | `test_get_cert_details_exposes_expirydays` | every match carries an integer-parseable `expirydays` (computed live) |
+| 24 | get_cert_details | `test_get_cert_details_includes_ace_nodes` | result includes `ace_nodes` — `["NODE01"]` for an ACE host, `[]` for a pure-MQ host |
+| 25 | mq_queue_inspect | `test_mq_queue_inspect_local_queue_displays_all_attributes` | a local-queue inspect issues `DISPLAY QLOCAL(<Q>) ALL` (full attribute set, not the old fixed subset) |
+
+### Test conventions
+
+- `tests/conftest.py` redirects `LOG_DIR` to a temp directory **before** the
+  `server.*` modules are imported (env vars must be set first — do not move
+  this fixture into the test module or import from `server.*` at the top of
+  `conftest.py`).
+- The shipped `resources/qmgr_dump.csv` ships with hostnames (`lopalhost`,
+  `lodalhost`) that are NOT in the default `lod,loq,lot` allow-list when
+  using `.env.example` defaults. Test #5 depends on that to exercise the
+  restricted-only branch; if you broaden the allow-list in `.env`, that test
+  becomes an attempted live call.
+- No tests make outbound HTTP — every assertion lands in the discovery,
+  validation, or sanitisation layer before any network call would happen.
+
+### Online smoke (clients/smoke_test.py)
+
+A separate live-deployment smoke client that opens an MCP SSE session,
+lists the catalogue, then drives **44 test cases** across the seven
+tools (including a multi-target case for every tool that takes a list).
+Unlike the offline pytest suite, this one requires the server to be running
+and (for `live` cases) the configured upstream MQ / ACE infrastructure to be
+reachable.
+
+**Prerequisites**
+- Server running on SSE — see [Quickstart](#quickstart-windows--powershell).
+- `mcp`, `httpx`, `python-dotenv` already in the venv (all in `requirements.txt`).
+- The same `.env` the server uses (the client reads it for `MCP_AUTH_USER`,
+  `MCP_AUTH_PASSWORD`, `MCP_HOST`, `MCP_PORT`, `MCP_TLS_CERT/KEY`).
+
+**Run it**
+
+```powershell
+cd C:\Workspace\hready\mqacemcp\mqacemcpserver
+.venv\Scripts\python.exe clients\smoke_test.py
+# Expected: pass=43  skip=1  fail=0  (skip = NODE4 unreachable, by design)
+```
+
+The exit code is `0` only when no case fails; live cases against an
+unreachable upstream count as `skip`, not `fail`.
+
+**Filtering and verbosity**
+
+Positional args select a category (`mq` / `ace` / `cert`) or a tool name
+substring; dash-prefixed args control how much of each tool's output is printed
+(default: first **12** lines, then a `... (N more lines)` marker):
+
+```powershell
+# Only the certificate tool, full untruncated output
+.venv\Scripts\python.exe clients\smoke_test.py cert --full
+
+# First 30 lines of each ACE-tool result
+.venv\Scripts\python.exe clients\smoke_test.py ace --lines=30
+```
+
+| Flag | Effect |
 | --- | --- |
-| `find_mq_object` | Search the manifest for an object name; returns the queue manager(s), host(s), and type. |
-| `dspmq` | List queue managers and their state on a given host (or the default mqweb). |
-| `dspmqver` | Display IBM MQ version / installation info on a host. |
-| `runmqsc` | Run a single read-only MQSC command against a known queue manager. |
-| `run_mqsc_for_object` | Auto-discover hosting QMs for an object and run an MQSC command on each. |
-| `get_queue_depth` | Get current depth across all hosting QMs; resolves alias queues to their target. |
-| `get_channel_status` | Get channel status across all hosting QMs. |
+| `--full` / `-f` | Print every line of each tool's output (no truncation). |
+| `--lines=N` | Print the first `N` lines of each output. |
+| _(none)_ | Default — first 12 lines per output. |
 
-### IBM ACE (6 tools, all read-only)
+**Output format**
 
-| Name | What it does |
+Each case prints its number, tool name, args, an output preview, and the
+classified outcome. The run ends with a column-aligned summary table:
+
+```
+  #   Tool                   Kind     Result  Mode                   Reason
+ ---  ---------------------- -------- ------  ---------------------- ------
+   1  mq_queue_inspect       online   pass    live
+   4  mq_queue_inspect       offline  pass    expect_not_found
+  11  mq_host_overview       online   pass    live
+  18  mq_host_overview       offline  pass    expect_blocked
+  22  ace_node_overview      online   skip    live                   upstream JSON status=error
+  ...
+```
+
+- **Kind** — `online` (the case expects to reach an upstream) or `offline`
+  (CSV reads or a safety rail that fires before any HTTP).
+- **Result** — `pass` / `skip` / `fail`.
+- **Mode** — the case's tag in `CALLS`. See "Mode reference" below.
+
+**Mode reference**
+
+| Mode | Pass condition |
 | --- | --- |
-| `list_ace_nodes` | List integration nodes from `node_config.csv`. |
-| `get_ace_node_status` | Real-time status of an integration node (properties, version, platform). |
-| `list_ace_servers` | List integration servers on a given node. |
-| `list_ace_applications` | List applications deployed on a given integration server. |
-| `list_ace_message_flows` | List message flows on a given integration server (optionally scoped to an application). |
-| `search_ace_local_dump` | Offline-triage search across `node_dump.csv` (BIP messages incl. flow / app / server state). |
+| `live` | output is not a sanitised `⚠️/❌/🚫` envelope; upstream-unreachable → `skip` |
+| `offline` | output is not an error envelope; CSV-backed cases |
+| `expect_not_found` | output starts with `❌` and contains "not found" |
+| `expect_blocked` | output contains the `MODIFY_BLOCKED_MSG` banner |
+| `expect_warn_no_qmgr` | output contains "without \`qmgr_name\`" |
+| `expect_error_envelope` | top-level `{"status":"error"}`, or `⚠️/❌` prefix, or any `*_error` key in the JSON envelope |
 
-### Certificates (1 tool, all read-only)
+**The 44 cases at a glance**
 
-| Name | What it does |
-| --- | --- |
-| `get_cert_details` | Offline lookup of TLS/SSL certificate details from `cert_dump.csv` (hostname, alias, cn_name, valid_from/valid_until, expirydays, ace_nodes). `valid_until` is the expiry date; `expirydays` is computed live (days until expiry, negative if expired); `ace_nodes` lists the ACE node(s) running on that host (empty for a pure-MQ host). Searches by hostname, alias, or CN. |
+| Tool | # cases | Online | Offline | Coverage |
+| --- | --- | --- | --- | --- |
+| `mq_queue_inspect` | 6 | 5 | 1 | discovery, FAST PATH, **multi-target (two queues, one call)**, alias resolution, remote-queue routing (QR.IN.APP2 → RQMNAME/RNAME/XMITQ), sanitised "not found" |
+| `mq_channel_inspect` | 4 | 3 | 1 | discovery, FAST PATH, **multi-target (two channels, one call)**, sanitised "not found" |
+| `mq_host_overview` | 14 | 12 | 2 | default URL, manifest-resolved host, **multi-target (two QMs, one call)**, `DISPLAY QMGR ALL`, full queue properties, max depth + thresholds, queue creation date (`CRDATE CRTIME`), focused QMGR properties, topics, topic status, subscriptions, subscription status, `MODIFY_BLOCKED_MSG` over the wire, "without `qmgr_name`" warning |
+| `ace_node_overview` | 5 | 4 | 1 | NODE2 live, **multi-target (two nodes, one call)**, NODE3 (empty servers edge), NODE4 (unreachable → skip), ghost-node graceful envelope |
+| `ace_server_explore` | 6 | 5 | 1 | NODE2/IS001, **multi-target (IS001+IS002, one call)**, NODE2/IS002, NODE2/snaps, NODE2/IS001/snaplogic1 (scoped), ghost-server graceful envelope |
+| `ace_search` | 5 | 0 | 5 | nodes scope, dump scope, **multi-target (match either, one call)**, default `all` scope, invalid scope (`ace_search` is by design CSV-only — no live path) |
+| `get_cert_details` | 4 | 0 | 4 | match by hostname, match by alias, **multi-target (two queries merged, one call)**, no-match empty-results (CSV-only — no live path) |
+| **Total** | **44** | **29** | **15** | |
 
-For a detailed per-tool walkthrough — inputs, resolution chain,
-fallback behaviour, recorded endpoints — see
-**[docs/TOOLS.md](../docs/TOOLS.md)**.
+**Adding or editing cases**
 
-## How the orchestrator routes
+Cases live in the `CALLS` list at the top of `clients/smoke_test.py`,
+grouped by tool with `# --- toolname ---` section comments. Each entry is
+`(tool_name, args_dict, mode_tag)`. To add an expectation that no existing
+mode covers, add a branch to `classify()` further down the same file.
 
-The orchestrator's LLM sees all 14 tools. Every MQ docstring starts with
-`IBM MQ:`, every ACE docstring with `IBM ACE:`, and the certificate docstring
-with `Certificate:`. Tool names also encode the
-product (`dspmq`, `runmqsc`, `list_ace_nodes`, `get_cert_details`, etc.). When a user asks
-*"what queues are on QM1"* the LLM picks an MQ tool; when they ask
-*"what integration servers are on NODE01"* it picks an ACE tool. No dispatcher
-inside the server.
+## Manifests are shared
 
-## Health check
+CSV manifests (`qmgr_dump.csv`, `node_dump.csv`, `node_config.csv`,
+`cert_dump.csv`) are read from the shared `../resources/` by default. If your
+deployment puts them elsewhere, set `RESOURCES_DIR` (or the individual
+`MQ_QMGR_DUMP_PATH` / `ACE_NODE_*_PATH` / `CERT_DUMP_PATH`) in `.env`.
 
-The SSE app exposes an unauthenticated `GET /healthz` for ops monitors and
-load balancers. It bypasses `BasicAuthMiddleware`, so liveness probes work
-even when the rest of the endpoint is gated.
+### Auto-reload (no restart)
 
-```
-$ curl http://<MCP_HOST>:<MCP_PORT>/healthz
-{"status":"ok","service":"mqacemcpserver","transport":"sse","mq_configured":true,"ace_configured":true,
- "manifests":[{"name":"Certificate inventory","file":"cert_dump.csv","exists":true,"rows":10,
-               "file_mtime":"2026-06-08T18:07:07","loaded_at":"2026-06-08T20:32:10","stale":false}, ...]}
-```
+The manifests are replaced by a daily extract job. Each loader goes through
+`server/csv_cache.py:CsvCache`, which checks the file's `(mtime, size)` on every
+access and **reloads only when it changed** — so the daily swap is reflected on
+the next tool call **without restarting the server** (one `os.stat` per access;
+re-parsed only when the file actually changes). A read that lands mid-write keeps
+serving the previously-loaded data and retries next call. `GET /healthz` exposes
+per-manifest freshness under `"manifests"` (`rows`, `file_mtime`, `loaded_at`,
+`stale`).
 
-The `mq_configured` / `ace_configured` flags reflect whether the relevant
-env vars and CSVs are present — they do **not** ping the upstream MQ/ACE
-hosts (use the per-call query log for upstream observability).
+> **Ops note:** have the extract job write a temp file and **atomically rename**
+> it into place (e.g. `os.replace`) so readers never see a half-written CSV.
 
-The `manifests` array reports each offline CSV's freshness: `rows` currently in
-memory, `file_mtime` (on disk), `loaded_at` (when it was last read into memory),
-and `stale` (the file changed on disk and a reload is pending on next access).
-`rows`/`loaded_at` are `null` until a tool first reads that manifest.
+## Logs
 
-## Data freshness (auto-reload, no restart)
-
-The four CSV manifests are replaced by a daily extract job. Each loader
-(`load_csv`, `load_node_dump`, `load_node_config`, `load_cert_dump`) goes
-through `server/csv_cache.py:CsvCache`, which checks the file's `(mtime, size)`
-on every access and **reloads only when it changed** — so a daily swap is picked
-up on the next tool call **with no restart**, at the cost of one `os.stat` per
-call (the CSV is re-parsed only when it actually changes). If a read lands while
-the file is mid-write (loader fails), the cache keeps serving the
-previously-loaded data and retries on the next call rather than flapping to empty.
-
-> **Ops note:** have the extract job write to a temp file and **atomically rename**
-> it into place (e.g. `os.replace`), so a reader never sees a half-written CSV.
-
-## Tests
-
-A small offline pytest suite covers the safety primitives, query-log
-decorator, error sanitiser, and the `runmqsc` allow-list path:
-
-Run from **inside** `mqacemcpserver/` (both this build and
-`mqacemcpserver-single/` ship a top-level `server` package, so a repo-root
-pytest run would collide on the import name):
-
-```powershell
-cd mqacemcpserver
-..\.venv\Scripts\python.exe -m pip install pytest pytest-asyncio
-..\.venv\Scripts\python.exe -m pytest -q
-```
-
-Tests redirect `LOG_DIR` to a temp directory via `tests/conftest.py` so they
-never pollute the project's `logs/` folder.
-
-## Logging
-
-The server writes two file-based logs into `LOG_DIR` (default `./logs/`),
-both rotated daily and pruned after `LOG_RETENTION_DAYS` days.
-
-### Application log — `logs/app-YYYY-MM-DD.log`
-Plain text. Mirrors stderr. Captures startup events, the MCP endpoint URL
-(when SSE), env-var warnings, connectivity check results, and per-call
-warnings/errors. Format:
-```
-2026-05-09 12:34:56,789 INFO [mqacemcpserver] MCP SSE endpoint: http://0.0.0.0:8000/sse
-```
-
-### Per-call query log — `logs/queries-YYYY-MM-DD.jsonl`
-One JSON object per line, written on every MCP tool invocation. Designed for
-direct ingestion into Power BI's "From Folder" connector. Schema:
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `ts` | string | ISO 8601 UTC, millisecond precision (e.g. `2026-05-09T12:34:56.789Z`) |
-| `request_id` | string | UUID hex; correlate with the application log |
-| `transport` | string | `stdio` or `sse` |
-| `caller` | string \| null | SSE Basic Auth username when set; `null` otherwise |
-| `tool` | string | Tool name (`dspmq`, `runmqsc`, `list_ace_servers`, …) |
-| `args` | object | Sanitized kwargs. Keys containing `password`/`secret`/`token`/`auth`/`pwd`/`key`/`credential` are replaced with `"[REDACTED]"` |
-| `endpoints` | string[] | Ordered list of remote URLs the tool actually hit (MQ REST or ACE Admin URLs). Empty for local-only tools (`find_mq_object`, `search_ace_local_dump`, `list_ace_nodes`, `get_cert_details`) and for calls short-circuited by the allow-list |
-| `outcome` | string | `success` or `error` |
-| `error` | string \| null | `TypeName: message` on failure |
-| `latency_ms` | int | End-to-end wall time |
-| `response_bytes` | int \| null | Length of the string return value |
-
-Example line:
-```json
-{"ts":"2026-05-09T12:34:56.789Z","request_id":"7f3a…","transport":"sse","caller":"alice","tool":"runmqsc","args":{"qmgr_name":"MQQMGR1","mqsc_command":"DISPLAY QMGR ALL"},"endpoints":["https://lodalhost:9443/ibmmq/rest/v2/admin/action/qmgr/MQQMGR1/mqsc"],"outcome":"success","error":null,"latency_ms":142,"response_bytes":8421}
-```
-
-Disable with `QUERY_LOG_ENABLED=false` in `.env` (the application log is
-always written).
-
-### Power BI ingestion
-
-1. Power BI Desktop → **Get Data → More → File → Folder** → select
-   `<project>\logs`.
-2. Filter the file list to `queries-*.jsonl`; **Combine & Transform**.
-3. In Power Query, **Transform → Parse JSON** on the combined column.
-4. Expand `args`, `endpoints` (use *Expand to New Rows* for per-endpoint
-   metrics), and the rest of the fields.
-5. Suggested DAX measures:
-   - Calls per tool: `COUNTROWS(Queries)` grouped by `tool`
-   - Error rate: `DIVIDE(COUNTROWS(FILTER(Queries, [outcome]="error")), COUNTROWS(Queries))`
-   - p95 latency by tool: `PERCENTILEX.INC(Queries, [latency_ms], 0.95)`
-   - Top endpoints by hits: count after expanding `endpoints`
-   - Calls per caller: requires SSE Basic Auth to be enabled
-
-The same "From Folder" flow on `app-*.log` (treat as text, filter
-`Contains("ERROR")` or `Contains("WARNING")`) gives an operational health
-dashboard.
-
-## Project layout
-
-```
-mqacemcp/                    # repo root
-├── mqacemcpserver/          # THIS build — unified MQ + ACE MCP server
-│   ├── mqacemcpserver.py    #   entry point
-│   ├── server/
-│   │   ├── config.py        #   .env loading, typed settings, standalone/mono-repo detection
-│   │   ├── logger.py        #   stdlib logging factory + daily-rotated file handler
-│   │   ├── query_log.py     #   per-call JSONL query log + logged_tool decorator
-│   │   ├── errors.py        #   user-safe error sanitiser (ref-tagged messages)
-│   │   ├── auth.py          #   Basic Auth ASGI middleware (SSE) + caller capture + /healthz bypass
-│   │   ├── safety.py        #   hostname allow-list + read-only MQSC guard
-│   │   ├── mq_helpers.py    #   MQ HTTP client, manifest, formatters, errors
-│   │   ├── mq_tools.py      #   @mcp.tool wrappers for MQ
-│   │   ├── ace_helpers.py   #   ACE HTTP client, node config / dump, REST helper
-│   │   ├── ace_tools.py     #   @mcp.tool wrappers for ACE
-│   │   └── cert_tools.py    #   @mcp.tool wrapper for certificate lookups
-│   ├── tests/               #   offline pytest suite
-│   ├── clients/             #   manual HTTPS smoke client
-│   └── requirements.txt
-├── mqacemcpserver-single/   # second build: one composite tool (own server/, tests/, requirements.txt)
-├── backend/                 # chatbot stack — FastAPI + LangGraph agent (:8001). See backend/README.md.
-├── frontend/                # chatbot stack — Streamlit UI (:8501). See frontend/README.md.
-├── scripts/                 # start-all.ps1 / stop-all.ps1 / start-streamlit.ps1 / gen_basic_auth.py
-├── resources/               # shared CSV manifests (qmgr_dump, node_config, node_dump, cert_dump)
-├── docs/                    # overview / supplementary docs: CONNECTING.md, TOOLS.md, deck (.pptx)
-├── logs/                    # app-*.log + queries-*.jsonl (runtime, gitignored; LOG_DIR can redirect)
-├── .venv/                   # shared dev venv for the main build (gitignored)
-├── .env / .env.example      # shared config (root)
-├── render.yaml              # Render blueprint for backend + frontend
-├── CLAUDE.md                # repo-specific guidance for Claude Code
-└── README.md                # repo overview / component index
-```
-
-## Verification
-
-After install (run from inside `mqacemcpserver/`):
-
-```powershell
-cd mqacemcpserver
-..\.venv\Scripts\python.exe -c "import mqacemcpserver; print(sorted([t.name for t in mqacemcpserver.mcp._tool_manager._tools.values()]))"
-```
-
-Should print:
-```
-['dspmq', 'dspmqver', 'find_mq_object', 'get_ace_node_status', 'get_cert_details',
- 'get_channel_status', 'get_queue_depth', 'list_ace_applications', 'list_ace_message_flows',
- 'list_ace_nodes', 'list_ace_servers', 'run_mqsc_for_object', 'runmqsc', 'search_ace_local_dump']
-```
-
-Inspect interactively with the MCP Inspector (no network needed for offline tools):
-```powershell
-npx @modelcontextprotocol/inspector .venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
-```
+Application logs and the per-call query log default to this build's own `logs/`
+directory so Power BI ingests them as their own dataset. Override with `LOG_DIR`
+in `.env`.

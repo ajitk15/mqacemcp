@@ -1118,9 +1118,9 @@ def _comparison_empty_html(reason: str, cmd: str) -> str:
         '<h1 class="text-2xl font-extrabold text-white">MCP Build Performance Comparison</h1>'
         f'<p class="text-slate-400 mt-3 text-sm">{reason}</p>'
         '<p class="text-slate-400 mt-4 text-sm">Generate the comparison by running the benchmark '
-        '(both MCP builds + the chat backend must be up):</p>'
+        '(the MCP server(s) under test + the chat backend must be up):</p>'
         f'<pre class="glass rounded-xl p-4 mt-3 text-xs text-emerald-300 overflow-x-auto">{escape(cmd)}</pre>'
-        '<p class="text-slate-500 mt-3 text-xs">It sends the same questions to each build, writes the '
+        '<p class="text-slate-500 mt-3 text-xs">It sends the same questions to each server, writes the '
         'results JSON, and restores the default server. Reload this tab when it finishes.</p>'
         '</body></html>'
     )

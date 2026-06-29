@@ -14,17 +14,14 @@ from server.config import (
     ACE_PASSWORD,
     ACE_USER_NAME,
 )
-from server.csv_cache import CsvCache
 from server.errors import safe_error_message
+from server.csv_cache import CsvCache
 from server.logger import get_logger
 from server.query_log import record_endpoint
 from server.safety import is_hostname_allowed
 
 logger = get_logger("mqacemcpserver.ace")
 
-# ---------------------------------------------------------------------------
-# Shared HTTP client
-# ---------------------------------------------------------------------------
 _HTTP_CLIENT: httpx.AsyncClient | None = None
 
 
@@ -45,9 +42,6 @@ async def aclose_http_client() -> None:
         await _HTTP_CLIENT.aclose()
 
 
-# ---------------------------------------------------------------------------
-# node_dump.csv (offline inventory) — auto-reloads when the file changes
-# ---------------------------------------------------------------------------
 def _load_node_dump_from_disk() -> pd.DataFrame | None:
     if not ACE_NODE_DUMP_PATH.exists():
         logger.warning("ACE node dump not found at %s", ACE_NODE_DUMP_PATH)
@@ -91,9 +85,6 @@ def load_node_dump() -> pd.DataFrame:
     return _node_dump_cache.get()
 
 
-# ---------------------------------------------------------------------------
-# node_config.csv (node → host:port mapping) — auto-reloads when file changes
-# ---------------------------------------------------------------------------
 def _load_node_config_from_disk() -> pd.DataFrame | None:
     if not ACE_NODE_CONFIG_PATH.exists():
         logger.warning("ACE node config not found at %s", ACE_NODE_CONFIG_PATH)
@@ -151,9 +142,6 @@ def hostname_allowed(hostname: str) -> tuple[bool, str]:
     return is_hostname_allowed(hostname, ACE_ALLOWED_HOSTNAME_PREFIXES)
 
 
-# ---------------------------------------------------------------------------
-# REST helper for the ACE Admin API
-# ---------------------------------------------------------------------------
 def _err_envelope(message: str, **details) -> str:
     return json.dumps(
         {"status": "error", "message": message, "details": details}, indent=2
@@ -171,7 +159,6 @@ async def fetch_ace(
     try:
         host, port = get_node_endpoint(target_node)
     except ValueError as e:
-        # Curated "node not configured" message — safe to surface as-is.
         logger.warning("Unknown ACE node %s: %s", target_node, e)
         return _err_envelope(str(e), node=target_node)
 
@@ -219,9 +206,6 @@ async def fetch_ace(
         return _err_envelope(msg, node=target_node)
 
 
-# ---------------------------------------------------------------------------
-# Local-dump search — for the offline node_dump.csv
-# ---------------------------------------------------------------------------
 def search_node_dump(search_string: str) -> list[dict]:
     """Search node_dump.csv across all string columns and return matching rows."""
     df = load_node_dump()
@@ -273,9 +257,6 @@ def nodes_on_host(hostname: str) -> list[str]:
     )
 
 
-# ---------------------------------------------------------------------------
-# Startup connectivity check
-# ---------------------------------------------------------------------------
 async def verify_connectivity() -> None:
     """Ping every configured ACE node once at startup; log result. Never raises."""
     df = load_node_config()

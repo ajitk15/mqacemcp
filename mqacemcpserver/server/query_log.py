@@ -35,9 +35,6 @@ from server.logger import get_logger
 
 logger = get_logger("mqacemcpserver.query")
 
-# ---------------------------------------------------------------------------
-# Sensitive-arg redaction
-# ---------------------------------------------------------------------------
 _SECRET_HINTS = ("password", "secret", "token", "auth", "pwd", "key", "credential")
 
 
@@ -61,9 +58,6 @@ def sanitize_args(kwargs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Context vars — propagated across async/sync boundaries within a single call
-# ---------------------------------------------------------------------------
 _current_query: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "current_query", default=None
 )
@@ -88,9 +82,6 @@ def reset_current_caller(token: contextvars.Token) -> None:
     _current_caller.reset(token)
 
 
-# ---------------------------------------------------------------------------
-# JSONL writer (singleton)
-# ---------------------------------------------------------------------------
 class _QueryLog:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -148,9 +139,6 @@ def close() -> None:
     _QUERY_LOG.close()
 
 
-# ---------------------------------------------------------------------------
-# logged_tool decorator — works for both sync and async tool functions
-# ---------------------------------------------------------------------------
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
         "+00:00", "Z"

@@ -25,9 +25,6 @@ from server.query_log import _current_query
 logger = get_logger("mqacemcpserver.errors")
 
 
-# ---------------------------------------------------------------------------
-# Status-code / exception → curated hint mapping
-# ---------------------------------------------------------------------------
 _STATUS_HINTS: dict[int, str] = {
     401: "Authentication failed",
     403: "Access denied — the configured user is not permitted",

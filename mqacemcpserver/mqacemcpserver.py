@@ -1,15 +1,14 @@
-"""Unified IBM MQ + IBM App Connect Enterprise (ACE) MCP server.
+"""Composites-only MQ + ACE MCP server for single-tool-call orchestrators.
 
-Single endpoint exposing every read-only diagnostic tool for both products.
-The hosting orchestrator/LLM picks the right tool from the docstring (each
-MQ tool starts with "IBM MQ:" and each ACE tool with "IBM ACE:").
+Same operational posture as the granular `mqacemcpserver.py` (stdio or SSE,
+optional Basic Auth, optional TLS, `/healthz` always open), but the tool
+catalogue is six composite tools — each one self-sufficient — so a frontend
+that can only call one tool per user turn can still answer the common MQ
+and ACE diagnostic intents end-to-end.
 
-Run modes (selected by MCP_TRANSPORT in .env):
+Selected by MCP_TRANSPORT in `.env`:
   - stdio: standard MCP stdio transport (local/dev)
   - sse:   HTTP/SSE endpoint at http://MCP_HOST:MCP_PORT/sse
-           (optionally protected with HTTP Basic Auth when both
-           MCP_AUTH_USER and MCP_AUTH_PASSWORD are set; `/healthz` always
-           bypasses auth so monitors can probe liveness)
 """
 from __future__ import annotations
 
@@ -18,7 +17,7 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from server import ace_helpers, ace_tools, cert_tools, mq_helpers, mq_tools, query_log
+from server import ace_helpers, composite_tools, mq_helpers, query_log
 from server.auth import BasicAuthMiddleware
 from server.csv_cache import all_status as manifest_status
 from server.config import (
@@ -40,13 +39,11 @@ from server.logger import get_logger
 logger = get_logger("mqacemcpserver")
 
 # ---------------------------------------------------------------------------
-# Build the MCP server and register all tools (MQ first, then ACE)
+# Build the MCP server and register only the composite tools
 # ---------------------------------------------------------------------------
 mcp = FastMCP("mqacemcpserver", host=MCP_HOST, port=MCP_PORT)
 
-mq_tools.register(mcp)
-ace_tools.register(mcp)
-cert_tools.register(mcp)
+composite_tools.register(mcp)
 
 
 async def _shutdown() -> None:
@@ -101,7 +98,7 @@ def _build_sse_app():
 
 def main() -> None:
     logger.info(
-        "Starting unified MQ+ACE MCP server (transport=%s, host=%s, port=%s)",
+        "Starting composites-only MQ+ACE MCP server (transport=%s, host=%s, port=%s)",
         MCP_TRANSPORT,
         MCP_HOST,
         MCP_PORT,

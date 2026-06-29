@@ -17,21 +17,19 @@ dashboard/
 ## How it finds the `server` package
 
 `dashboard_server.py` imports `server.config` / `server.logger`, which live in
-`../mqacemcpserver/` (the main build). The script reads `MCP_SERVER_DIR` from the
-**process environment**, adds that directory to `sys.path`, and imports the
-`server` package from it. Point it at a different build (e.g. the single build)
-with:
+`../mqacemcpserver/` (the default). The script reads `MCP_SERVER_DIR` from
+the **process environment**, adds that directory to `sys.path`, and imports the
+`server` package from it. Point it at a different build with:
 
 ```
-MCP_SERVER_DIR=/path/to/mqacemcpserver-single
+MCP_SERVER_DIR=/path/to/some-mcp-build
 ```
 
 This matters because the imported build's `server.config` is what loads that
 build's `.env` and therefore sets **`LOG_DIR`** (which logs the dashboard reads)
-and **TLS** (`MCP_TLS_CERT` / `MCP_TLS_KEY`). Pointing `MCP_SERVER_DIR` at the
-single build makes the dashboard read `mqacemcpserver-single/`'s `LOG_DIR`; the
-main build reads the repo-root `.env`'s `LOG_DIR`. If the two disagree, the
-dashboard reads an empty directory and renders "No data".
+and **TLS** (`MCP_TLS_CERT` / `MCP_TLS_KEY`). `MCP_SERVER_DIR` must point at the
+build whose logs you want to see; if it points at a build with a different
+`LOG_DIR`, the dashboard reads an empty directory and renders "No data".
 
 ## One-time setup
 
@@ -67,7 +65,7 @@ Run bare like this, it binds the defaults: `http://0.0.0.0:8002/dashboard`. To
 change the port/build/log dir, set the env vars yourself before launching, e.g.:
 
 ```powershell
-$env:MCP_SERVER_DIR    = "..\mqacemcpserver-single"
+$env:MCP_SERVER_DIR    = "..\mqacemcpserver"
 $env:MCP_DASHBOARD_PORT = "8004"
 .\.venv\Scripts\python.exe dashboard_server.py
 ```
@@ -83,8 +81,8 @@ config from two places:
 1. **Process environment** — `MCP_DASHBOARD_HOST`, `MCP_DASHBOARD_PORT`, and
    `MCP_SERVER_DIR` are read with `os.getenv` (defaults below).
 2. **The imported build's `server.config`** — that module loads the build's own
-   `.env` (root `.env` for the main build, `mqacemcpserver-single/.env` for the
-   single build) and supplies `LOG_DIR` plus the TLS cert/key.
+   `.env` (`mqacemcpserver/.env` by default) and supplies `LOG_DIR` plus
+   the TLS cert/key.
 
 | Var | Read from | Default | Purpose |
 | --- | --- | --- | --- |
@@ -99,19 +97,18 @@ config from two places:
 
 ### Per-server tabs
 
-The dashboard renders **one tab per MCP build**. `GET /dashboard` is a tabbed
-wrapper; `GET /dashboard/<key>` is that build's full dashboard for its own log
-dir. The tab set comes from `MCP_DASHBOARD_SERVERS_JSON`; if it is unset the
-dashboard shows a single tab from the imported build's `LOG_DIR`.
+The dashboard renders **one tab per configured MCP server**. `GET /dashboard` is
+a tabbed wrapper; `GET /dashboard/<key>` is that server's full dashboard for its
+own log dir. The tab set comes from `MCP_DASHBOARD_SERVERS_JSON`; if it is unset
+the dashboard shows a single tab from the imported build's `LOG_DIR`.
 
 ### ⚖ Compare tab
 
-A fixed extra tab renders a **head-to-head performance comparison** of the two
-builds (`GET /dashboard/compare`): side-by-side aggregates (pass rate, mean /
-median / p95 latency, average tool round-trips per question) plus a per-question
-table where the faster latency and fewer calls are highlighted. The single
-build typically needs **one** tool call where the granular build needs several —
-that difference is the headline.
+A fixed extra tab renders a **head-to-head performance comparison** of the
+configured servers (`GET /dashboard/compare`): side-by-side aggregates (pass
+rate, mean / median / p95 latency, average tool round-trips per question) plus a
+per-question table where the faster latency and fewer calls are highlighted.
+With a single server registered it shows that server's baseline run.
 
 It reads a benchmark results JSON (`MCP_DASHBOARD_COMPARE_JSON`, default
 `<repo>/custom-logs/compare_results.json`). Generate it with the full stack up:
@@ -129,12 +126,12 @@ a short "run the benchmark" hint.
 
 `dashboard/.env` documents the intended dashboard settings, but **the server
 does not auto-load it**. Instead, `scripts/start-all.ps1` / `start-all.sh` read
-`MCP_DASHBOARD_PORT` from it and inject it — along with `MCP_SERVER_DIR` (the
-main build, for TLS) and `MCP_DASHBOARD_SERVERS_JSON` (both builds' log dirs:
-main → `custom-logs`, single → `mqacemcpserver-single/logs`) — into the
-dashboard process. That is why, started via `start-all`, the dashboard serves on
-**`https://localhost:8004/dashboard`** with a tab per build, rather than the
-bare-run defaults of `http://…:8002`.
+`MCP_DASHBOARD_PORT` from it and inject it — along with `MCP_SERVER_DIR` (the MCP
+build, for TLS) and `MCP_DASHBOARD_SERVERS_JSON` (the build's log dir,
+`mqacemcpserver/logs`) — into the dashboard process. That is why, started
+via `start-all`, the dashboard serves on
+**`https://localhost:8004/dashboard`** with a tab for the MCP build, rather than
+the bare-run defaults of `http://…:8002`.
 
 The endpoint has **no authentication** by design — do not bind it to a publicly
 reachable interface unless that is acceptable in your environment.

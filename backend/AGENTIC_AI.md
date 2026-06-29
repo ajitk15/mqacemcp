@@ -71,7 +71,7 @@ when reviewing whether something qualifies.
 |---|---|---|---|---|
 | 1 | LLM reasoner | OpenAI GPT-5.5 via `langchain-openai` | `backend/agent.py` (`ChatOpenAI(model=…)`) | ✅ |
 | 2 | Tool registry | 14 read-only IBM MQ + ACE + certificate tools loaded over MCP | `backend/mcp_client.py` (`load_tools` → `MultiServerMCPClient.get_tools`) | ✅ |
-| 3 | Tool selector | The LLM itself, guided by tool docstrings (`IBM MQ:` / `IBM ACE:` / `Certificate:` prefix). No dispatcher code. | tool descriptions in `mqacemcpserver/server/mq_tools.py`, `mqacemcpserver/server/ace_tools.py`, `mqacemcpserver/server/cert_tools.py`; auto-formatted into the system prompt by `_format_tool_catalog` in `agent.py` | ✅ |
+| 3 | Tool selector | The LLM itself, guided by tool docstrings (`IBM MQ:` / `IBM ACE:` / `Certificate:` prefix). No dispatcher code. | tool descriptions in `mqacemcpserver/server/composite_tools.py`; auto-formatted into the system prompt by `_format_tool_catalog` in `agent.py` | ✅ |
 | 4 | Action loop | `langgraph.prebuilt.create_react_agent` — full ReAct loop (think → tool call → observe → repeat) | `backend/agent.py` (`create_react_agent(...)`) | ✅ |
 | 5 | Short-term memory | LLM context window across the messages of one turn | implicit (LangGraph passes the full message list each step) | ✅ |
 | 6 | Session memory | LangGraph `MemorySaver` checkpointer, keyed by `thread_id` from the frontend's `st.session_state` | `backend/agent.py` (`checkpointer=MemorySaver()`); `frontend/app.py` (per-session `thread_id`) | ✅ in-process (deliberately; v1) |

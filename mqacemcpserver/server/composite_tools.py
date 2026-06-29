@@ -49,7 +49,7 @@ from server.mq_helpers import (
 from server.query_log import logged_tool
 from server.safety import MODIFY_BLOCKED_MSG, is_modification_command
 
-logger = get_logger("mqacemcpserver-single.composite")
+logger = get_logger("mqacemcpserver.composite")
 
 
 # ---------------------------------------------------------------------------

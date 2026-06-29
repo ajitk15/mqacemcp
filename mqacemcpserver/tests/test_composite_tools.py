@@ -18,13 +18,13 @@ import json
 
 import pytest
 
-import single_server  # noqa: F401  — imports register the tools
+import mqacemcpserver  # noqa: F401  — imports register the tools
 from server.safety import MODIFY_BLOCKED_MSG
 
 
 def _tool(name: str):
     """Return the registered callable for a tool name."""
-    return single_server.mcp._tool_manager._tools[name].fn
+    return mqacemcpserver.mcp._tool_manager._tools[name].fn
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ def test_exactly_seven_tools_registered():
         "ace_search",
         "get_cert_details",
     }
-    actual = set(single_server.mcp._tool_manager._tools.keys())
+    actual = set(mqacemcpserver.mcp._tool_manager._tools.keys())
     assert actual == expected, f"unexpected tool set: {sorted(actual)}"
 
 

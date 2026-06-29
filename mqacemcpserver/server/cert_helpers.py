@@ -1,12 +1,12 @@
 """Certificate inventory helpers: cached OFFLINE CSV loader + substring search.
 
-All functions here are pure utilities — they do not register MCP tools.
-The tool wrapper lives in `server.cert_tools`.
+All functions here are pure utilities — they do not register MCP tools. The
+composite tool wrapper lives in `server.composite_tools`.
 
-The inventory (`resources/cert_dump.csv`) is an OFFLINE extract produced by an
-external job. There is no live system to query — freshness depends on whenever
-the extract last ran. Columns are kept verbatim (the date columns are display
-strings, not parsed as datetimes).
+The inventory (`resources/cert_dump.csv`, shared with the granular server) is an
+OFFLINE extract produced by an external job. There is no live system to query —
+freshness depends on whenever the extract last ran. Columns are kept verbatim
+(the date columns are display strings, not parsed as datetimes).
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from server.logger import get_logger
 
 logger = get_logger("mqacemcpserver.cert")
 
-# Column order as produced by the extract job (used to key result rows).
+# Column order as produced by the extract job.
 CERT_COLUMNS = [
     "hostname",
     "alias",

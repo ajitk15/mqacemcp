@@ -80,7 +80,7 @@ For this repo's bundled MQ/ACE MCP server, from the project root:
 $env:MCP_TRANSPORT = "sse"
 .\.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 # Verify:
-curl http://localhost:8000/healthz
+curl.exe -k https://localhost:8010/healthz
 ```
 
 For a different MCP server, just start it and note its `/sse` URL.

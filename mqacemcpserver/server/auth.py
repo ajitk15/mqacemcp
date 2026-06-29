@@ -29,7 +29,6 @@ class BasicAuthMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
-            # Skip auth entirely for whitelisted ops paths (e.g. /healthz).
             if scope.get("path") in _AUTH_BYPASS_PATHS:
                 await self.app(scope, receive, send)
                 return

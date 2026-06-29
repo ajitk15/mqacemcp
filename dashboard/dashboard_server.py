@@ -35,8 +35,8 @@ from pathlib import Path
 
 # This component lives in `dashboard/` but reuses the MCP server's config and
 # logger. `analyze_logs` sits beside this file; the `server` package lives in
-# `mqacemcpserver/`. Put both on the path. `MCP_SERVER_DIR` can override the MCP
-# directory (e.g. to point at the single-build's `server` package instead).
+# `mqacemcpserver/`. Put both on the path. `MCP_SERVER_DIR` can override
+# the MCP directory (e.g. to point at another build's `server` package).
 _DASHBOARD_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _DASHBOARD_DIR.parent
 _MCP_DIR = Path(os.getenv("MCP_SERVER_DIR", str(_REPO_ROOT / "mqacemcpserver"))).resolve()

@@ -44,7 +44,6 @@ class _DateStampedFileHandler(logging.handlers.TimedRotatingFileHandler):
         )
 
     def doRollover(self) -> None:
-        # On rollover, switch to a freshly named file for the new day.
         if self.stream:
             self.stream.close()
             self.stream = None
@@ -54,7 +53,6 @@ class _DateStampedFileHandler(logging.handlers.TimedRotatingFileHandler):
         self.baseFilename = os.path.abspath(new_path)
         self.stream = self._open()
 
-        # Recompute next rollover time.
         current_time = int(time.time())
         new_rollover_at = self.computeRollover(current_time)
         while new_rollover_at <= current_time:
@@ -86,7 +84,6 @@ def _configure_root_once() -> None:
     root = logging.getLogger()
     root.setLevel(level)
 
-    # Avoid stacking handlers on re-import (e.g. when run with reloaders).
     for handler in list(root.handlers):
         root.removeHandler(handler)
 
@@ -103,7 +100,6 @@ def _configure_root_once() -> None:
         file_handler.setLevel(level)
         root.addHandler(file_handler)
     except Exception as e:
-        # File logging is best-effort — never crash startup over disk issues.
         logging.getLogger(__name__).warning(
             "Could not attach file log handler in %s: %s", LOG_DIR, e
         )

@@ -6,7 +6,7 @@
 
 .DESCRIPTION
     Spawns three PowerShell windows:
-      1. MCP server      (mqacemcpserver-single\single_server.py, SSE on :8010)
+      1. MCP server      (mqacemcpserver\mqacemcpserver.py, SSE on :8010)
       2. Chat backend    (FastAPI on :8002)
       3. Streamlit UI    (streamlit run, default :8003)
 
@@ -49,7 +49,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot       = Split-Path -Parent $PSScriptRoot
-$McpDir         = Join-Path $RepoRoot "mqacemcpserver-single"
+$McpDir         = Join-Path $RepoRoot "mqacemcpserver"
 $BackendDir     = Join-Path $RepoRoot "backend"
 $StreamlitDir   = Join-Path $RepoRoot "frontend"
 $PidFile        = Join-Path $PSScriptRoot ".pids"
@@ -74,7 +74,7 @@ function Get-EnvValue {
     return $Default
 }
 
-# The single build loads mqacemcpserver-single\.env; the backend loads backend\.env.
+# The single build loads mqacemcpserver\.env; the backend loads backend\.env.
 $McpEnv      = Join-Path $McpDir ".env"
 $BackendEnv  = Join-Path $BackendDir ".env"
 $McpPort     = Get-EnvValue $McpEnv "MCP_PORT" "8010"
@@ -86,15 +86,15 @@ $problems = @()
 if (-not $SkipMcp) {
     Write-Step "Checking MCP server prerequisites"
     $mcpVenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-    $mcpEntry      = Join-Path $McpDir "single_server.py"
+    $mcpEntry      = Join-Path $McpDir "mqacemcpserver.py"
     if (-not (Test-Path $mcpVenvPython)) {
-        $problems += "Missing MCP venv. Fix: cd `"$RepoRoot`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r mqacemcpserver-single\requirements.txt"
+        $problems += "Missing MCP venv. Fix: cd `"$RepoRoot`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r mqacemcpserver\requirements.txt"
         Write-Bad ".venv\Scripts\python.exe not found"
     } else { Write-Ok ".venv present" }
     if (-not (Test-Path $mcpEntry)) {
-        $problems += "Missing mqacemcpserver-single\single_server.py."
-        Write-Bad "mqacemcpserver-single\single_server.py not found"
-    } else { Write-Ok "mqacemcpserver-single\single_server.py present" }
+        $problems += "Missing mqacemcpserver\mqacemcpserver.py."
+        Write-Bad "mqacemcpserver\mqacemcpserver.py not found"
+    } else { Write-Ok "mqacemcpserver\mqacemcpserver.py present" }
 }
 
 if (-not $SkipBackend) {
