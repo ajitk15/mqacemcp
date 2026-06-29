@@ -15,7 +15,7 @@
       "Bash(../.venv/Scripts/python.exe -m pytest tests/test_composite_tools.py -q)",
       "PowerShell($tokens=$null; $errs=$null; $null = [System.Management.Automation.Language.Parser]::ParseFile\\(\\(Resolve-Path 'scripts\\\\start-streamlit.ps1'\\).Path, [ref]$tokens, [ref]$errs\\); if \\($errs\\) { $errs | ForEach-Object { $_.Message } } else { \"start-streamlit.ps1: OK\" })",
       "PowerShell(Get-NetTCPConnection *)",
-      "Bash(/c/Workspace/hready/mqacemcp/.venv/Scripts/python.exe single_server.py)",
+      "Bash(/c/Workspace/hready/mqacemcp/.venv/Scripts/python.exe mqacemcpserver.py)",
       "Bash(echo \"launched pid $!\")",
       "Bash(grep -rn \"8001\" --include=\"*.ps1\" --include=\"*.env\" --include=\"*.example\" .)",
       "Bash(grep -rni \"single\" scripts/)",
@@ -36,7 +36,9 @@
       "Bash(export MCP_AUTH_USER=\"mcpadmin\")",
       "Bash(export MCP_AUTH_PASSWORD=\"mcpadmin\")",
       "Bash(export MCP_TLS_INSECURE=\"true\")",
-      "Bash(export MCP_TLS_CA_BUNDLE=\"\")"
+      "Bash(export MCP_TLS_CA_BUNDLE=\"\")",
+      "Bash(git rm *)",
+      "Bash(grep -viE 'backend/\\\\.env|frontend/\\\\.env|dashboard/\\\\.env|backend\\\\\\\\\\\\.env')"
     ]
   }
 }

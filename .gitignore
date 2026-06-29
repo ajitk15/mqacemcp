@@ -26,7 +26,6 @@ env/
 *.log
 logs/
 custom-logs/
-logs-single/
 
 # Runtime artifacts
 scripts/.pids

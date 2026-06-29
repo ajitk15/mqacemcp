@@ -355,40 +355,14 @@ mqacemcpserver/
 │   └── auth.py                # SSE Basic Auth middleware
 ├── clients/
 │   └── smoke_test.py          # 37-case live SSE smoke client (see Testing → Online smoke)
-├── prompts/
-│   └── composite_system.md    # Reference system prompt ({scope_block}/{tool_catalog} placeholders) — see "System prompt"
 ├── tests/
 │   ├── conftest.py            # Sets temp LOG_DIR before importing server.*
 │   ├── test_composite_tools.py # 25 offline tests
 │   └── test_csv_cache.py      # 4 tests — manifest auto-reload + freshness
-├── requirements.txt           # Same as root: mcp, httpx, pandas, python-dotenv, uvicorn
-├── .env.example               # Template; LOG_DIR=logs-single, MCP_PORT=8010
+├── requirements.txt           # mcp, httpx, pandas, python-dotenv, uvicorn, urllib3
+├── .env.example               # Template; LOG_DIR=./logs, MCP_PORT=8010
 └── README.md
 ```
-
-## System prompt (`prompts/composite_system.md`)
-
-`composite_system.md` is a **reference** system prompt for whatever orchestrator
-drives this server's tools. **The MCP server itself never reads it** — this build
-is a pure tool server with no LLM. It is provided so a host can adopt the same
-routing/rendering guidance the tools were designed for.
-
-It carries two substitution placeholders (the same contract the bundled chatbot
-uses — see `backend/agent.py`):
-
-| Placeholder | Replaced with |
-| --- | --- |
-| `{scope_block}` | A domain-guardrail block when `BOT_DOMAIN` is set (the assistant refuses out-of-scope questions and points to a support team); an **empty string** when `BOT_DOMAIN` is unset. It's the on/off switch for the scope guardrail, keeping the refusal wording centralised in the host rather than hard-coded in the prompt. |
-| `{tool_catalog}` | The bullet list of currently exposed tools, generated from the live catalogue. |
-
-Contract notes:
-- A consumer must perform the substitution before sending the prompt to the LLM.
-  The chatbot's loader (`agent.py`) **validates both placeholders are present and
-  skips any prompt file missing them**, so keep both if you point a host at this
-  file via `SYSTEM_PROMPT_FILE`.
-- If your orchestrator feeds the markdown to the model **without** substitution,
-  the literal `{scope_block}` would leak into the prompt — delete that line or
-  replace it with your own static scope instructions.
 
 ## Quickstart (Windows / PowerShell)
 

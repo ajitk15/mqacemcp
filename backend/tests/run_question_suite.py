@@ -1,5 +1,5 @@
-"""Pump the 30 questions from docs/MQ_ACE_Chatbot_Questions.md at the
-chatbot backend and produce a markdown report.
+"""Pump the questions from MQ_ACE_Chatbot_Questions.md (beside this script)
+at the chatbot backend and produce a markdown report.
 
 Assumes the chatbot backend is already running. Probes /api/health first
 and exits non-zero if unreachable.
@@ -26,7 +26,7 @@ from typing import Iterable
 import httpx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-QUESTIONS_PATH = REPO_ROOT / "docs" / "MQ_ACE_Chatbot_Questions.md"
+QUESTIONS_PATH = Path(__file__).resolve().parent / "MQ_ACE_Chatbot_Questions.md"
 DEFAULT_BACKEND = os.getenv("MCP_BACKEND_URL", "").strip() or "http://localhost:8002"
 
 

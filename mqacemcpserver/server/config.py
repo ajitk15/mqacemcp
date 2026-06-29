@@ -60,10 +60,9 @@ if _LOG_DIR_RAW:
         os.path.expandvars(os.path.expanduser(_LOG_DIR_RAW))
     ).resolve()
 else:
-    # Default to a sibling dir so query logs don't collide with the
-    # granular-tools server. Lives next to the build for a standalone deploy,
-    # or in the parent repo for the mono-repo layout. Override via LOG_DIR.
-    LOG_DIR = (_BASE_DIR / "logs-single").resolve()
+    # Default to a `logs/` dir next to the build for a standalone deploy, or in
+    # the parent repo for the mono-repo layout. Override via LOG_DIR.
+    LOG_DIR = (_BASE_DIR / "logs").resolve()
 
 LOG_RETENTION_DAYS: int = int(os.getenv("LOG_RETENTION_DAYS", "30"))
 QUERY_LOG_ENABLED: bool = os.getenv("QUERY_LOG_ENABLED", "true").strip().lower() in {
