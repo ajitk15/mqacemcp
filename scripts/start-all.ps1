@@ -5,7 +5,7 @@
 .DESCRIPTION
     Opens one new PowerShell window per service so each has its own visible log
     stream:
-      1. MCP server   (mqacemcpserver\mqacemcpserver.py, SSE on :8010)
+      1. MCP server   (mqacemcpserver\mqacemcpserver.py, Streamable HTTP on :8010)
       2. Chat backend (backend\app.py, FastAPI on :8002)
       3. Streamlit UI (frontend\app.py, on :8003)
       4. Dashboard    (dashboard\dashboard_server.py, on :8004)
@@ -113,6 +113,10 @@ $McpEnv      = Join-Path $McpDir ".env"
 $McpPort     = Get-EnvValue $McpEnv "MCP_PORT" "8010"
 $McpScheme   = if (Get-EnvValue $McpEnv "MCP_TLS_CERT" "") { "https" } else { "http" }
 $McpLogDir   = Get-EnvValue $McpEnv "LOG_DIR" (Join-Path $McpDir "logs")
+# Transport from .env (default streamable-http). Drives the banner path and is
+# forwarded to the child so an HTTP transport is guaranteed even if .env omits it.
+$McpTransport = (Get-EnvValue $McpEnv "MCP_TRANSPORT" "streamable-http").ToLower()
+$McpPath     = if ($McpTransport -eq "sse") { "/sse" } else { "/mcp" }
 $BackendPort = Get-EnvValue $BackendEnv "CHAT_PORT" "8002"
 # The dashboard's own port lives in dashboard\.env (its authoritative config);
 # fall back to the code default. Keep this the single source so the banner
@@ -246,8 +250,8 @@ if (-not $SkipMcp) {
     # The MCP build resolves its own .env via __file__; cwd is the repo root so
     # the shared resources/ and the relative entry path resolve.
     $entryRel = $McpEntry.Substring($RepoRoot.Length).TrimStart('\')
-    $cmd = "`$env:MCP_TRANSPORT='sse'; .\.venv\Scripts\python.exe `"$entryRel`""
-    $pids += Start-Service-Window -Title "MCP Server (SSE :$McpPort)" `
+    $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\.venv\Scripts\python.exe `"$entryRel`""
+    $pids += Start-Service-Window -Title "MCP Server (:$McpPort $McpTransport)" `
         -WorkingDirectory $RepoRoot -Command $cmd
     Start-Sleep -Seconds 2  # let the server bind before the backend connects
 }
@@ -303,7 +307,7 @@ Write-Host ""
 Write-Host "Endpoints" -ForegroundColor White
 if (-not $SkipMcp) {
     Write-Host "  MCP server (:$McpPort)" -ForegroundColor Cyan
-    Write-Host "    SSE        : ${McpScheme}://localhost:$McpPort/sse"      -ForegroundColor Gray
+    Write-Host "    Endpoint   : ${McpScheme}://localhost:$McpPort$McpPath"   -ForegroundColor Gray
     Write-Host "    Health     : ${McpScheme}://localhost:$McpPort/healthz"  -ForegroundColor Gray
 }
 if (-not $SkipBackend) {

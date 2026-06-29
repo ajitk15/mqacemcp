@@ -7,8 +7,9 @@ that can only call one tool per user turn can still answer the common MQ
 and ACE diagnostic intents end-to-end.
 
 Selected by MCP_TRANSPORT in `.env`:
-  - stdio: standard MCP stdio transport (local/dev)
-  - sse:   HTTP/SSE endpoint at http://MCP_HOST:MCP_PORT/sse
+  - streamable-http: Streamable HTTP endpoint at http://MCP_HOST:MCP_PORT/mcp (default)
+  - sse:             legacy HTTP/SSE endpoint at http://MCP_HOST:MCP_PORT/sse (deprecated)
+  - stdio:           standard MCP stdio transport (local/dev)
 """
 from __future__ import annotations
 
@@ -56,10 +57,10 @@ async def _shutdown() -> None:
 
 
 # ---------------------------------------------------------------------------
-# /healthz — unauthenticated liveness/readiness probe (SSE only)
+# /healthz — unauthenticated liveness/readiness probe (HTTP transports only)
 # ---------------------------------------------------------------------------
-async def _healthz_app(scope, receive, send) -> None:
-    payload = {
+def _healthz_payload() -> dict:
+    return {
         "status": "ok",
         "service": "mqacemcpserver",
         "transport": MCP_TRANSPORT,
@@ -67,7 +68,10 @@ async def _healthz_app(scope, receive, send) -> None:
         "ace_configured": ace_configured(),
         "manifests": manifest_status(),
     }
-    body = json.dumps(payload).encode("utf-8")
+
+
+async def _healthz_app(scope, receive, send) -> None:
+    body = json.dumps(_healthz_payload()).encode("utf-8")
     await send(
         {
             "type": "http.response.start",
@@ -81,19 +85,38 @@ async def _healthz_app(scope, receive, send) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-def _build_sse_app():
-    """Compose the SSE app: /healthz route + everything else → FastMCP, then optional Basic Auth."""
-    sse_app = mcp.sse_app()
+def _build_http_app():
+    """Compose the HTTP app for the active transport, add an unauthenticated
+    /healthz, then apply optional Basic Auth.
 
-    async def router(scope, receive, send):
-        if scope.get("type") == "http" and scope.get("path") == "/healthz":
-            await _healthz_app(scope, receive, send)
-            return
-        await sse_app(scope, receive, send)
+    Streamable HTTP needs the Starlette app's lifespan to run (it starts the
+    session manager), so /healthz is mounted INTO that app rather than wrapped
+    in a bare router (which would drop the lifespan). SSE needs no lifespan, so
+    the lightweight router is fine there.
+    """
+    if MCP_TRANSPORT == "streamable-http":
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
+
+        async def _healthz_route(_request):
+            return JSONResponse(_healthz_payload(), headers={"cache-control": "no-store"})
+
+        app = mcp.streamable_http_app()
+        # Exact-match Route (not Mount — Mount 307-redirects /healthz -> /healthz/).
+        # Insert first so it wins over the /mcp routes; preserves the app lifespan.
+        app.router.routes.insert(0, Route("/healthz", _healthz_route, methods=["GET"]))
+    else:  # sse (legacy)
+        sse_app = mcp.sse_app()
+
+        async def app(scope, receive, send):
+            if scope.get("type") == "http" and scope.get("path") == "/healthz":
+                await _healthz_app(scope, receive, send)
+                return
+            await sse_app(scope, receive, send)
 
     if MCP_AUTH_USER and MCP_AUTH_PASSWORD:
-        return BasicAuthMiddleware(router, MCP_AUTH_USER, MCP_AUTH_PASSWORD)
-    return router
+        return BasicAuthMiddleware(app, MCP_AUTH_USER, MCP_AUTH_PASSWORD)
+    return app
 
 
 def main() -> None:
@@ -106,24 +129,26 @@ def main() -> None:
     logger.info(
         "Logs: dir=%s, query_log_enabled=%s", LOG_DIR, QUERY_LOG_ENABLED
     )
-    if MCP_TRANSPORT == "sse":
+    _http = MCP_TRANSPORT in ("streamable-http", "sse")
+    if _http:
         scheme = "https" if tls_enabled() else "http"
-        logger.info("MCP SSE endpoint: %s://%s:%s/sse", scheme, MCP_HOST, MCP_PORT)
+        path = "/mcp" if MCP_TRANSPORT == "streamable-http" else "/sse"
+        logger.info("MCP %s endpoint: %s://%s:%s%s", MCP_TRANSPORT, scheme, MCP_HOST, MCP_PORT, path)
         logger.info("Health check: %s://%s:%s/healthz", scheme, MCP_HOST, MCP_PORT)
 
     try:
-        if MCP_TRANSPORT == "sse":
+        if _http:
             import uvicorn
 
-            app = _build_sse_app()
+            app = _build_http_app()
             if MCP_AUTH_USER and MCP_AUTH_PASSWORD:
                 logger.info(
-                    "SSE endpoint protected by HTTP Basic Auth (user=%s)",
+                    "MCP endpoint protected by HTTP Basic Auth (user=%s)",
                     MCP_AUTH_USER,
                 )
             else:
                 logger.warning(
-                    "SSE endpoint is UNAUTHENTICATED. Set MCP_AUTH_USER and "
+                    "MCP endpoint is UNAUTHENTICATED. Set MCP_AUTH_USER and "
                     "MCP_AUTH_PASSWORD in .env to enable Basic Auth."
                 )
             uvicorn_kwargs: dict = {"host": MCP_HOST, "port": MCP_PORT}
@@ -131,7 +156,7 @@ def main() -> None:
                 uvicorn_kwargs["ssl_certfile"] = MCP_TLS_CERT
                 uvicorn_kwargs["ssl_keyfile"] = MCP_TLS_KEY
                 logger.info(
-                    "SSE endpoint TLS enabled (cert=%s, key=%s)",
+                    "MCP endpoint TLS enabled (cert=%s, key=%s)",
                     MCP_TLS_CERT, MCP_TLS_KEY,
                 )
             uvicorn.run(app, **uvicorn_kwargs)

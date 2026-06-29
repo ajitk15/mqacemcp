@@ -383,14 +383,16 @@ Copy-Item .env.example .env
 # Run (stdio, default)
 .venv\Scripts\python.exe mqacemcpserver.py
 
-# Run (SSE on :8010, with /healthz at /healthz)
-$env:MCP_TRANSPORT = "sse"
+# Run (Streamable HTTP, default — endpoint /mcp on :8010, /healthz at /healthz)
+$env:MCP_TRANSPORT = "streamable-http"
 .venv\Scripts\python.exe mqacemcpserver.py
+# (legacy SSE still selectable: $env:MCP_TRANSPORT = "sse" -> /sse)
 
 # Smoke check — must print exactly 7 tool names
 .venv\Scripts\python.exe -c "import mqacemcpserver as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
 
-# Live smoke test (37 cases via SSE) — see "Testing → Online smoke" below
+# Live smoke test — the bundled clients speak the legacy SSE protocol, so start
+# the server with MCP_TRANSPORT=sse first, then:
 .venv\Scripts\python.exe clients\smoke_test.py
 ```
 

@@ -18,7 +18,7 @@ flowchart BT
 
     CSV[("resources/*.csv<br/>offline manifests")]
 
-    MCP["MCP server — mqacemcpserver<br/>SSE :8010 · 7 composite read-only tools"]
+    MCP["MCP server — mqacemcpserver<br/>Streamable HTTP :8010 /mcp · 7 composite read-only tools"]
     BE["Backend — FastAPI :8002<br/>LangGraph agent (OpenAI)"]
     FE["Frontend — Streamlit :8003"]
     USER(["Browser"])
@@ -28,7 +28,7 @@ flowchart BT
     MQ -->|"REST (MQ_URL_BASE)"| MCP
     ACE -->|"REST (fetch_ace)"| MCP
     CSV -->|"offline lookups"| MCP
-    MCP -->|"tools over SSE"| BE
+    MCP -->|"tools over Streamable HTTP"| BE
     BE -->|"HTTP / SSE"| FE
     FE --> USER
 
@@ -53,7 +53,7 @@ The middleware the tools actually diagnose, provisioned by `platform_build/`:
 This layer is optional for development — the MCP tools also answer from the
 offline CSV manifests in `resources/`.
 
-### MCP server — `mqacemcpserver/` (SSE `:8010`)
+### MCP server — `mqacemcpserver/` (Streamable HTTP `:8010` `/mcp`)
 A read-only Model Context Protocol server exposing **7 composite "single-call"
 tools**: `mq_queue_inspect`, `mq_channel_inspect`, `mq_host_overview`,
 `ace_node_overview`, `ace_server_explore`, `ace_search`, `get_cert_details`.
@@ -68,7 +68,8 @@ tools**: `mq_queue_inspect`, `mq_channel_inspect`, `mq_host_overview`,
 The agent that turns natural language into MCP tool calls:
 - A LangGraph `create_react_agent` (`ChatOpenAI` + `MemorySaver` for per-thread
   memory) in `backend/agent.py`.
-- Loads the MCP tools over **SSE** via `langchain_mcp_adapters.MultiServerMCPClient`
+- Loads the MCP tools over **Streamable HTTP** (transport selectable via
+  `MCP_TRANSPORT`) using `langchain_mcp_adapters.MultiServerMCPClient`
   pointed at `MCP_SSE_URL` (`backend/mcp_client.py`).
 - Endpoints: `/api/health`, `/api/mcp/servers`, `/api/mcp/connect`,
   `/api/chat/stream` (Server-Sent Events), `/api/chat/reset`.
@@ -102,7 +103,7 @@ sequenceDiagram
     U->>FE: ask a question
     FE->>BE: POST /api/chat/stream (SSE)
     BE->>BE: LLM plans → picks an MCP tool
-    BE->>MCP: invoke tool (over SSE)
+    BE->>MCP: invoke tool (over Streamable HTTP)
     MCP->>SRC: query live REST or read CSV manifest
     SRC-->>MCP: data
     MCP-->>BE: tool result
@@ -117,7 +118,7 @@ sequenceDiagram
 
 | Component | Bind | Notes |
 | --- | --- | --- |
-| MCP server | `:8010` (SSE) | `/sse`, `/healthz` |
+| MCP server | `:8010` (Streamable HTTP) | `/mcp`, `/healthz` (legacy `/sse` if `MCP_TRANSPORT=sse`) |
 | Backend | `:8002` | `/api/health`, `/api/chat/stream`, `/api/chat/reset`, `/api/mcp/*` |
 | Frontend | `:8003` | Streamlit UI |
 | Dashboard | `:8004` | `/dashboard`, `/healthz` |
@@ -130,7 +131,7 @@ sequenceDiagram
 - **Offline** — CSV manifests in `resources/` (refreshed by a daily extract job),
   so the tools answer discovery/lookup questions with no live system.
 
-TLS on the SSE endpoints uses **self-signed certs** in `certs/` for local dev
+TLS on the MCP HTTP endpoint uses **self-signed certs** in `certs/` for local dev
 (`verify=False`), and the demo cluster/cert data targets **`localhost`** so the
 whole stack runs on one host.
 

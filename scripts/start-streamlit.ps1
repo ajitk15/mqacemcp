@@ -6,7 +6,7 @@
 
 .DESCRIPTION
     Spawns three PowerShell windows:
-      1. MCP server      (mqacemcpserver\mqacemcpserver.py, SSE on :8010)
+      1. MCP server      (mqacemcpserver\mqacemcpserver.py, Streamable HTTP on :8010)
       2. Chat backend    (FastAPI on :8002)
       3. Streamlit UI    (streamlit run, default :8003)
 
@@ -79,6 +79,8 @@ $McpEnv      = Join-Path $McpDir ".env"
 $BackendEnv  = Join-Path $BackendDir ".env"
 $McpPort     = Get-EnvValue $McpEnv "MCP_PORT" "8010"
 $McpScheme   = if (Get-EnvValue $McpEnv "MCP_TLS_CERT" "") { "https" } else { "http" }
+$McpTransport = (Get-EnvValue $McpEnv "MCP_TRANSPORT" "streamable-http").ToLower()
+$McpPath     = if ($McpTransport -eq "sse") { "/sse" } else { "/mcp" }
 $BackendPort = Get-EnvValue $BackendEnv "CHAT_PORT" "8002"
 
 $problems = @()
@@ -170,8 +172,8 @@ function Start-Service-Window {
 if (-not $SkipMcp) {
     # Run from repo root so .env/resources resolve; entry path is relative to it.
     $entryRel = $McpEntry.Substring($RepoRoot.Length).TrimStart('\')
-    $cmd = "`$env:MCP_TRANSPORT='sse'; .\.venv\Scripts\python.exe `"$entryRel`""
-    $pids += Start-Service-Window -Title "MCP Server (SSE :$McpPort)" `
+    $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\.venv\Scripts\python.exe `"$entryRel`""
+    $pids += Start-Service-Window -Title "MCP Server (:$McpPort $McpTransport)" `
         -WorkingDirectory $RepoRoot -Command $cmd
     Start-Sleep -Seconds 2
 }

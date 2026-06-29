@@ -145,16 +145,29 @@ def _make_pinned_factory(ca_path: Path):
     return _make_factory(ssl.create_default_context(cafile=str(ca_path)))
 
 
+def _normalise_transport(value: str | None) -> str:
+    """Normalise a transport name to a langchain-mcp-adapters literal.
+
+    Accepts hyphen or underscore (e.g. the server's ``streamable-http``) and
+    maps it to ``streamable_http``. Defaults to ``streamable_http``.
+    """
+    t = (value if value is not None else os.getenv("MCP_TRANSPORT", "streamable_http"))
+    t = (t or "").strip().lower().replace("-", "_")
+    return t or "streamable_http"
+
+
 def build_client(
     url: str | None = None,
     auth_user: str | None = None,
     auth_pwd: str | None = None,
     headers_json: str | None = None,
+    transport: str | None = None,
 ) -> MultiServerMCPClient:
-    """Construct a MultiServerMCPClient pointed at an SSE URL.
+    """Construct a MultiServerMCPClient pointed at an MCP server URL.
 
-    ``url`` defaults to MCP_SSE_URL; auth args default to their env vars. This
-    lets the backend switch the active MCP server at runtime without restart.
+    ``url`` defaults to MCP_SSE_URL; ``transport`` defaults to MCP_TRANSPORT
+    (``streamable_http``); auth args default to their env vars. This lets the
+    backend switch the active MCP server at runtime without restart.
     """
     url = (url or os.getenv("MCP_SSE_URL", "")).strip()
     if not url:
@@ -162,7 +175,7 @@ def build_client(
 
     server_cfg: dict[str, Any] = {
         "url": url,
-        "transport": "sse",
+        "transport": _normalise_transport(transport),
         "headers": _build_headers(auth_user, auth_pwd, headers_json),
     }
     if _tls_insecure():
@@ -187,9 +200,10 @@ async def load_tools(
     auth_user: str | None = None,
     auth_pwd: str | None = None,
     headers_json: str | None = None,
+    transport: str | None = None,
 ) -> list[BaseTool]:
     """Fetch MCP tools from ``url`` (default MCP_SSE_URL), then apply filtering."""
-    client = build_client(url, auth_user, auth_pwd, headers_json)
+    client = build_client(url, auth_user, auth_pwd, headers_json, transport)
     raw = await client.get_tools()
     log.info("Discovered %d MCP tools: %s", len(raw), [t.name for t in raw])
     tools = _filter_tools(raw)

@@ -98,13 +98,14 @@ async def _activate(
     prompt_file: str | None = None,
     auth_user: str | None = None,
     auth_pwd: str | None = None,
+    transport: str | None = None,
 ) -> list[Any]:
     """Connect to ``url``, (re)build the agent, and store it in _state.
 
     Raises on failure so callers can surface a clean error; _state is only
     mutated once the new agent is successfully built.
     """
-    tools = await mcp_client.load_tools(url, auth_user, auth_pwd)
+    tools = await mcp_client.load_tools(url, auth_user, auth_pwd, transport=transport)
     agent, checkpointer = build_agent(tools, prompt_file=prompt_file)
     _state["tools"] = tools
     _state["agent"] = agent
@@ -125,6 +126,7 @@ async def lifespan(_app: FastAPI):
             url=default.get("url", ""),
             name=default.get("name"),
             prompt_file=default.get("prompt_file"),
+            transport=default.get("transport"),
         )
     except Exception as err:  # noqa: BLE001
         log.exception("Failed to load MCP tools at startup: %s", err)
@@ -214,6 +216,7 @@ async def mcp_connect(req: ConnectRequest) -> JSONResponse:
     known = _find_server(url)
     name = (known or {}).get("name") or req.name or url
     prompt_file = (known or {}).get("prompt_file") if known else req.prompt_file
+    transport = (known or {}).get("transport")  # None → env default (streamable_http)
 
     try:
         tools = await _activate(
@@ -222,6 +225,7 @@ async def mcp_connect(req: ConnectRequest) -> JSONResponse:
             prompt_file=prompt_file,
             auth_user=req.auth_user,
             auth_pwd=req.auth_password,
+            transport=transport,
         )
     except Exception as err:  # noqa: BLE001
         log.exception("Failed to connect to MCP server %s: %s", url, err)

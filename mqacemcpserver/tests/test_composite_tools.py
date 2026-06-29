@@ -77,10 +77,10 @@ def test_mq_queue_inspect_not_in_manifest():
 
 
 def test_mq_queue_inspect_restricted_only():
-    """The shipped manifest's hosts (lopalhost) are NOT in the default
+    """The shipped manifest's hosts (localhost) are NOT in the default
     lod/loq/lot allow-list, so a known queue must come back as restricted."""
     fn = _tool("mq_queue_inspect")
-    result = asyncio.run(fn(queue_names=["QL.IN.APP1"]))
+    result = asyncio.run(fn(queue_names=["QL.INPUT"]))
     assert "restricted" in result.lower(), result
 
 
@@ -298,12 +298,13 @@ def test_ace_search_dump_scope_filters_by_substring():
 def test_ace_search_dump_pivots_cert_host_to_node():
     """A cert hostname (from get_cert_details) must resolve to its ACE node via
     the shared node_dump.csv — the hostname columns are aligned across the
-    manifests so this cross-tool pivot works."""
+    manifests so this cross-tool pivot works. The seed data runs both nodes on
+    `localhost`."""
     fn = _tool("ace_search")
-    out = json.loads(fn(search_strings=["lodace01.example.com"], scope="dump"))
+    out = json.loads(fn(search_strings=["localhost"], scope="dump"))
     assert out["status"] == "success"
     assert out["dump_matches"], out
-    assert any(r["node"] == "NODE01" for r in out["dump_matches"]), out
+    assert any(r["node"] == "NODE1" for r in out["dump_matches"]), out
 
 
 def test_ace_search_default_scope_returns_both_sections():
@@ -345,9 +346,9 @@ def test_get_cert_details_no_match_returns_empty_results():
 
 
 def test_get_cert_details_match_returns_expected_fields():
-    """The shared cert_dump.csv ships hostnames like lodmq01.example.com."""
+    """The shared cert_dump.csv is searchable by alias / CN / hostname."""
     fn = _tool("get_cert_details")
-    out = json.loads(fn(search_strings=["lodmq01"]))
+    out = json.loads(fn(search_strings=["mq-ssl-2026"]))
     assert out["status"] == "success"
     assert out["results"], out
     row = out["results"][0]
@@ -373,19 +374,18 @@ def test_get_cert_details_searches_all_fields():
 def test_get_cert_details_exposes_expirydays():
     """expirydays must round-trip as an integer-parseable string per match."""
     fn = _tool("get_cert_details")
-    out = json.loads(fn(search_strings=["lodmq01"]))
+    out = json.loads(fn(search_strings=["mq-ssl-2026"]))
     row = out["results"][0]
     assert "expirydays" in row
     int(row["expirydays"])  # raises if not an integer string
 
 
 def test_get_cert_details_includes_ace_nodes():
-    """A cert result surfaces the ACE node on its host (empty for an MQ host)."""
+    """A cert result surfaces the ACE node(s) on its host. The seed data runs
+    both integration nodes on `localhost`, so every cert pivots to them."""
     fn = _tool("get_cert_details")
-    ace = json.loads(fn(search_strings=["lodace01"]))["results"][0]
-    assert ace["ace_nodes"] == ["NODE01"], ace
-    mq = json.loads(fn(search_strings=["lodmq01"]))["results"][0]
-    assert mq["ace_nodes"] == [], mq
+    row = json.loads(fn(search_strings=["mq-ssl-2026"]))["results"][0]
+    assert row["ace_nodes"] == ["NODE1", "NODE2"], row
 
 
 # ---------------------------------------------------------------------------
@@ -432,13 +432,13 @@ def test_mq_channel_inspect_multi_target_inspects_each():
 
 def test_get_cert_details_multi_query_merges_and_tags():
     """Two search strings → merged results, each row tagged with the query that
-    matched it; both hosts appear."""
+    matched it; both queries are represented."""
     fn = _tool("get_cert_details")
-    out = json.loads(fn(search_strings=["lodmq01", "lodace01"]))
+    out = json.loads(fn(search_strings=["mq-ssl-2026", "ace-admin-tls"]))
     assert out["status"] == "success"
     assert out["results"], out
-    hosts = " ".join(r["hostname"] for r in out["results"])
-    assert "lodmq01" in hosts and "lodace01" in hosts, out
+    aliases = " ".join(r["alias"] for r in out["results"])
+    assert "mq-ssl-2026" in aliases and "ace-admin-tls" in aliases, out
     for row in out["results"]:
         assert "matched_query" in row, row
         assert isinstance(row["matched_query"], list) and row["matched_query"], row

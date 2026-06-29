@@ -1,8 +1,9 @@
 # MCP Chatbot
 
 A generic chat UI + agent backend that connects to **any** MCP server over
-SSE. Drop in a different `MCP_SSE_URL` and the same UI/backend works
-unchanged — there are no MCP-server-specific tool names hardcoded anywhere.
+Streamable HTTP (or legacy SSE — set `MCP_TRANSPORT`). Drop in a different
+`MCP_SSE_URL` and the same UI/backend works unchanged — there are no
+MCP-server-specific tool names hardcoded anywhere.
 
 > **Asked why this is "agentic AI"?** See **[AGENTIC_AI.md](AGENTIC_AI.md)** —
 > a single doc that maps the canonical agentic-AI components to specific
@@ -16,7 +17,7 @@ FastAPI backend (:8001)
    │  LangGraph agent  (OpenAI + MemorySaver)
    │  langchain-mcp-adapters MultiServerMCPClient
    ▼
-Any MCP server over SSE
+Any MCP server over Streamable HTTP (or legacy SSE)
 ```
 
 ## What you get
@@ -83,7 +84,8 @@ $env:MCP_TRANSPORT = "sse"
 curl.exe -k https://localhost:8010/healthz
 ```
 
-For a different MCP server, just start it and note its `/sse` URL.
+For a different MCP server, just start it and note its `/mcp` URL (or `/sse`
+for the legacy transport).
 
 ### 2. The chat backend
 
@@ -137,7 +139,8 @@ copy .env.example .env          # edit if your backend isn't on :8001
 |---|---|---|
 | `OPENAI_API_KEY` | — | Required. OpenAI API key. |
 | `OPENAI_MODEL` | `gpt-5.5` | LLM model name. |
-| `MCP_SSE_URL` | `http://localhost:8000/sse` | Full SSE URL of any MCP server. |
+| `MCP_SSE_URL` | `https://localhost:8010/mcp` | Full URL of the MCP server (e.g. `/mcp` for streamable-http, `/sse` for legacy). |
+| `MCP_TRANSPORT` | `streamable_http` | MCP transport: `streamable_http` (default) or `sse`. Must match the server. |
 | `MCP_AUTH_USER`, `MCP_AUTH_PASSWORD` | — | Optional HTTP Basic Auth. |
 | `MCP_HEADERS_JSON` | — | Optional JSON object for Bearer tokens / custom headers. Merged on top of Basic Auth. |
 | `HEADER_TITLE` | `MCP Chatbot` | UI title bar text. |

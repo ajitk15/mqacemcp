@@ -11,7 +11,8 @@ Enterprise (ACE)** under one endpoint. It exposes a small set of **composite
 can only invoke ONE tool per user turn still completes discovery-plus-execution
 workflows in a single call. The hosting orchestrator's LLM picks the right tool
 from the unified tool list — there is no in-server router. Production posture:
-the central team consumes one SSE endpoint; everything else (logging, sanitised
+the central team consumes one Streamable HTTP endpoint (legacy SSE still
+selectable); everything else (logging, sanitised
 errors, allow-list, read-only enforcement) is in-process.
 
 ## Development commands
@@ -31,9 +32,10 @@ pip install -r mqacemcpserver\requirements.txt
 # The build reads its own mqacemcpserver/.env regardless of cwd.
 .venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 
-# Run (SSE — endpoint at http://MCP_HOST:MCP_PORT/sse, healthz at /healthz)
-$env:MCP_TRANSPORT = "sse"
+# Run (Streamable HTTP, default — endpoint at http://MCP_HOST:MCP_PORT/mcp, healthz at /healthz)
+$env:MCP_TRANSPORT = "streamable-http"
 .venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
+# (legacy SSE is still selectable: $env:MCP_TRANSPORT = "sse" -> /sse)
 
 # Smoke check that the tools register (run from inside the build folder)
 cd mqacemcpserver
@@ -163,8 +165,9 @@ root `resources/`). The full table is in `mqacemcpserver/README.md`. Two
 namespaces operators most often touch:
 - `MQ_ALLOWED_HOSTNAME_PREFIXES` / `ACE_ALLOWED_HOSTNAME_PREFIXES` — comma-separated
   hostname prefixes; defaults `lod,loq,lot` (excludes prod by convention).
-- `MCP_TRANSPORT` (`stdio` / `sse`), `MCP_AUTH_USER` + `MCP_AUTH_PASSWORD`
-  (enables Basic Auth on SSE; `/healthz` always bypasses auth).
+- `MCP_TRANSPORT` (`streamable-http` default → `/mcp`, `sse` → `/sse`, `stdio`),
+  `MCP_AUTH_USER` + `MCP_AUTH_PASSWORD`
+  (enables Basic Auth on the HTTP endpoint; `/healthz` always bypasses auth).
 
 ## Things that are deliberately NOT done
 
@@ -228,7 +231,7 @@ as separate products in one repo, each independently deployable (own
 | --- | --- |
 | `MCP_SSE_URL` | The DEFAULT MCP server activated at startup. |
 | `MCP_SERVERS_JSON` | Registry of selectable servers (`name`/`url`/`prompt_file`/`default`) shown in the sidebar dropdown. Each can map to its own prompt. Falls back to a single entry from `MCP_SSE_URL`. |
-| `MCP_AUTH_USER` / `MCP_AUTH_PASSWORD` | Basic Auth for SSE (shared by all registry servers). |
+| `MCP_AUTH_USER` / `MCP_AUTH_PASSWORD` | Basic Auth for the MCP HTTP endpoint (shared by all registry servers). |
 | `MCP_HEADERS_JSON` | Bearer / custom headers (escape hatch). |
 | `HEADER_TITLE` / `HEADER_SUBTITLE` | UI title bar; subtitle override. |
 | `BOT_DOMAIN` | Scope guardrail; empty = unrestricted. |

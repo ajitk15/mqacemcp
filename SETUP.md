@@ -1,15 +1,11 @@
 # Setup
 
-Mono-repo of four independently deployable apps + a shared `resources/`. Each app
-has its own `requirements.txt`, `.env` (copy from `.env.example`), and `README.md`.
-There is **no repo-root `.env`**.
+How to run the stack. For what each component is, the ports, and how they fit
+together, see [`DESIGN.md`](DESIGN.md).
 
-| App | What it is | Port | `.env` |
-| --- | --- | --- | --- |
-| `mqacemcpserver/` | MQ + ACE MCP server | SSE `:8010` | `mqacemcpserver/.env` |
-| `backend/` | Chatbot agent (FastAPI + LangGraph) | `:8002` | `backend/.env` |
-| `frontend/` | Chatbot UI (Streamlit) | `:8003` | `frontend/.env` |
-| `dashboard/` | Log-analytics dashboard | `:8004` | `dashboard/.env` |
+The four apps — `mqacemcpserver/`, `backend/`, `frontend/`, `dashboard/` — are each
+independently deployable with their own `requirements.txt` and `.env` (copy from
+`.env.example`). There is **no repo-root `.env`**.
 
 ## Prerequisites
 
@@ -20,15 +16,14 @@ There is **no repo-root `.env`**.
 
 ## Platform infrastructure (IBM MQ + ACE)
 
-`platform_build/` provisions the demo middleware the tools inspect. Optional — the
-tools also work offline against the seed CSVs in `resources/`. Needs **IBM MQ** and
-**IBM ACE** installed (their commands on `PATH`). **Run MQ first, then ACE**
-(ACE ties `NODE1`→`MQNODE1`, `NODE2`→`MQNODE2`).
+Optional — the tools also work offline against `resources/`. Needs **IBM MQ** and
+**IBM ACE** installed (commands on `PATH`). **Run MQ first, then ACE.** What each
+script creates is described in [`DESIGN.md`](DESIGN.md#layers).
 
 ```bat
-REM Windows (normal command prompt / IBM ACE console)
-cd /d C:\Workspace\accready\mqacemcp\platform_build\mqsetup  & all_servers_full_setup.bat
-cd /d C:\Workspace\accready\mqacemcp\platform_build\acesetup & all_nodes_full_setup.bat
+REM Windows (normal command prompt / IBM ACE console) — from the repo root
+cd platform_build\mqsetup  & all_servers_full_setup.bat & cd ..\..
+cd platform_build\acesetup & all_nodes_full_setup.bat   & cd ..\..
 ```
 ```bash
 # Linux
@@ -36,17 +31,21 @@ cd /d C:\Workspace\accready\mqacemcp\platform_build\acesetup & all_nodes_full_se
 . <ace>/server/bin/mqsiprofile    ; cd platform_build/acesetup ; bash all_nodes_full_setup.sh
 ```
 
-MQ creates 5 QMs on `ACECLUSTER` (`MQREPO1`:1414, `MQQM1`:1415, `MQREPO2`:1416,
-`MQNODE1`:1420, `MQNODE2`:1421, all `localhost`). ACE creates `NODE1`/`NODE2`,
-each with 4 integration servers + 4 demo BARs.
-
 ## Option A — full stack
 
-```powershell
-.\scripts\start-all.ps1 -Setup     # first run: build venvs + install, then start
-.\scripts\start-all.ps1            # subsequent runs
-.\scripts\stop-all.ps1             # stop
+Use the `.cmd` wrappers — they run the PowerShell launchers with
+`-ExecutionPolicy Bypass`, so they work even when Windows blocks `.ps1` scripts
+(the default). Run from the repo root:
+
+```bat
+.\scripts\start-all.cmd -Setup     REM first run: build venvs + install, then start
+.\scripts\start-all.cmd            REM subsequent runs
+.\scripts\stop-all.cmd             REM stop
 ```
+
+Prefer the `.ps1` launchers directly (`start-all.ps1`, `stop-all.ps1`,
+`start-streamlit.ps1`)? They need script execution enabled, e.g. once per shell:
+`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 
 First run, copy each `.env`:
 
@@ -68,7 +67,7 @@ From the repo root. See each app's `README.md` for full config.
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install -r mqacemcpserver\requirements.txt
 copy mqacemcpserver\.env.example mqacemcpserver\.env
-$env:MCP_TRANSPORT="sse"; .\.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py   # :8010
+$env:MCP_TRANSPORT="streamable-http"; .\.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py   # :8010 /mcp
 
 # backend (own venv)
 cd backend; python -m venv .venv; .\.venv\Scripts\Activate.ps1

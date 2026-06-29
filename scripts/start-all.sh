@@ -8,7 +8,7 @@
 #
 # Startup order (each component reads its own .env from its own directory):
 #
-#   1. MCP server   (mqacemcpserver/mqacemcpserver.py, SSE on :8010)
+#   1. MCP server   (mqacemcpserver/mqacemcpserver.py, Streamable HTTP on :8010)
 #   2. Chat backend (backend/app.py, FastAPI on :8002)
 #   3. Streamlit UI (frontend/app.py, on :8003)
 #   4. Dashboard    (dashboard/dashboard_server.py, on :8004)
@@ -95,6 +95,10 @@ get_env() {
 MCP_PORT="$(get_env "$MCP_ENV" MCP_PORT 8010)"
 if [[ -n "$(get_env "$MCP_ENV" MCP_TLS_CERT '')" ]]; then MCP_SCHEME=https; else MCP_SCHEME=http; fi
 MCP_LOGDIR="$(get_env "$MCP_ENV" LOG_DIR "$MCP_DIR/logs")"
+# Transport from .env (default streamable-http); drives the banner path and is
+# forwarded to the child so an HTTP transport is guaranteed even if .env omits it.
+MCP_TRANSPORT_V="$(get_env "$MCP_ENV" MCP_TRANSPORT streamable-http)"
+if [[ "$MCP_TRANSPORT_V" == "sse" ]]; then MCP_PATH=/sse; else MCP_PATH=/mcp; fi
 BACKEND_PORT_V="$(get_env "$BACKEND_ENV" CHAT_PORT 8002)"
 DASH_PORT_V="$(get_env "$DASHBOARD_ENV" MCP_DASHBOARD_PORT 8004)"
 # The dashboard shares the MCP build's TLS config (MCP_SERVER_DIR points there).
@@ -185,8 +189,8 @@ start_service() {
 
 # 1. MCP server (reads mqacemcpserver/.env via __file__ -> :8010)
 if [[ $SKIP_MCP -eq 0 ]]; then
-    ( cd "$REPO_ROOT" && MCP_TRANSPORT=sse nohup "$ROOT_VENV_PY" "$MCP_ENTRY" >"$LOG_DIR/mcp.log" 2>&1 & echo $! >>"$PID_FILE" )
-    ok "MCP Server (SSE :$MCP_PORT) started (PID $(tail -n1 "$PID_FILE"))"
+    ( cd "$REPO_ROOT" && MCP_TRANSPORT="$MCP_TRANSPORT_V" nohup "$ROOT_VENV_PY" "$MCP_ENTRY" >"$LOG_DIR/mcp.log" 2>&1 & echo $! >>"$PID_FILE" )
+    ok "MCP Server (:$MCP_PORT $MCP_TRANSPORT_V) started (PID $(tail -n1 "$PID_FILE"))"
     sleep 2
 fi
 
@@ -229,7 +233,7 @@ echo
 echo "Endpoints"
 if [[ $SKIP_MCP -eq 0 ]]; then
     echo "  MCP server (:$MCP_PORT)"
-    echo "    SSE        : $MCP_SCHEME://localhost:$MCP_PORT/sse"
+    echo "    Endpoint   : $MCP_SCHEME://localhost:$MCP_PORT$MCP_PATH"
     echo "    Health     : $MCP_SCHEME://localhost:$MCP_PORT/healthz"
 fi
 if [[ $SKIP_BACKEND -eq 0 ]]; then
