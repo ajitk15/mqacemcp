@@ -6,3 +6,11 @@
 # (a file:// link would be blocked by browsers from an http page).
 [server]
 enableStaticServing = true
+
+# Accenture-inspired palette: signature purple (#A100FF) on a clean white theme.
+[theme]
+primaryColor = "#A100FF"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F0FA"
+textColor = "#1A1A1A"
+font = "sans serif"

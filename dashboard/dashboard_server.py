@@ -121,8 +121,6 @@ def _build_tabs_page(servers: list[dict]) -> bytes:
     )
     # Fixed extra tab: static question-bank page (served from /dashboard/questions).
     buttons += '<button class="tab questions" data-key="questions" onclick="pick(this)">&#10067; Questions</button>'
-    # Fixed extra tab: head-to-head performance comparison (not a per-server log dir).
-    buttons += '<button class="tab compare" data-key="compare" onclick="pick(this)">&#9878; Compare</button>'
     first_key = escape(servers[0]["key"]) if servers else "default"
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
@@ -141,7 +139,6 @@ def _build_tabs_page(servers: list[dict]) -> bytes:
   .tab.active {{ background: #0b1220; color: #fff; border-color: #475569;
     font-weight: 600; }}
   .tab.questions {{ margin-left: auto; color: #93c5fd; }}
-  .tab.compare {{ color: #6ee7b7; }}
   iframe {{ border: 0; width: 100%; height: calc(100vh - 49px); display: block; }}
 </style></head><body>
   <div class="tabs">{buttons}</div>
@@ -177,31 +174,6 @@ async def _serve_dashboard(send, log_dir: Path) -> None:
     await _send_response(send, status, b"text/html; charset=utf-8", body)
 
 
-def _compare_json_path() -> Path:
-    """Path to the head-to-head benchmark results JSON (compare_servers.py output)."""
-    raw = os.getenv("MCP_DASHBOARD_COMPARE_JSON", "").strip()
-    if raw:
-        p = Path(raw)
-        return p if p.is_absolute() else (_REPO_ROOT / p).resolve()
-    return (_REPO_ROOT / "custom-logs" / "compare_results.json").resolve()
-
-
-async def _serve_compare(send) -> None:
-    try:
-        html = analyze_logs.compute_comparison_html(_compare_json_path())
-        body = html.encode("utf-8")
-        status = 200
-    except Exception:
-        logger.exception("Failed to render comparison page")
-        body = (
-            b"<!DOCTYPE html><html><body style=\"font-family:sans-serif;padding:2em;\">"
-            b"<h1>Comparison error</h1><p>See server logs for details.</p>"
-            b"</body></html>"
-        )
-        status = 500
-    await _send_response(send, status, b"text/html; charset=utf-8", body)
-
-
 def _questions_path() -> Path:
     """Path to the static question-bank HTML page (lives beside this script)."""
     return _DASHBOARD_DIR / "mq_ace_cert_questions.html"
@@ -225,13 +197,10 @@ async def _serve_questions(send) -> None:
 
 
 async def _serve_healthz(send) -> None:
-    compare_path = _compare_json_path()
     payload = {
         "status": "ok",
         "service": "mqacemcpserver-dashboard",
         "servers": [{"key": s["key"], "name": s["name"], "log_dir": str(s["log_dir"])} for s in _servers()],
-        "compare_json": str(compare_path),
-        "compare_json_exists": compare_path.exists(),
     }
     body = json.dumps(payload).encode("utf-8")
     await _send_response(send, 200, b"application/json", body)
@@ -249,8 +218,6 @@ async def app(scope, receive, send) -> None:
         await _serve_tabs(send)
     elif path == "/dashboard/questions":
         await _serve_questions(send)
-    elif path == "/dashboard/compare":
-        await _serve_compare(send)
     elif path.startswith("/dashboard/"):
         key = path[len("/dashboard/"):].strip("/")
         match = next((s for s in _servers() if s["key"] == key), None)

@@ -39,9 +39,9 @@ def _refresh_meta() -> str:
     """`<meta http-equiv=refresh>` tag so dashboard pages reload themselves.
 
     Interval (seconds) comes from MCP_DASHBOARD_REFRESH_SECONDS (default 60);
-    0 disables auto-refresh. The tag lives on the *inner* pages (per-server and
-    Compare), so reloading happens inside the iframe and the selected tab in the
-    wrapper is preserved.
+    0 disables auto-refresh. The tag lives on the *inner* per-server pages, so
+    reloading happens inside the iframe and the selected tab in the wrapper is
+    preserved.
     """
     try:
         secs = int(os.getenv("MCP_DASHBOARD_REFRESH_SECONDS", "60"))
@@ -927,8 +927,7 @@ def _empty_dashboard_html(reason: str) -> str:
     )
 
 
-# Shared dark-theme <head> used by the per-server dashboard and the comparison
-# page so they stay visually consistent.
+# Shared dark-theme <head> used by the per-server dashboard pages.
 _PAGE_HEAD = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -945,185 +944,6 @@ _PAGE_HEAD = """<!DOCTYPE html>
     </style>
 </head>
 """
-
-
-def compute_comparison_html(compare_json_path: Path) -> str:
-    """Render the head-to-head comparison page from a benchmark results JSON.
-
-    The JSON is produced by ``backend/tests/compare_servers.py``. When it is
-    missing or unreadable a friendly empty-state explains how to generate it,
-    so the Compare tab never 500s before the first benchmark run.
-    """
-    from html import escape
-
-    compare_json_path = Path(compare_json_path)
-    cmd = "backend\\.venv\\Scripts\\python.exe backend\\tests\\compare_servers.py --limit 6"
-    if not compare_json_path.exists():
-        return _comparison_empty_html(
-            f"No benchmark results yet at <code>{escape(str(compare_json_path))}</code>.",
-            cmd,
-        )
-    try:
-        data = json.loads(compare_json_path.read_text(encoding="utf-8"))
-        servers = data.get("servers") or []
-    except Exception as exc:  # noqa: BLE001
-        return _comparison_empty_html(f"Could not read results: {escape(str(exc))}", cmd)
-    if not servers:
-        return _comparison_empty_html("The benchmark results file has no servers.", cmd)
-
-    generated = escape(str(data.get("generated_at", "—")))
-    q_total = data.get("questions_total", "—")
-
-    # --- Aggregate cards (one column per server) ---
-    ACCENTS = ["text-blue-400", "text-emerald-400", "text-violet-400", "text-amber-400"]
-    cards = ""
-    for i, s in enumerate(servers):
-        agg = s.get("aggregate") or {}
-        accent = ACCENTS[i % len(ACCENTS)]
-        prompt = s.get("prompt_source") or "—"
-        prompt_base = escape(Path(prompt).name if prompt and prompt != "—" else "—")
-        cards += f"""
-        <div class="glass rounded-2xl p-6 flex-1">
-            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Server {i + 1}</div>
-            <h3 class="text-lg font-extrabold {accent} mt-1">{escape(str(s.get("name", "?")))}</h3>
-            <p class="text-[11px] text-slate-500 mt-0.5">{escape(str(s.get("url", "")))}</p>
-            <div class="grid grid-cols-2 gap-3 mt-5 text-sm">
-                <div><div class="text-[10px] uppercase text-slate-500">Pass rate</div><div class="font-bold text-white">{agg.get("pass_rate", 0)}% <span class="text-[11px] text-slate-500">({agg.get("pass", 0)}/{agg.get("questions", 0)})</span></div></div>
-                <div><div class="text-[10px] uppercase text-slate-500">Tools exposed</div><div class="font-bold text-white">{s.get("tool_count", "—")}</div></div>
-                <div><div class="text-[10px] uppercase text-slate-500">Mean latency</div><div class="font-bold text-white">{agg.get("mean_latency_s", 0)}s</div></div>
-                <div><div class="text-[10px] uppercase text-slate-500">Median latency</div><div class="font-bold text-white">{agg.get("median_latency_s", 0)}s</div></div>
-                <div><div class="text-[10px] uppercase text-slate-500">P95 latency</div><div class="font-bold text-white">{agg.get("p95_latency_s", 0)}s</div></div>
-                <div><div class="text-[10px] uppercase text-slate-500">Avg round-trips</div><div class="font-bold text-white">{agg.get("mean_tool_calls", 0)} <span class="text-[11px] text-slate-500">/ Q</span></div></div>
-            </div>
-            <p class="text-[11px] text-slate-500 mt-4">Prompt: <code>{prompt_base}</code> · {agg.get("total_tool_calls", 0)} total tool calls</p>
-        </div>"""
-
-    # --- Winner banner (compare the first two servers) ---
-    banner = ""
-    if len(servers) >= 2:
-        a, b = servers[0], servers[1]
-        aa, ba = a.get("aggregate", {}), b.get("aggregate", {})
-        an, bn = escape(str(a.get("name", "A"))), escape(str(b.get("name", "B")))
-        notes = []
-        notes.append(_winner_line("Median latency", aa.get("median_latency_s", 0), ba.get("median_latency_s", 0), an, bn, "s", lower_is_better=True))
-        notes.append(_winner_line("Avg round-trips / question", aa.get("mean_tool_calls", 0), ba.get("mean_tool_calls", 0), an, bn, "", lower_is_better=True))
-        notes.append(_winner_line("Pass rate", aa.get("pass_rate", 0), ba.get("pass_rate", 0), an, bn, "%", lower_is_better=False))
-        banner = (
-            '<section class="glass rounded-2xl p-6 mb-8 border border-emerald-500/10">'
-            '<h2 class="text-base font-extrabold text-white mb-3">Head-to-head</h2>'
-            '<ul class="space-y-2 text-sm text-slate-300">'
-            + "".join(f'<li class="flex gap-2"><span>{n}</span></li>' for n in notes)
-            + "</ul></section>"
-        )
-
-    # --- Per-question table (join by question id) ---
-    ids = [r["id"] for r in (servers[0].get("results") or [])]
-    by_server = [{r["id"]: r for r in (s.get("results") or [])} for s in servers]
-    headers = "".join(
-        f'<th class="p-3 text-center" colspan="3">{escape(str(s.get("name", "?")))}</th>'
-        for s in servers
-    )
-    subheaders = "".join(
-        '<th class="p-2 text-center font-medium">Latency</th>'
-        '<th class="p-2 text-center font-medium">Calls</th>'
-        '<th class="p-2 text-center font-medium">Result</th>'
-        for _ in servers
-    )
-    rows = ""
-    for qid in ids:
-        recs = [bs.get(qid) for bs in by_server]
-        title = next((r["title"] for r in recs if r), "")
-        # Determine fastest latency among present records for highlighting.
-        lat_vals = [(i, r["latency_s"]) for i, r in enumerate(recs) if r]
-        best_i = min(lat_vals, key=lambda t: t[1])[0] if lat_vals else -1
-        # Determine fewest calls for highlighting.
-        call_vals = [(i, r["tool_calls"]) for i, r in enumerate(recs) if r]
-        best_calls_i = min(call_vals, key=lambda t: t[1])[0] if call_vals else -1
-        cells = ""
-        for i, r in enumerate(recs):
-            if not r:
-                cells += '<td class="p-2 text-center text-slate-600" colspan="3">—</td>'
-                continue
-            lat_cls = "text-emerald-400 font-bold" if i == best_i else "text-slate-300"
-            call_cls = "text-emerald-400 font-bold" if i == best_calls_i else "text-slate-300"
-            v_cls = "text-emerald-400" if r["verdict"] == "PASS" else "text-red-400"
-            cells += (
-                f'<td class="p-2 text-center {lat_cls}">{r["latency_s"]}s</td>'
-                f'<td class="p-2 text-center {call_cls}">{r["tool_calls"]}</td>'
-                f'<td class="p-2 text-center {v_cls} font-semibold">{escape(r["verdict"])}</td>'
-            )
-        rows += (
-            '<tr class="hover:bg-slate-800/20">'
-            f'<td class="p-3 font-bold text-white">{escape(qid)}</td>'
-            f'<td class="p-3 text-slate-300">{escape(title)}</td>'
-            f'{cells}</tr>'
-        )
-
-    body = f"""<body class="p-6 md:p-12 min-h-screen">
-    <header class="mb-8">
-        <span class="px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Head-to-Head Benchmark</span>
-        <h1 class="text-3xl font-extrabold mt-3 text-white tracking-tight">MCP Build Performance Comparison</h1>
-        <p class="text-slate-400 mt-1 text-sm">End-to-end through the chatbot agent · {q_total} question(s) · generated {generated}</p>
-        <p class="text-slate-500 mt-1 text-xs">Same questions sent to each build. <strong>Calls</strong> = tool round-trips the agent needed (fewer is better — the single build answers in one composite call). <strong>Latency</strong> = wall-clock to the final answer (includes the LLM).</p>
-    </header>
-    <section class="flex flex-col md:flex-row gap-6 mb-8">{cards}
-    </section>
-    {banner}
-    <h2 class="text-xl font-bold mb-1 text-white">Per-question breakdown</h2>
-    <p class="text-xs text-slate-400 mb-4">Fastest latency and fewest calls per question are highlighted in green.</p>
-    <section class="glass rounded-2xl p-4 overflow-x-auto mb-10">
-        <table class="w-full text-left text-sm text-slate-300">
-            <thead class="text-xs uppercase tracking-wider text-slate-400 border-b border-slate-700">
-                <tr><th class="p-3" rowspan="2">Q</th><th class="p-3" rowspan="2">Question</th>{headers}</tr>
-                <tr class="text-[10px] text-slate-500">{subheaders}</tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800">{rows}</tbody>
-        </table>
-    </section>
-    <footer class="text-center text-slate-500 text-xs mt-8 border-t border-slate-800/80 pt-6">
-        <p>Generated by <code>backend/tests/compare_servers.py</code>. Re-run it to refresh, then reload this tab.</p>
-    </footer>
-</body>
-</html>"""
-
-    return _PAGE_HEAD.format(title="MCP Build Performance Comparison", refresh=_refresh_meta()) + body
-
-
-def _winner_line(label, a_val, b_val, a_name, b_name, unit, lower_is_better):
-    """Return an HTML fragment describing which server wins ``label``."""
-    try:
-        a_val = float(a_val)
-        b_val = float(b_val)
-    except (TypeError, ValueError):
-        return f"<strong>{label}:</strong> —"
-    if a_val == b_val:
-        return f"<strong>{label}:</strong> tie ({a_val}{unit})"
-    a_better = (a_val < b_val) if lower_is_better else (a_val > b_val)
-    win_name, win_val, lose_val = (
-        (a_name, a_val, b_val) if a_better else (b_name, b_val, a_val)
-    )
-    if lower_is_better and win_val > 0:
-        ratio = lose_val / win_val if win_val else 0
-        delta = f" ({ratio:.2f}× better — {win_val}{unit} vs {lose_val}{unit})"
-    else:
-        delta = f" ({win_val}{unit} vs {lose_val}{unit})"
-    return f'<strong class="text-white">{label}:</strong> <span class="text-emerald-400 font-semibold">{win_name}</span>{delta}'
-
-
-def _comparison_empty_html(reason: str, cmd: str) -> str:
-    from html import escape
-
-    return _PAGE_HEAD.format(title="MCP Build Performance Comparison", refresh=_refresh_meta()) + (
-        '<body class="p-6 md:p-12 min-h-screen">'
-        '<h1 class="text-2xl font-extrabold text-white">MCP Build Performance Comparison</h1>'
-        f'<p class="text-slate-400 mt-3 text-sm">{reason}</p>'
-        '<p class="text-slate-400 mt-4 text-sm">Generate the comparison by running the benchmark '
-        '(the MCP server(s) under test + the chat backend must be up):</p>'
-        f'<pre class="glass rounded-xl p-4 mt-3 text-xs text-emerald-300 overflow-x-auto">{escape(cmd)}</pre>'
-        '<p class="text-slate-500 mt-3 text-xs">It sends the same questions to each server, writes the '
-        'results JSON, and restores the default server. Reload this tab when it finishes.</p>'
-        '</body></html>'
-    )
 
 
 def main():

@@ -94,7 +94,10 @@ get_env() {
 # Derive the real bind ports/scheme/log dir from the MCP build's .env.
 MCP_PORT="$(get_env "$MCP_ENV" MCP_PORT 8010)"
 if [[ -n "$(get_env "$MCP_ENV" MCP_TLS_CERT '')" ]]; then MCP_SCHEME=https; else MCP_SCHEME=http; fi
-MCP_LOGDIR="$(get_env "$MCP_ENV" LOG_DIR "$MCP_DIR/logs")"
+# LOG_DIR in the build's .env is relative to the BUILD folder (config resolves it
+# against the build dir, not cwd) — resolve it the same way for the dashboard tab.
+MCP_LOGDIR_RAW="$(get_env "$MCP_ENV" LOG_DIR logs)"
+case "$MCP_LOGDIR_RAW" in /*) MCP_LOGDIR="$MCP_LOGDIR_RAW";; *) MCP_LOGDIR="$MCP_DIR/$MCP_LOGDIR_RAW";; esac
 # Transport from .env (default streamable-http); drives the banner path and is
 # forwarded to the child so an HTTP transport is guaranteed even if .env omits it.
 MCP_TRANSPORT_V="$(get_env "$MCP_ENV" MCP_TRANSPORT streamable-http)"
@@ -191,13 +194,13 @@ start_service() {
 if [[ $SKIP_MCP -eq 0 ]]; then
     ( cd "$REPO_ROOT" && MCP_TRANSPORT="$MCP_TRANSPORT_V" nohup "$ROOT_VENV_PY" "$MCP_ENTRY" >"$LOG_DIR/mcp.log" 2>&1 & echo $! >>"$PID_FILE" )
     ok "MCP Server (:$MCP_PORT $MCP_TRANSPORT_V) started (PID $(tail -n1 "$PID_FILE"))"
-    sleep 2
+    sleep 3  # let the MCP server bind before the backend connects
 fi
 
 # 2. Chat backend
 if [[ $SKIP_BACKEND -eq 0 ]]; then
     start_service "Chat Backend (FastAPI :$BACKEND_PORT_V)" "$BACKEND_DIR" "backend" "$BACKEND_DIR/.venv/bin/python" app.py
-    sleep 2
+    sleep 3  # let the backend load tools before the frontend hits it
 fi
 
 # 3. Streamlit UI (frontend)
@@ -205,6 +208,7 @@ if [[ $SKIP_FRONTEND -eq 0 ]]; then
     start_service "Streamlit UI (:$PORT)" "$FRONTEND_DIR" "frontend" \
         "$FRONTEND_DIR/.venv/bin/python" -m streamlit run app.py \
         --server.port "$PORT" --server.address 0.0.0.0 --server.headless true
+    sleep 3  # settle before the dashboard starts
 fi
 
 # 4. Dashboard
@@ -216,13 +220,9 @@ if [[ $SKIP_DASHBOARD -eq 0 ]]; then
     # quotes are escaped correctly.
     DASH_SERVERS_JSON="$("$PYTHON_BIN" -c 'import json,sys; print(json.dumps([{"name":sys.argv[1],"key":"single","log_dir":sys.argv[2]}]))' \
         "mqacemcpserver (:$MCP_PORT)" "$MCP_LOGDIR")"
-    # Head-to-head benchmark results (backend/tests/compare_servers.py) feed the
-    # dashboard's Compare tab.
-    COMPARE_JSON="$MCP_LOGDIR/compare_results.json"
     start_service "Dashboard (:$DASH_PORT_V)" "$DASHBOARD_DIR" "dashboard" \
         env "MCP_SERVER_DIR=$MCP_DIR" "MCP_DASHBOARD_PORT=$DASH_PORT_V" \
         "MCP_DASHBOARD_SERVERS_JSON=$DASH_SERVERS_JSON" \
-        "MCP_DASHBOARD_COMPARE_JSON=$COMPARE_JSON" \
         "MCP_DASHBOARD_REFRESH_SECONDS=60" \
         "$DASHBOARD_DIR/.venv/bin/python" dashboard_server.py
 fi

@@ -43,7 +43,7 @@ st.set_page_config(
     page_title=_PAGE_TITLE_OVERRIDE or "MCP Chatbot",
     page_icon=_PAGE_ICON,
     layout="centered",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",  # open/close via the built-in chevron
 )
 
 _CUSTOM_CSS = """
@@ -51,19 +51,19 @@ _CUSTOM_CSS = """
   /* Tighten Streamlit's default spacing for a denser, more professional feel */
   .block-container { padding-top: 2.2rem; padding-bottom: 1rem; max-width: 920px; }
 
-  /* Header strip */
+  /* Header strip — Accenture purple accent underline */
   .mcp-header {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 2px solid #A100FF;
     padding-bottom: 12px;
     margin-bottom: 12px;
   }
   .mcp-header h1 {
     font-size: 1.15rem;
     margin: 0;
-    color: #111827;
+    color: #460073;
     font-weight: 600;
   }
   .mcp-header .subtitle {
@@ -89,10 +89,10 @@ _CUSTOM_CSS = """
     padding: 10px 14px;
     margin-bottom: 10px;
   }
-  /* User bubbles get a subtle accent tint */
+  /* User bubbles get a subtle Accenture-purple accent tint */
   [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
-    background: rgba(37, 99, 235, 0.06);
-    border-color: rgba(37, 99, 235, 0.25);
+    background: rgba(161, 0, 255, 0.06);
+    border-color: rgba(161, 0, 255, 0.28);
   }
 
   /* Expander (tool step) — tighter, less shouty */
@@ -104,8 +104,8 @@ _CUSTOM_CSS = """
   }
   [data-testid="stExpander"] summary { font-size: 0.82rem; }
 
-  /* Sidebar polish */
-  section[data-testid="stSidebar"] { background: #fafafa; border-right: 1px solid #e5e7eb; }
+  /* Sidebar polish — faint Accenture-purple tint */
+  section[data-testid="stSidebar"] { background: #F7F3FC; border-right: 1px solid #E6D9F5; }
 
   /* Hide Streamlit's default footer/menu for a cleaner look */
   footer { visibility: hidden; }

@@ -3,8 +3,8 @@
 Runs the SAME set of natural-language questions against each MCP server by
 flipping the backend's active server via ``POST /api/mcp/connect`` between
 runs, and records end-to-end performance per question (latency, number of tool
-calls / round-trips, verdict). The output JSON feeds the dashboard's
-"Compare" tab (``dashboard/analyze_logs.py:compute_comparison_html``).
+calls / round-trips, verdict). Writes a JSON + markdown report you can read
+directly (it is no longer consumed by the dashboard).
 
 Why end-to-end (through the LLM agent): MCP servers are not tool-for-tool
 comparable — a build that exposes granular tools usually needs several calls to
@@ -283,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print_comparison(server_reports)
     print(f"\nWrote {out_path}")
-    print("Open the dashboard's Compare tab to view the side-by-side report.")
+    print("Open that file to view the side-by-side report.")
     return 0
 
 

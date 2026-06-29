@@ -90,7 +90,6 @@ config from two places:
 | `MCP_DASHBOARD_PORT` | process env | `8002` | Bind port. |
 | `MCP_SERVER_DIR` | process env | `../mqacemcpserver` | Which build's `server` package to import (TLS config + fallback `LOG_DIR`). |
 | `MCP_DASHBOARD_SERVERS_JSON` | process env | unset → single tab | JSON array of `{name,key,log_dir}`; one tab per entry. |
-| `MCP_DASHBOARD_COMPARE_JSON` | process env | `<repo>/custom-logs/compare_results.json` | Benchmark results JSON for the ⚖ Compare tab. |
 | `MCP_DASHBOARD_REFRESH_SECONDS` | process env | `60` | Auto-reload interval for each dashboard page; `0` disables. The wrapper's selected tab is preserved (only the inner page reloads). |
 | `LOG_DIR` | build's `.env` | `<build>/logs` | Fallback single-tab log dir when the JSON above is unset. |
 | `MCP_TLS_CERT` / `MCP_TLS_KEY` | build's `.env` | unset (HTTP) | Both set → serve HTTPS. |
@@ -101,26 +100,6 @@ The dashboard renders **one tab per configured MCP server**. `GET /dashboard` is
 a tabbed wrapper; `GET /dashboard/<key>` is that server's full dashboard for its
 own log dir. The tab set comes from `MCP_DASHBOARD_SERVERS_JSON`; if it is unset
 the dashboard shows a single tab from the imported build's `LOG_DIR`.
-
-### ⚖ Compare tab
-
-A fixed extra tab renders a **head-to-head performance comparison** of the
-configured servers (`GET /dashboard/compare`): side-by-side aggregates (pass
-rate, mean / median / p95 latency, average tool round-trips per question) plus a
-per-question table where the faster latency and fewer calls are highlighted.
-With a single server registered it shows that server's baseline run.
-
-It reads a benchmark results JSON (`MCP_DASHBOARD_COMPARE_JSON`, default
-`<repo>/custom-logs/compare_results.json`). Generate it with the full stack up:
-
-```
-backend\.venv\Scripts\python.exe backend\tests\compare_servers.py --limit 6
-```
-
-That sends the same questions to each build through the chat backend (switching
-the active server via `/api/mcp/connect`), writes the JSON, and restores the
-default server. Reload the Compare tab when it finishes. Until then the tab shows
-a short "run the benchmark" hint.
 
 ### `dashboard/.env` and the launchers
 

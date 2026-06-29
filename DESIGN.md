@@ -86,7 +86,7 @@ The chat UI:
 A side observer, not part of the chat path:
 - Reads the MCP server's `LOG_DIR` (`queries-*.jsonl`) and renders metrics.
 - Imports the MCP build's `server.config` (via `MCP_SERVER_DIR`) for TLS + log-dir.
-- Renders one tab per configured server plus a **Compare** tab.
+- Renders one tab per configured server, plus a static **Questions** tab.
 
 ## Request lifecycle
 

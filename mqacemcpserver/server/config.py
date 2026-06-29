@@ -40,12 +40,20 @@ MCP_AUTH_USER: str = os.getenv("MCP_AUTH_USER", "")
 MCP_AUTH_PASSWORD: str = os.getenv("MCP_AUTH_PASSWORD", "")
 
 
-def _expand_path(value: str) -> str:
-    return os.path.expandvars(os.path.expanduser(value.strip())) if value else ""
+def _resolve_under(value: str, base: Path = PROJECT_ROOT) -> str:
+    """Expand ~/$VARS and return an absolute path. RELATIVE values resolve
+    against `base` (the build folder) — NOT the process cwd — so the server
+    finds its certs/resources/logs no matter where it is launched from."""
+    if not value or not value.strip():
+        return ""
+    p = Path(os.path.expandvars(os.path.expanduser(value.strip())))
+    if not p.is_absolute():
+        p = base / p
+    return str(p.resolve())
 
 
-MCP_TLS_CERT: str = _expand_path(os.getenv("MCP_TLS_CERT", ""))
-MCP_TLS_KEY: str = _expand_path(os.getenv("MCP_TLS_KEY", ""))
+MCP_TLS_CERT: str = _resolve_under(os.getenv("MCP_TLS_CERT", ""))
+MCP_TLS_KEY: str = _resolve_under(os.getenv("MCP_TLS_KEY", ""))
 
 
 def tls_enabled() -> bool:
@@ -56,9 +64,7 @@ LOG_LEVEL: str = os.getenv("MQACE_LOG_LEVEL", "INFO").upper()
 
 _LOG_DIR_RAW = (os.getenv("LOG_DIR") or "").strip()
 if _LOG_DIR_RAW:
-    LOG_DIR: Path = Path(
-        os.path.expandvars(os.path.expanduser(_LOG_DIR_RAW))
-    ).resolve()
+    LOG_DIR: Path = Path(_resolve_under(_LOG_DIR_RAW))
 else:
     # Default to a `logs/` dir next to the build for a standalone deploy, or in
     # the parent repo for the mono-repo layout. Override via LOG_DIR.
@@ -95,20 +101,20 @@ ACE_ALLOWED_HOSTNAME_PREFIXES: list[str] = _split_csv(
 # if the deployment splits them.
 _DEFAULT_RESOURCES_DIR = (_BASE_DIR / "resources").resolve()
 RESOURCES_DIR: Path = Path(
-    os.getenv("RESOURCES_DIR", str(_DEFAULT_RESOURCES_DIR))
-).resolve()
+    _resolve_under(os.getenv("RESOURCES_DIR", str(_DEFAULT_RESOURCES_DIR)))
+)
 MQ_QMGR_DUMP_PATH: Path = Path(
-    os.getenv("MQ_QMGR_DUMP_PATH", str(RESOURCES_DIR / "qmgr_dump.csv"))
-).resolve()
+    _resolve_under(os.getenv("MQ_QMGR_DUMP_PATH", str(RESOURCES_DIR / "qmgr_dump.csv")))
+)
 ACE_NODE_DUMP_PATH: Path = Path(
-    os.getenv("ACE_NODE_DUMP_PATH", str(RESOURCES_DIR / "node_dump.csv"))
-).resolve()
+    _resolve_under(os.getenv("ACE_NODE_DUMP_PATH", str(RESOURCES_DIR / "node_dump.csv")))
+)
 ACE_NODE_CONFIG_PATH: Path = Path(
-    os.getenv("ACE_NODE_CONFIG_PATH", str(RESOURCES_DIR / "node_config.csv"))
-).resolve()
+    _resolve_under(os.getenv("ACE_NODE_CONFIG_PATH", str(RESOURCES_DIR / "node_config.csv")))
+)
 CERT_DUMP_PATH: Path = Path(
-    os.getenv("CERT_DUMP_PATH", str(RESOURCES_DIR / "cert_dump.csv"))
-).resolve()
+    _resolve_under(os.getenv("CERT_DUMP_PATH", str(RESOURCES_DIR / "cert_dump.csv")))
+)
 
 
 def mq_configured() -> bool:

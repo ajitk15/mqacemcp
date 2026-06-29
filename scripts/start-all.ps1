@@ -112,7 +112,10 @@ $DashboardEnv = Join-Path $DashboardDir ".env"
 $McpEnv      = Join-Path $McpDir ".env"
 $McpPort     = Get-EnvValue $McpEnv "MCP_PORT" "8010"
 $McpScheme   = if (Get-EnvValue $McpEnv "MCP_TLS_CERT" "") { "https" } else { "http" }
-$McpLogDir   = Get-EnvValue $McpEnv "LOG_DIR" (Join-Path $McpDir "logs")
+# LOG_DIR in the build's .env is relative to the BUILD folder (config resolves it
+# against the build dir, not cwd) — resolve it the same way for the dashboard tab.
+$McpLogDirRaw = Get-EnvValue $McpEnv "LOG_DIR" "logs"
+$McpLogDir   = if ([System.IO.Path]::IsPathRooted($McpLogDirRaw)) { $McpLogDirRaw } else { Join-Path $McpDir $McpLogDirRaw }
 # Transport from .env (default streamable-http). Drives the banner path and is
 # forwarded to the child so an HTTP transport is guaranteed even if .env omits it.
 $McpTransport = (Get-EnvValue $McpEnv "MCP_TRANSPORT" "streamable-http").ToLower()
@@ -253,20 +256,21 @@ if (-not $SkipMcp) {
     $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\.venv\Scripts\python.exe `"$entryRel`""
     $pids += Start-Service-Window -Title "MCP Server (:$McpPort $McpTransport)" `
         -WorkingDirectory $RepoRoot -Command $cmd
-    Start-Sleep -Seconds 2  # let the server bind before the backend connects
+    Start-Sleep -Seconds 3  # let the MCP server bind before the backend connects
 }
 
 if (-not $SkipBackend) {
     $cmd = ".\.venv\Scripts\python.exe app.py"
     $pids += Start-Service-Window -Title "Chat Backend (FastAPI :$BackendPort)" `
         -WorkingDirectory $BackendDir -Command $cmd
-    Start-Sleep -Seconds 2  # let backend load tools before frontend starts hitting it
+    Start-Sleep -Seconds 3  # let the backend load tools before the frontend hits it
 }
 
 if (-not $SkipFrontend) {
     $cmd = ".\.venv\Scripts\python.exe -m streamlit run app.py --server.port $Port"
     $pids += Start-Service-Window -Title "Streamlit UI (:$Port)" `
         -WorkingDirectory $FrontendDir -Command $cmd
+    Start-Sleep -Seconds 3  # settle before the dashboard window opens
 }
 
 if (-not $SkipDashboard) {
@@ -288,9 +292,6 @@ if (-not $SkipDashboard) {
     $env:MCP_SERVER_DIR            = $McpDir
     $env:MCP_DASHBOARD_PORT        = $DashPort
     $env:MCP_DASHBOARD_SERVERS_JSON = ($dashServers | ConvertTo-Json -Compress -Depth 5)
-    # Head-to-head benchmark results (written by backend\tests\compare_servers.py)
-    # feed the dashboard's Compare tab.
-    $env:MCP_DASHBOARD_COMPARE_JSON = (Join-Path $McpLogDir "compare_results.json")
     # Auto-refresh each dashboard page every N seconds (0 disables).
     $env:MCP_DASHBOARD_REFRESH_SECONDS = "60"
     $cmd = ".\dashboard\.venv\Scripts\python.exe dashboard\dashboard_server.py"

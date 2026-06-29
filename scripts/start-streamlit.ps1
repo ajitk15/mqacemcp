@@ -175,14 +175,14 @@ if (-not $SkipMcp) {
     $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\.venv\Scripts\python.exe `"$entryRel`""
     $pids += Start-Service-Window -Title "MCP Server (:$McpPort $McpTransport)" `
         -WorkingDirectory $RepoRoot -Command $cmd
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3  # let the MCP server bind before the backend connects
 }
 
 if (-not $SkipBackend) {
     $cmd = ".\.venv\Scripts\python.exe app.py"
     $pids += Start-Service-Window -Title "Chat Backend (FastAPI :$BackendPort)" `
         -WorkingDirectory $BackendDir -Command $cmd
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3  # let the backend load tools before the frontend hits it
 }
 
 if (-not $SkipFrontend) {
