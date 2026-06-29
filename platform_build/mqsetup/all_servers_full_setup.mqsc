@@ -1,0 +1,140 @@
+# =============================================================================
+# CONSOLIDATED MQ SETUP — all queue managers on ONE host (ACECLUSTER)
+#
+# Combines server1_full_setup.mqsc, server2_full_setup.mqsc, and
+# server3_full_setup.mqsc into one file to run on a SINGLE server.
+# The per-server source files are kept. All cluster CONNAMEs use localhost,
+# so every queue manager connects on this one box with no /etc/hosts changes.
+#
+# Run (Linux, as the mqm user):
+#   . /opt/mqm/bin/setmqenv -s
+#   bash all_servers_full_setup.mqsc
+#
+# Queue managers (all on this host, distinct ports):
+#   MQREPO1  1414  full repository
+#   MQQM1    1415  developer QM + MQ Console (SVRCONN channels)
+#   MQREPO2  1416  full repository
+#   MQNODE1  1420  ACE NODE1 QM (partial cluster member)
+#   MQNODE2  1421  ACE NODE2 QM (partial cluster member)
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# SERVER1 — MQREPO1 (full repository) + MQQM1 (developer QM)
+# -----------------------------------------------------------------------------
+# Create Queue Managers
+crtmqm MQREPO1
+
+# Start Queue Managers
+strmqm MQREPO1
+
+# Configure MQREPO1 (full repository for ACECLUSTER)
+runmqsc MQREPO1 << EOF
+DEFINE LISTENER(TCP.LSTR) TRPTYPE(TCP) PORT(1414) CONTROL(QMGR)
+START LISTENER(TCP.LSTR)
+DEFINE CHANNEL(MQREPO1.CLUSRCVR) CHLTYPE(CLUSRCVR) CONNAME('localhost(1414)') CLUSTER(ACECLUSTER) REPLACE
+DEFINE CHANNEL(MQREPO1.CLUSSDR) CHLTYPE(CLUSSDR) CONNAME('localhost(1416)') CLUSTER(ACECLUSTER) REPLACE
+ALTER QMGR REPOS(ACECLUSTER)
+DEFINE QLOCAL(QL.ADMIN.REQUEST) REPLACE
+DEFINE QLOCAL(QL.ADMIN.REPLY) REPLACE
+DEFINE QALIAS(QL.ADMIN.REQUEST.ALIAS) TARGQ(QL.ADMIN.REQUEST) REPLACE
+END
+EOF
+
+# Create MQQM1 — developer queue manager + MQ Console (shares this host with MQREPO1)
+crtmqm MQQM1
+
+# Start MQQM1
+strmqm MQQM1
+
+# Configure MQQM1 (developer listener on 1415, queue and SVRCONN channels)
+runmqsc MQQM1 << EOF
+DEFINE LISTENER('DEV.LISTENER.TCP') TRPTYPE(TCP) PORT(1415) CONTROL(QMGR) REPLACE
+START LISTENER('DEV.LISTENER.TCP')
+DEFINE QLOCAL('DEV.QUEUE.1') REPLACE
+DEFINE CHANNEL('DEV.APP.SVRCONN') CHLTYPE(SVRCONN) REPLACE
+DEFINE CHANNEL('DEV.ADMIN.SVRCONN') CHLTYPE(SVRCONN) MCAUSER('admin') REPLACE
+END
+EOF
+
+
+# -----------------------------------------------------------------------------
+# SERVER2 — MQREPO2 (full repository) + MQNODE1 (ACE NODE1 QM)
+# -----------------------------------------------------------------------------
+crtmqm MQREPO2
+strmqm MQREPO2
+
+# Configure MQREPO2 (full repository for ACECLUSTER)
+runmqsc MQREPO2 << EOF
+DEFINE LISTENER(TCP.LSTR) TRPTYPE(TCP) PORT(1416) CONTROL(QMGR)
+START LISTENER(TCP.LSTR)
+DEFINE CHANNEL(MQREPO2.CLUSRCVR) CHLTYPE(CLUSRCVR) CONNAME('localhost(1416)') CLUSTER(ACECLUSTER) REPLACE
+DEFINE CHANNEL(MQREPO2.CLUSSDR) CHLTYPE(CLUSSDR) CONNAME('localhost(1414)') CLUSTER(ACECLUSTER) REPLACE
+ALTER QMGR REPOS(ACECLUSTER)
+DEFINE QLOCAL(QL.REPO.BACKUP) REPLACE
+DEFINE QLOCAL(QL.REPO.AUDIT) REPLACE
+DEFINE QALIAS(QL.REPO.BACKUP.ALIAS) TARGQ(QL.REPO.BACKUP) REPLACE
+END
+EOF
+
+# Create MQNODE1 — ACE node NODE1's associated queue manager (partial cluster member)
+crtmqm MQNODE1
+
+# Start MQNODE1
+strmqm MQNODE1
+
+# Configure MQNODE1 (listener on 1420, cluster channels join ACECLUSTER, ACE work queues)
+runmqsc MQNODE1 << EOF
+DEFINE LISTENER(TCP.LSTR) TRPTYPE(TCP) PORT(1420) CONTROL(QMGR) REPLACE
+START LISTENER(TCP.LSTR)
+DEFINE CHANNEL(MQNODE1.CLUSRCVR) CHLTYPE(CLUSRCVR) TRPTYPE(TCP) CONNAME('localhost(1420)') CLUSTER(ACECLUSTER) REPLACE
+DEFINE CHANNEL(MQNODE1.CLUSSDR) CHLTYPE(CLUSSDR) TRPTYPE(TCP) CONNAME('localhost(1414)') CLUSTER(ACECLUSTER) REPLACE
+DEFINE QLOCAL('QL.INPUT') REPLACE
+DEFINE QLOCAL('QL.INPUT.LFT') REPLACE
+DEFINE QLOCAL('QL.LOCAL') REPLACE
+DEFINE QLOCAL('QL.OUT') REPLACE
+DEFINE QLOCAL('QL.OUT.SPLIT') REPLACE
+DEFINE QLOCAL('QL.OUT1') REPLACE
+DEFINE QLOCAL('QL.OUT2') REPLACE
+DEFINE QLOCAL('QL.SOURCE') REPLACE
+DEFINE QLOCAL('QL.TARGET.LAPTOP') REPLACE
+DEFINE QLOCAL('QL.TARGET.MONITOR') REPLACE
+DEFINE QLOCAL('QL.TARGET.MOUSE') REPLACE
+DEFINE QLOCAL('QL.TARGET.SPLIT') REPLACE
+DEFINE QLOCAL('QL.TARGET.SPLIT_IN') REPLACE
+DEFINE QLOCAL('QL.TARGET.SPLIT_OUT') REPLACE
+END
+EOF
+
+
+# -----------------------------------------------------------------------------
+# SERVER3 — MQNODE2 (ACE NODE2 QM)
+# -----------------------------------------------------------------------------
+# Create MQNODE2 — ACE node NODE2's associated queue manager (partial cluster member)
+crtmqm MQNODE2
+
+# Start MQNODE2
+strmqm MQNODE2
+
+# Configure MQNODE2 (listener on 1421, cluster channels join ACECLUSTER, ACE work queues)
+runmqsc MQNODE2 << EOF
+DEFINE LISTENER(TCP.LSTR) TRPTYPE(TCP) PORT(1421) CONTROL(QMGR) REPLACE
+START LISTENER(TCP.LSTR)
+DEFINE CHANNEL(MQNODE2.CLUSRCVR) CHLTYPE(CLUSRCVR) TRPTYPE(TCP) CONNAME('localhost(1421)') CLUSTER(ACECLUSTER) REPLACE
+DEFINE CHANNEL(MQNODE2.CLUSSDR) CHLTYPE(CLUSSDR) TRPTYPE(TCP) CONNAME('localhost(1414)') CLUSTER(ACECLUSTER) REPLACE
+DEFINE QLOCAL('QL.INPUT') REPLACE
+DEFINE QLOCAL('QL.INPUT.LFT') REPLACE
+DEFINE QLOCAL('QL.LOCAL') REPLACE
+DEFINE QLOCAL('QL.OUT') REPLACE
+DEFINE QLOCAL('QL.OUT.SPLIT') REPLACE
+DEFINE QLOCAL('QL.OUT1') REPLACE
+DEFINE QLOCAL('QL.OUT2') REPLACE
+DEFINE QLOCAL('QL.SOURCE') REPLACE
+DEFINE QLOCAL('QL.TARGET.LAPTOP') REPLACE
+DEFINE QLOCAL('QL.TARGET.MONITOR') REPLACE
+DEFINE QLOCAL('QL.TARGET.MOUSE') REPLACE
+DEFINE QLOCAL('QL.TARGET.SPLIT') REPLACE
+DEFINE QLOCAL('QL.TARGET.SPLIT_IN') REPLACE
+DEFINE QLOCAL('QL.TARGET.SPLIT_OUT') REPLACE
+END
+EOF

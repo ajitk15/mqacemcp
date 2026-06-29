@@ -353,9 +353,10 @@ mqacemcpserver/
 │   ├── query_log.py           # @logged_tool decorator + per-call JSONL audit log
 │   ├── logger.py              # rotating app log
 │   └── auth.py                # SSE Basic Auth middleware
-├── clients/
-│   └── smoke_test.py          # 37-case live SSE smoke client (see Testing → Online smoke)
-├── tests/
+├── clients/                   # LIVE SSE smoke clients (need a running server)
+│   ├── smoke_test.py          #   exercises every tool via SSE (seed manifests)
+│   └── smoke_test_aws.py      #   same scaffolding, call table tuned to AWS extracts
+├── tests/                     # OFFLINE pytest suite (in-process, no server)
 │   ├── conftest.py            # Sets temp LOG_DIR before importing server.*
 │   ├── test_composite_tools.py # 25 offline tests
 │   └── test_csv_cache.py      # 4 tests — manifest auto-reload + freshness
@@ -394,6 +395,25 @@ $env:MCP_TRANSPORT = "sse"
 ```
 
 ## Testing
+
+This build ships two distinct kinds of checks. They verify different things at
+different layers — use both:
+
+| | `tests/` | `clients/` |
+| --- | --- | --- |
+| Runner | **pytest** | plain script (asyncio `main`) |
+| Network | none — **in-process**, no HTTP | **live SSE** to a running server |
+| Server required | no | **yes** (must already be up) |
+| Data | seed CSVs under `../resources/` | seed manifests (`smoke_test.py`) or AWS extracts (`smoke_test_aws.py`) |
+| Verifies | code logic & safety rails: tool registration, manifest discovery, read-only enforcement, allow-list, CSV-cache auto-reload | real wire behaviour end-to-end: SSE transport, auth/TLS, every tool invoked over the wire |
+| Typical use | automated, every change / CI | manual post-deploy / integration check |
+
+In short: **`tests/` proves the code's logic and guardrails are correct without
+anything running; `clients/` proves a *running* server actually works over SSE.**
+The rest of this section covers the offline `tests/` suite first, then the live
+`clients/` smoke client.
+
+### The offline `tests/` suite
 
 The test suite is **fully offline** — no live MQ or ACE infrastructure is
 required. Tests run against the shared CSV manifests under `../resources/`

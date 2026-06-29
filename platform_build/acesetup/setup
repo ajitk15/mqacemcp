@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ACE integration node setup — creates ONE node and deploys the demo apps.
+#
+# Parameterised so the SAME configuration is applied to every node (NODE1,
+# NODE2, ...). Source the ACE environment first, e.g.:
+#   . /opt/ibm/ace-12/server/bin/mqsiprofile
+#
+# Usage:
+#   bash setup <NODE_NAME> [QMGR_NAME]
+#     NODE_NAME  integration node to create/configure (default: ACEDEMO)
+#     QMGR_NAME  optional queue manager to associate with the node (-q)
+#
+# Examples:
+#   bash setup NODE1 MQNODE1
+#   bash setup NODE2 MQNODE2
+# =============================================================================
+
+# Run from this script's folder so the .bar files resolve.
+cd "$(dirname "$0")"
+
+NODE="${1:-ACEDEMO}"
+QMGR="${2:-}"
+
+# Create + start the integration node (associate the QM when given).
+if [ -n "$QMGR" ]; then
+  mqsicreatebroker "$NODE" -q "$QMGR"
+else
+  mqsicreatebroker "$NODE"
+fi
+mqsistart "$NODE"
+
+# Create integration servers (execution groups)
+mqsicreateexecutiongroup "$NODE" -e ACE_DEMO_TRANSFORM
+mqsicreateexecutiongroup "$NODE" -e ACE_DEMO_MESSAGING
+mqsicreateexecutiongroup "$NODE" -e ACE_DEMO_CONNECTORS
+mqsicreateexecutiongroup "$NODE" -e ACE_DEMO_CACHE
+
+# Deploy the BAR files
+mqsideploy "$NODE" -e ACE_DEMO_TRANSFORM  -a ACE_DEMO_TRANSFORM.bar
+mqsideploy "$NODE" -e ACE_DEMO_MESSAGING  -a ACE_DEMO_MESSAGING.bar
+mqsideploy "$NODE" -e ACE_DEMO_CONNECTORS -a ACE_DEMO_CONNECTORS.bar
+mqsideploy "$NODE" -e ACE_DEMO_CACHE      -a ACE_DEMO_CACHE.bar

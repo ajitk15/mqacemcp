@@ -7,9 +7,10 @@ fresh HTML on every request by reusing the functions in ``analyze_logs.py``.
 
 Endpoints
 ---------
-  GET /dashboard        — tabbed wrapper, one tab per configured MCP server
-  GET /dashboard/<key>  — full HTML dashboard for that server's log dir
-  GET /healthz          — liveness probe (lists every server's log dir)
+  GET /dashboard            — tabbed wrapper, one tab per configured MCP server
+  GET /dashboard/<key>      — full HTML dashboard for that server's log dir
+  GET /dashboard/questions  — static MQ/ACE/cert question-bank page
+  GET /healthz              — liveness probe (lists every server's log dir)
 
 Configuration (.env)
 --------------------
@@ -118,6 +119,8 @@ def _build_tabs_page(servers: list[dict]) -> bytes:
         f'data-key="{escape(s["key"])}" onclick="pick(this)">{escape(s["name"])}</button>'
         for i, s in enumerate(servers)
     )
+    # Fixed extra tab: static question-bank page (served from /dashboard/questions).
+    buttons += '<button class="tab questions" data-key="questions" onclick="pick(this)">&#10067; Questions</button>'
     # Fixed extra tab: head-to-head performance comparison (not a per-server log dir).
     buttons += '<button class="tab compare" data-key="compare" onclick="pick(this)">&#9878; Compare</button>'
     first_key = escape(servers[0]["key"]) if servers else "default"
@@ -137,7 +140,8 @@ def _build_tabs_page(servers: list[dict]) -> bytes:
   .tab:hover {{ background: #273449; }}
   .tab.active {{ background: #0b1220; color: #fff; border-color: #475569;
     font-weight: 600; }}
-  .tab.compare {{ margin-left: auto; color: #6ee7b7; }}
+  .tab.questions {{ margin-left: auto; color: #93c5fd; }}
+  .tab.compare {{ color: #6ee7b7; }}
   iframe {{ border: 0; width: 100%; height: calc(100vh - 49px); display: block; }}
 </style></head><body>
   <div class="tabs">{buttons}</div>
@@ -198,6 +202,28 @@ async def _serve_compare(send) -> None:
     await _send_response(send, status, b"text/html; charset=utf-8", body)
 
 
+def _questions_path() -> Path:
+    """Path to the static question-bank HTML page (lives beside this script)."""
+    return _DASHBOARD_DIR / "mq_ace_cert_questions.html"
+
+
+async def _serve_questions(send) -> None:
+    path = _questions_path()
+    try:
+        body = path.read_bytes()
+        status = 200
+    except Exception:
+        logger.exception("Failed to read questions page %s", path)
+        body = (
+            b"<!DOCTYPE html><html><body style=\"font-family:sans-serif;padding:2em;\">"
+            b"<h1>Questions page not found</h1>"
+            b"<p>Expected mq_ace_cert_questions.html in the dashboard folder.</p>"
+            b"</body></html>"
+        )
+        status = 404
+    await _send_response(send, status, b"text/html; charset=utf-8", body)
+
+
 async def _serve_healthz(send) -> None:
     compare_path = _compare_json_path()
     payload = {
@@ -221,6 +247,8 @@ async def app(scope, receive, send) -> None:
     path = scope.get("path", "")
     if path in ("/dashboard", "/"):
         await _serve_tabs(send)
+    elif path == "/dashboard/questions":
+        await _serve_questions(send)
     elif path == "/dashboard/compare":
         await _serve_compare(send)
     elif path.startswith("/dashboard/"):

@@ -1,5 +1,3 @@
 node|host|nodeport
-NODE1|lodace01.example.com|4414
-NODE2|loqace02.example.com|4415
-NODE3|lotace03.example.com|4416
-NODE4|loqace04.example.com|7600
+NODE1|localhost|4414
+NODE2|localhost|4415
