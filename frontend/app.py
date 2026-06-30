@@ -43,7 +43,7 @@ st.set_page_config(
     page_title=_PAGE_TITLE_OVERRIDE or "MCP Chatbot",
     page_icon=_PAGE_ICON,
     layout="wide",
-    initial_sidebar_state="collapsed",  # open/close via the built-in chevron
+    initial_sidebar_state="expanded",  # visible on load; collapse/expand via the chevron
 )
 
 _CUSTOM_CSS = """
@@ -78,15 +78,20 @@ _CUSTOM_CSS = """
   .sidebar-crumb .sep { color: #A100FF; margin: 0 5px; }
   /* Transparent (not height:0 — that clipped the sidebar expand control) */
   header[data-testid="stHeader"] { background: transparent; }
-  /* Hide Streamlit's Deploy button / toolbar / top decoration (was overlapping the bar) */
-  [data-testid="stToolbar"], [data-testid="stDecoration"], .stDeployButton { display: none !important; }
-  /* Sidebar open/close control — force visible & white, above the purple bar */
-  [data-testid="stSidebarCollapsedControl"],
-  [data-testid="stSidebarCollapseButton"],
-  [data-testid="stExpandSidebarButton"] { z-index: 1003 !important; visibility: visible !important; }
-  [data-testid="stSidebarCollapsedControl"] svg,
-  [data-testid="stSidebarCollapseButton"] svg,
+  /* Hide ONLY the Deploy button + top decoration — NOT the whole toolbar
+     (the sidebar expand `»` control lives in the toolbar area in Streamlit 1.58).
+     Correct 1.58 id for Deploy is stAppDeployButton. */
+  [data-testid="stDecoration"], [data-testid="stAppDeployButton"] { display: none !important; }
+  #MainMenu { display: none !important; }
+  /* Sidebar open/close controls must sit ABOVE the fixed purple bar (z 1000).
+     Streamlit 1.58 ids: stExpandSidebarButton (collapsed) / stSidebarCollapseButton (open). */
+  [data-testid="stExpandSidebarButton"],
+  [data-testid="stSidebarCollapseButton"] { z-index: 1003 !important; visibility: visible !important; }
+  /* The expand control overlays the purple bar when collapsed → white icon */
+  [data-testid="stExpandSidebarButton"] button,
   [data-testid="stExpandSidebarButton"] svg { color: #ffffff !important; fill: #ffffff !important; }
+  /* Push sidebar content below the fixed top bar so it isn't hidden under it */
+  section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding-top: 2.2rem; }
 
   /* Empty-state hint */
   .mcp-empty { text-align: center; color: #6b7280; font-size: 0.9rem; margin-top: 3rem; }
