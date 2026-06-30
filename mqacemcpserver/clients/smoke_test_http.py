@@ -14,13 +14,19 @@ Usage (from the build folder, with the shared repo-root venv):
     ..\\.venv\\Scripts\\python.exe clients\\smoke_test_http.py            # all calls
     ..\\.venv\\Scripts\\python.exe clients\\smoke_test_http.py mq         # filter by category
     ..\\.venv\\Scripts\\python.exe clients\\smoke_test_http.py --full     # full output previews
+
+Each call also prints the backend MQ/ACE endpoint(s) the server hit, read back
+from its JSONL query log (same-host only). Pass --no-endpoints to suppress, or
+set MCP_QUERY_LOG_DIR if the server's logs/ live elsewhere.
 """
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -43,6 +49,54 @@ if MCP_HOST in ("", "0.0.0.0"):
 _scheme = "https" if (MCP_TLS_CERT and MCP_TLS_KEY) else "http"
 # Honour an explicit override (e.g. behind a proxy); otherwise target /mcp.
 MCP_URL = os.getenv("MCP_REMOTE_SERVER_URL", f"{_scheme}://{MCP_HOST}:{MCP_PORT}/mcp")
+
+# The server records the backend endpoint(s) it hit for each call in its JSONL
+# query log. When the client runs on the same host as the server we can read
+# that log back and show, per call, exactly which MQ/ACE URL(s) were called.
+# Defaults to this build's logs/; override with MCP_QUERY_LOG_DIR.
+QUERY_LOG_DIR = os.getenv("MCP_QUERY_LOG_DIR", str(PROJECT_ROOT / "logs"))
+
+
+def _newest_query_log():
+    """Path to the most-recently-modified queries-*.jsonl, or None."""
+    files = glob.glob(os.path.join(QUERY_LOG_DIR, "queries-*.jsonl"))
+    return max(files, key=os.path.getmtime) if files else None
+
+
+def _last_record(path):
+    """Parse and return the last non-empty JSON object in `path`, or None."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        line = line.strip()
+        if line:
+            try:
+                return json.loads(line)
+            except Exception:
+                return None
+    return None
+
+
+def _read_call_endpoints(seen_ids, retries=8, delay=0.05):
+    """Best-effort: after a tool call, read the server's query log for the
+    endpoints it just recorded. Correlates by request_id (each call appends one
+    line). Returns (endpoints_list, found_bool). `seen_ids` must be pre-seeded
+    with the log's last request_id BEFORE the run so we never grab a stale line.
+    """
+    for _ in range(retries):
+        path = _newest_query_log()
+        if path:
+            rec = _last_record(path)
+            if rec:
+                rid = rec.get("request_id")
+                if rid and rid not in seen_ids:
+                    seen_ids.add(rid)
+                    return rec.get("endpoints") or [], True
+        time.sleep(delay)
+    return [], False
 
 
 def _make_insecure_httpx_client(headers=None, timeout=None, auth=None):
@@ -288,6 +342,9 @@ async def main():
             # Preview verbosity: default 12 lines; --full shows everything,
             # --lines=N shows N lines.
             preview_limit = 12
+            # Per-call backend endpoint display (read back from the server's
+            # query log) is on by default; pass --no-endpoints to suppress it.
+            show_endpoints = "--no-endpoints" not in flags
             for f in flags:
                 if f in ("--full", "-f"):
                     preview_limit = None
@@ -296,6 +353,20 @@ async def main():
                         preview_limit = int(f.split("=", 1)[1])
                     except ValueError:
                         pass
+
+            # Seed the seen-ids set with the log's current last request_id so the
+            # first call doesn't pick up a stale line written before this run.
+            seen_ids = set()
+            if show_endpoints:
+                _p = _newest_query_log()
+                _last = _last_record(_p) if _p else None
+                if _last and _last.get("request_id"):
+                    seen_ids.add(_last["request_id"])
+                elif _p is None:
+                    print(f"  (endpoint display: no query log under {QUERY_LOG_DIR}; "
+                          f"set MCP_QUERY_LOG_DIR or use --no-endpoints)")
+                    show_endpoints = False
+
             calls = select_calls(CALLS, selectors)
             if selectors:
                 print(f"\n[Filter: {selectors} -> {len(calls)}/{len(CALLS)} calls]")
@@ -311,6 +382,16 @@ async def main():
                     res = await session.call_tool(name, args)
                     text = res.content[0].text if res.content and getattr(res.content[0], "text", None) else ""
                     preview(text, preview_limit)
+                    if show_endpoints:
+                        eps, found = _read_call_endpoints(seen_ids)
+                        if not found:
+                            print("  ↳ endpoints: (not recorded yet / log unavailable)")
+                        elif eps:
+                            print("  ↳ endpoints:")
+                            for ep in eps:
+                                print(f"      {ep}")
+                        else:
+                            print("  ↳ endpoints: (none — offline CSV / no HTTP call)")
                     outcome, reason = classify(text, mode)
                     results.append((i, name, mode, outcome, reason))
                     print(f"  -> {outcome}{(' (' + reason + ')') if reason else ''}")
