@@ -69,16 +69,16 @@ when reviewing whether something qualifies.
 
 | # | Component | This solution | File / line | Status |
 |---|---|---|---|---|
-| 1 | LLM reasoner | OpenAI GPT-5.5 via `langchain-openai` | `backend/agent.py` (`ChatOpenAI(model=…)`) | ✅ |
-| 2 | Tool registry | 14 read-only IBM MQ + ACE + certificate tools loaded over MCP | `backend/mcp_client.py` (`load_tools` → `MultiServerMCPClient.get_tools`) | ✅ |
+| 1 | LLM reasoner | OpenAI GPT-5.5 via `langchain-openai` | `agent/agent.py` (`ChatOpenAI(model=…)`) | ✅ |
+| 2 | Tool registry | 14 read-only IBM MQ + ACE + certificate tools loaded over MCP | `agent/mcp_client.py` (`load_tools` → `MultiServerMCPClient.get_tools`) | ✅ |
 | 3 | Tool selector | The LLM itself, guided by tool docstrings (`IBM MQ:` / `IBM ACE:` / `Certificate:` prefix). No dispatcher code. | tool descriptions in `mqacemcpserver/server/composite_tools.py`; auto-formatted into the system prompt by `_format_tool_catalog` in `agent.py` | ✅ |
-| 4 | Action loop | `langgraph.prebuilt.create_react_agent` — full ReAct loop (think → tool call → observe → repeat) | `backend/agent.py` (`create_react_agent(...)`) | ✅ |
+| 4 | Action loop | `langgraph.prebuilt.create_react_agent` — full ReAct loop (think → tool call → observe → repeat) | `agent/agent.py` (`create_react_agent(...)`) | ✅ |
 | 5 | Short-term memory | LLM context window across the messages of one turn | implicit (LangGraph passes the full message list each step) | ✅ |
-| 6 | Session memory | LangGraph `MemorySaver` checkpointer, keyed by `thread_id` from the frontend's `st.session_state` | `backend/agent.py` (`checkpointer=MemorySaver()`); `frontend/app.py` (per-session `thread_id`) | ✅ in-process (deliberately; v1) |
-| 7 | Output formatter | Two layers: (a) backend `renderers.py` infers tables / mermaid / code / text from tool output shape; (b) the LLM is prompted to emit Mermaid for relationships and rely on auto-tables for lists | `backend/renderers.py`; prompt in `backend/prompts/system.md` | ✅ |
-| 8 | Guardrails | (a) **Scope refusal** via `BOT_DOMAIN`; (b) **Tool allow/deny list**; (c) **Read-only enforcement** in the MCP server itself (blocks `ALTER`/`DEFINE`/etc.); (d) **Hostname allow-list** so even an exploited agent can't reach prod hosts; (e) **Error sanitisation** so raw tracebacks never reach the user | `backend/agent.py` (SCOPE_BLOCK_TEMPLATE), `backend/mcp_client.py` (`_filter_tools`), `mqacemcpserver/server/safety.py`, `mqacemcpserver/server/errors.py` | ✅ multi-layer |
-| 9 | Observability | (a) **Per-call JSONL log** on the MCP server side (`logs/queries-*.jsonl`) with tool, args, endpoints, latency, outcome; (b) **Streaming tool-step events** (`tool_call`, `tool_result`) so the UI shows each step the agent took; (c) **`/api/health`** surfaces resolved prompt source, scope, allow/deny lists | `mqacemcpserver/server/query_log.py`, `backend/app.py` (event stream + `/api/health`), `frontend/renderers.py` (tool-step expander) | ✅ |
-| 10 | Streaming I/O | SSE `text/event-stream` of typed events (`token`, `tool_call`, `tool_result`, `final`, `done`); frontend reader assembles incrementally | `backend/app.py` (`_run`, `_sse`), `frontend/client.py` (SSE reader) | ✅ |
+| 6 | Session memory | LangGraph `MemorySaver` checkpointer, keyed by `thread_id` from the frontend's `st.session_state` | `agent/agent.py` (`checkpointer=MemorySaver()`); `frontend/app.py` (per-session `thread_id`) | ✅ in-process (deliberately; v1) |
+| 7 | Output formatter | Two layers: (a) backend `renderers.py` infers tables / mermaid / code / text from tool output shape; (b) the LLM is prompted to emit Mermaid for relationships and rely on auto-tables for lists | `agent/renderers.py`; prompt in `agent/prompts/system.md` | ✅ |
+| 8 | Guardrails | (a) **Scope refusal** via `BOT_DOMAIN`; (b) **Tool allow/deny list**; (c) **Read-only enforcement** in the MCP server itself (blocks `ALTER`/`DEFINE`/etc.); (d) **Hostname allow-list** so even an exploited agent can't reach prod hosts; (e) **Error sanitisation** so raw tracebacks never reach the user | `agent/agent.py` (SCOPE_BLOCK_TEMPLATE), `agent/mcp_client.py` (`_filter_tools`), `mqacemcpserver/server/safety.py`, `mqacemcpserver/server/errors.py` | ✅ multi-layer |
+| 9 | Observability | (a) **Per-call JSONL log** on the MCP server side (`logs/queries-*.jsonl`) with tool, args, endpoints, latency, outcome; (b) **Streaming tool-step events** (`tool_call`, `tool_result`) so the UI shows each step the agent took; (c) **`/api/health`** surfaces resolved prompt source, scope, allow/deny lists | `mqacemcpserver/server/query_log.py`, `agent/app.py` (event stream + `/api/health`), `frontend/renderers.py` (tool-step expander) | ✅ |
+| 10 | Streaming I/O | SSE `text/event-stream` of typed events (`token`, `tool_call`, `tool_result`, `final`, `done`); frontend reader assembles incrementally | `agent/app.py` (`_run`, `_sse`), `frontend/client.py` (SSE reader) | ✅ |
 | 11 | Multi-agent | **Single agent.** No supervisor / delegation pattern. | — | ❌ by design (see "What we don't do") |
 | 12 | Human-in-the-loop | No approval-before-action step. The agent is read-only by construction (every MCP tool is `GET`-only or `runCommand` with the modification verbs blocked at the server), so we don't need it. | — | ❌ replaced by upstream read-only enforcement |
 
@@ -154,7 +154,7 @@ reflection critic.
 
 ### Where the pattern is wired up (one place to read)
 
-`backend/agent.py:build_agent`:
+`agent/agent.py:build_agent`:
 
 ```python
 agent = create_react_agent(

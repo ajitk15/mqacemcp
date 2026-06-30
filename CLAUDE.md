@@ -177,16 +177,16 @@ namespaces operators most often touch:
 - **`pytest`/`pytest-asyncio` are not in `requirements.txt`.** They live only
   in the dev `.venv`. If you change tests, document the install step.
 
-## The `backend/` + `frontend/` chatbot stack (separate product)
+## The `agent/` + `frontend/` chatbot stack (separate product)
 
-`backend/` and `frontend/` together are a self-contained web chat UI + agent
+`agent/` and `frontend/` together are a self-contained web chat UI + agent
 backend that *uses* this MCP server over its SSE endpoint. They are **not**
 part of the MCP server and the MCP server does not depend on them. Treat them
 as separate products in one repo, each independently deployable (own
-`requirements.txt`, own `.env`, own venv). See `backend/README.md` for full docs.
+`requirements.txt`, own `.env`, own venv). See `agent/README.md` for full docs.
 
 ### Architecture summary
-- `backend/` — FastAPI on `:8002`. LangGraph `create_react_agent`
+- `agent/` — FastAPI on `:8002`. LangGraph `create_react_agent`
   with `MemorySaver` (per-`thread_id` in-process). Tools loaded via
   `langchain-mcp-adapters.MultiServerMCPClient` pointed at `MCP_SSE_URL`.
 - `frontend/` — **Streamlit** app (Python: `app.py`, `client.py`,
@@ -221,12 +221,12 @@ as separate products in one repo, each independently deployable (own
   strings. All UI customisation (header title/subtitle, scope hint,
   empty-state) flows from backend `/api/health` → `frontend/client.py`
   → `frontend/app.py`.
-- **The renderers (`backend/renderers.py` and the frontend's
+- **The renderers (`agent/renderers.py` and the frontend's
   `frontend/renderers.py`) are tool-name-agnostic.** Use shape
   detection (JSON list keys, `key:value` lines, mermaid fences) — never
   branch on a tool name.
 
-### Configuration knobs (all live in `backend/.env`)
+### Configuration knobs (all live in `agent/.env`)
 | Var | Purpose |
 | --- | --- |
 | `MCP_SSE_URL` | The DEFAULT MCP server activated at startup. |
@@ -235,16 +235,16 @@ as separate products in one repo, each independently deployable (own
 | `MCP_HEADERS_JSON` | Bearer / custom headers (escape hatch). |
 | `HEADER_TITLE` / `HEADER_SUBTITLE` | UI title bar; subtitle override. |
 | `BOT_DOMAIN` | Scope guardrail; empty = unrestricted. |
-| `SYSTEM_PROMPT_FILE` | Override prompt file path. Default is `backend/prompts/system.md`. |
+| `SYSTEM_PROMPT_FILE` | Override prompt file path. Default is `agent/prompts/system.md`. |
 | `TOOL_ALLOWLIST` / `TOOL_DENYLIST` | Filter which MCP tools the agent sees. |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM. |
 
 ### Where common changes go
-- Edit the system prompt → `backend/prompts/system.md` (markdown,
+- Edit the system prompt → `agent/prompts/system.md` (markdown,
   uses `{scope_block}` and `{tool_catalog}` placeholders).
-- Add a new structured rendering rule → `backend/renderers.py`
+- Add a new structured rendering rule → `agent/renderers.py`
   (a new detector, NOT a per-tool function).
-- Add a new wire-protocol event kind / `Block` shape → `backend/schemas.py`
+- Add a new wire-protocol event kind / `Block` shape → `agent/schemas.py`
   AND the frontend renderer in `frontend/renderers.py` (which dispatches
   on `block.kind`).
 - Change the theme → Streamlit theming via `PAGE_TITLE` / `PAGE_ICON` in

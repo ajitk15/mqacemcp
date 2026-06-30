@@ -87,11 +87,11 @@ def _load_system_prompt_template(prompt_file: str | None = None) -> tuple[str, s
     Resolution order:
       1. Explicit ``prompt_file`` arg (per-server override), if it exists.
       2. Path in SYSTEM_PROMPT_FILE env, if set and the file exists.
-      3. backend/prompts/system.md next to this module.
+      3. agent/prompts/system.md next to this module.
       4. Inline SYSTEM_PROMPT_TEMPLATE (always works, last resort).
 
     Relative ``prompt_file`` paths resolve against the repo root so a registry
-    entry like "backend/prompts/system.md" works regardless of cwd.
+    entry like "agent/prompts/system.md" works regardless of cwd.
 
     Any candidate missing the required placeholders is rejected with a
     warning so an editing mistake can never crash the backend at startup.

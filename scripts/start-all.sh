@@ -9,7 +9,7 @@
 # Startup order (each component reads its own .env from its own directory):
 #
 #   1. MCP server   (mqacemcpserver/mqacemcpserver.py, Streamable HTTP on :8010)
-#   2. Chat backend (backend/app.py, FastAPI on :8002)
+#   2. Chat backend (agent/app.py, FastAPI on :8002)
 #   3. Streamlit UI (frontend/app.py, on :8003)
 #   4. Dashboard    (dashboard/dashboard_server.py, on :8004)
 #
@@ -64,7 +64,7 @@ MCP_DIR="$REPO_ROOT/mqacemcpserver"
 MCP_ENTRY="$MCP_DIR/mqacemcpserver.py"
 MCP_ENV="$MCP_DIR/.env"
 MCP_REQS="$MCP_DIR/requirements.txt"
-BACKEND_DIR="$REPO_ROOT/backend"
+BACKEND_DIR="$REPO_ROOT/agent"
 BACKEND_ENV="$BACKEND_DIR/.env"
 FRONTEND_DIR="$REPO_ROOT/frontend"
 FRONTEND_ENV="$FRONTEND_DIR/.env"
@@ -126,7 +126,7 @@ if [[ $DO_SETUP -eq 1 ]]; then
     step "Setup: installing per-component requirements"
     # The MCP server uses the repo-root .venv.
     [[ $SKIP_MCP -eq 0 ]]       && init_venv "mcp"       "$REPO_ROOT"     "$MCP_REQS"
-    [[ $SKIP_BACKEND -eq 0 ]]   && init_venv "backend"   "$BACKEND_DIR"   "$BACKEND_DIR/requirements.txt"
+    [[ $SKIP_BACKEND -eq 0 ]]   && init_venv "agent"   "$BACKEND_DIR"   "$BACKEND_DIR/requirements.txt"
     [[ $SKIP_FRONTEND -eq 0 ]]  && init_venv "frontend"  "$FRONTEND_DIR"  "$FRONTEND_DIR/requirements.txt"
     [[ $SKIP_DASHBOARD -eq 0 ]] && init_venv "dashboard" "$DASHBOARD_DIR" "$DASHBOARD_DIR/requirements.txt"
     echo
@@ -146,9 +146,9 @@ fi
 
 if [[ $SKIP_BACKEND -eq 0 ]]; then
     step "Checking chat backend prerequisites"
-    [[ -x "$BACKEND_DIR/.venv/bin/python" ]] && ok "backend venv present" || { problems+=("Missing backend venv. Fix: ./scripts/start-all.sh --setup"); bad "backend/.venv/bin/python not found"; }
-    [[ -f "$BACKEND_DIR/app.py" ]] && ok "backend app.py present" || { problems+=("Missing backend/app.py."); bad "backend/app.py not found"; }
-    [[ -f "$BACKEND_ENV" ]] && ok "backend .env present" || { problems+=("Missing backend/.env. Fix: cd backend && cp .env.example .env && edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"); bad "backend/.env not found"; }
+    [[ -x "$BACKEND_DIR/.venv/bin/python" ]] && ok "backend venv present" || { problems+=("Missing backend venv. Fix: ./scripts/start-all.sh --setup"); bad "agent/.venv/bin/python not found"; }
+    [[ -f "$BACKEND_DIR/app.py" ]] && ok "backend app.py present" || { problems+=("Missing agent/app.py."); bad "agent/app.py not found"; }
+    [[ -f "$BACKEND_ENV" ]] && ok "backend .env present" || { problems+=("Missing agent/.env. Fix: cd agent && cp .env.example .env && edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"); bad "agent/.env not found"; }
 fi
 
 if [[ $SKIP_FRONTEND -eq 0 ]]; then
@@ -199,7 +199,7 @@ fi
 
 # 2. Chat backend
 if [[ $SKIP_BACKEND -eq 0 ]]; then
-    start_service "Chat Backend (FastAPI :$BACKEND_PORT_V)" "$BACKEND_DIR" "backend" "$BACKEND_DIR/.venv/bin/python" app.py
+    start_service "Agent (FastAPI :$BACKEND_PORT_V)" "$BACKEND_DIR" "agent" "$BACKEND_DIR/.venv/bin/python" app.py
     sleep 3  # let the backend load tools before the frontend hits it
 fi
 

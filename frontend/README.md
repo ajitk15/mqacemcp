@@ -5,10 +5,10 @@ backend over HTTP/SSE and stays MCP-server-agnostic — nothing in the UI is
 hardcoded to a particular MCP server.
 
 ```
-Streamlit UI (:8501)
+Streamlit UI (:8003)
    │  httpx → /api/chat/stream (SSE)
    ▼
-FastAPI backend (:8001)            ← unchanged
+FastAPI backend (:8002)            ← unchanged
    ▼
 Any MCP server over SSE            ← unchanged
 ```
@@ -37,12 +37,12 @@ cd frontend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env       # then edit if your backend isn't on :8001
+copy .env.example .env       # then edit if your backend isn't on :8002
 ```
 
 ## Run
 
-The chatbot backend must already be running (see `../backend/README.md` —
+The chatbot backend must already be running (see `../agent/README.md` —
 the Streamlit UI does NOT replace the backend, only fronts it).
 
 ```powershell
@@ -50,7 +50,7 @@ the Streamlit UI does NOT replace the backend, only fronts it).
 streamlit run app.py
 ```
 
-The app opens at <http://localhost:8501>.
+The app opens at <http://localhost:8003>.
 
 To pick a different port:
 
@@ -64,7 +64,7 @@ All knobs live in `.env` (loaded at startup) or as environment variables:
 
 | Var | Default | Purpose |
 | --- | --- | --- |
-| `MCP_BACKEND_URL` | `http://localhost:8001` | Where the FastAPI backend lives. |
+| `MCP_BACKEND_URL` | `http://localhost:8002` | Where the FastAPI backend lives. |
 | `PAGE_TITLE` | `` (uses backend's `HEADER_TITLE`) | Override the browser tab title. |
 | `PAGE_ICON` | `💬` | Page icon (any single emoji). |
 
@@ -87,7 +87,7 @@ renderers.py    — Block renderers (text/markdown/table/code/mermaid)
 ### Why a separate file for renderers?
 
 The wire protocol (`Block` shapes) is defined in
-`../backend/schemas.py`. Keeping renderers isolated from `app.py`
+`../agent/schemas.py`. Keeping renderers isolated from `app.py`
 makes it trivial to add a new `kind` (just update both ends —
 `schemas.py` and `renderers.py`).
 

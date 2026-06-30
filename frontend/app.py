@@ -1,6 +1,6 @@
 """Streamlit chat UI for the MCP chatbot backend.
 
-Talks to the FastAPI backend (`chatbot/backend/app.py`) over its
+Talks to the FastAPI backend (`chatbot/agent/app.py`) over its
 existing endpoints — no backend changes required.
 
 Run:
@@ -42,74 +42,98 @@ _CUSTOM_SERVER_LABEL = "Custom…"
 st.set_page_config(
     page_title=_PAGE_TITLE_OVERRIDE or "MCP Chatbot",
     page_icon=_PAGE_ICON,
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed",  # open/close via the built-in chevron
 )
 
 _CUSTOM_CSS = """
 <style>
-  /* Tighten Streamlit's default spacing for a denser, more professional feel */
-  .block-container { padding-top: 2.2rem; padding-bottom: 1rem; max-width: 920px; }
+  .stApp { background-color: #ffffff; color: #1A1A1A; }
 
-  /* Header strip — Accenture purple accent underline */
-  .mcp-header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    border-bottom: 2px solid #A100FF;
-    padding-bottom: 12px;
-    margin-bottom: 12px;
+  /* Fixed full-width top nav — brand purple */
+  .top-nav {
+    position: fixed; top: 0; left: 0; width: 100%;
+    background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+    color: #ffffff; padding: 6px 24px; z-index: 1000;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.12);
+    display: flex; justify-content: space-between; align-items: center;
   }
-  .mcp-header h1 {
-    font-size: 1.15rem;
-    margin: 0;
-    color: #460073;
-    font-weight: 600;
+  .top-nav h2 {
+    color: #ffffff !important; margin: 0 0 0 42px !important;  /* clear the sidebar toggle */
+    font-size: 16px !important; font-weight: 600; letter-spacing: .2px;
   }
-  .mcp-header .subtitle {
-    font-size: 0.78rem;
-    color: #6b7280;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  .top-nav .nav-health { display: flex; gap: 18px; font-size: 12.5px; font-weight: 500; color: #ffffff; }
+  .top-nav .nav-health span { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+
+  /* Clear the fixed header + footer. Full width so the conversation lines up
+     with the (full-width) chat input bar. */
+  .block-container { padding-top: 3.2rem !important; padding-bottom: 5.5rem !important; max-width: 100% !important; }
+
+  /* Sidebar breadcrumb */
+  .sidebar-crumb {
+    font-size: 12px; font-weight: 600; color: #6b21a8;
+    background: #F1E9FB; border: 1px solid #E6D9F5; border-radius: 8px;
+    padding: 6px 10px; margin: 2px 0 12px;
   }
-  .mcp-header .subtitle.warn { color: #b45309; }
+  .sidebar-crumb .sep { color: #A100FF; margin: 0 5px; }
+  /* Transparent (not height:0 — that clipped the sidebar expand control) */
+  header[data-testid="stHeader"] { background: transparent; }
+  /* Hide Streamlit's Deploy button / toolbar / top decoration (was overlapping the bar) */
+  [data-testid="stToolbar"], [data-testid="stDecoration"], .stDeployButton { display: none !important; }
+  /* Sidebar open/close control — force visible & white, above the purple bar */
+  [data-testid="stSidebarCollapsedControl"],
+  [data-testid="stSidebarCollapseButton"],
+  [data-testid="stExpandSidebarButton"] { z-index: 1003 !important; visibility: visible !important; }
+  [data-testid="stSidebarCollapsedControl"] svg,
+  [data-testid="stSidebarCollapseButton"] svg,
+  [data-testid="stExpandSidebarButton"] svg { color: #ffffff !important; fill: #ffffff !important; }
 
   /* Empty-state hint */
-  .mcp-empty {
-    text-align: center;
-    color: #6b7280;
-    font-size: 0.9rem;
-    margin-top: 3rem;
-  }
+  .mcp-empty { text-align: center; color: #6b7280; font-size: 0.9rem; margin-top: 3rem; }
 
-  /* Chat message styling — subtle borders, light theme */
+  /* Chat messages — rounded, light */
   [data-testid="stChatMessage"] {
-    background: transparent;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin-bottom: 10px;
+    border-radius: 12px; margin-bottom: 8px; padding: 6px 14px;
+    background: #faf8fd; border: 1px solid #ece3f7;
   }
-  /* User bubbles get a subtle Accenture-purple accent tint */
+  /* Agent (assistant) → left, roomy */
+  [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
+    margin-right: auto; max-width: 92%;
+  }
+  /* User → right-aligned bubble (avatar on the right), purple tint */
   [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
-    background: rgba(161, 0, 255, 0.06);
-    border-color: rgba(161, 0, 255, 0.28);
+    flex-direction: row-reverse;
+    margin-left: auto; max-width: 80%;
+    background: rgba(161, 0, 255, 0.06); border-color: rgba(161, 0, 255, 0.28);
   }
 
-  /* Expander (tool step) — tighter, less shouty */
-  [data-testid="stExpander"] {
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    margin: 8px 0;
-    background: #f9fafb;
+  /* Pulsing "thinking" indicator — brand purple dots */
+  @keyframes pulse { 0%{opacity:.6;transform:scale(.98)} 50%{opacity:1;transform:scale(1.01)} 100%{opacity:.6;transform:scale(.98)} }
+  .thinking-box {
+    background:#ffffff; border:1px solid #ece3f7; border-radius:8px;
+    padding:6px 12px; display:flex; align-items:center; gap:8px; width:fit-content;
+    animation:pulse 1.6s infinite ease-in-out; box-shadow:0 2px 5px rgba(0,0,0,0.05);
   }
+  .thinking-box span { font-size:13px; color:#6b21a8; font-weight:500; letter-spacing:.2px; }
+  .thinking-dot { width:6px; height:6px; background:#A100FF; border-radius:50%; }
+
+  /* Expander (tool step) */
+  [data-testid="stExpander"] { border: 1px solid #ece3f7; border-radius: 8px; margin: 8px 0; background: #faf8fd; }
   [data-testid="stExpander"] summary { font-size: 0.82rem; }
 
-  /* Sidebar polish — faint Accenture-purple tint */
+  /* Sidebar — faint purple tint */
   section[data-testid="stSidebar"] { background: #F7F3FC; border-right: 1px solid #E6D9F5; }
 
-  /* Hide Streamlit's default footer/menu for a cleaner look */
-  footer { visibility: hidden; }
+  /* Fixed footer */
+  .fixed-footer {
+    position: fixed; left:0; bottom:0; width:100%;
+    background:#ffffff; color:#8a8a8a; text-align:center;
+    padding:7px 0; font-size:11px; border-top:1px solid #eee; z-index:999;
+  }
+
+  /* Hide Streamlit's default menu/footer */
   #MainMenu { visibility: hidden; }
+  footer { visibility: hidden; }
 </style>
 """
 st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
@@ -161,13 +185,21 @@ else:
 # Header
 # ---------------------------------------------------------------------------
 
-sub_class = "subtitle warn" if subtitle_warn else "subtitle"
+_tool_count = info.get("tool_count", 0)
+_mcp_icon = "🟢" if (backend_reachable and _tool_count > 0) else "🔴"
+_agent_icon = "🟢" if backend_reachable else "🔴"
+_ui_icon = "🟢"  # if this page rendered, the UI is up
 st.markdown(
     f"""
-    <div class="mcp-header">
-      <h1>{escape(header_title)}</h1>
-      <span class="{sub_class}">{escape(subtitle)}</span>
+    <div class="top-nav">
+      <h2>{escape(header_title)}</h2>
+      <div class="nav-health">
+        <span>{_mcp_icon} MCP</span>
+        <span>{_agent_icon} Agent</span>
+        <span>{_ui_icon} UI</span>
+      </div>
     </div>
+    <div class="fixed-footer">{escape(header_title)} &middot; MCP-powered</div>
     """,
     unsafe_allow_html=True,
 )
@@ -178,15 +210,23 @@ st.markdown(
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
+    # Breadcrumb — orients the user: app › active MCP server.
+    _crumb_active = ((st.session_state.servers or {}).get("active_name") or "MCP server").strip()
+    st.markdown(
+        f'<div class="sidebar-crumb">🏠 Assistant <span class="sep">›</span> '
+        f'{escape(_crumb_active)}</div>',
+        unsafe_allow_html=True,
+    )
+
     st.markdown("### Conversation")
-    if st.button("New conversation", use_container_width=True):
+    if st.button("New conversation", width='stretch'):
         reset_thread(st.session_state.thread_id)
         st.session_state.thread_id = str(uuid.uuid4())
         st.session_state.turns = []
         st.session_state.pending = None
         st.rerun()
 
-    if st.button("Refresh backend info", use_container_width=True):
+    if st.button("Refresh backend info", width='stretch'):
         _refresh_health()
         st.rerun()
 
@@ -219,7 +259,7 @@ with st.sidebar:
         target_name = selected.get("name")
         custom_user = custom_pwd = None
 
-    if st.button("Connect", type="primary", use_container_width=True):
+    if st.button("Connect", type="primary", width='stretch'):
         if not target_url:
             st.warning("Enter an SSE URL first.")
         else:
@@ -338,6 +378,16 @@ def _match_step_index(tool_steps: list, name: str, call_id) -> int:
     return -1
 
 
+_THINKING_HTML = (
+    '<div class="thinking-box">'
+    '<div class="thinking-dot"></div>'
+    '<div class="thinking-dot"></div>'
+    '<div class="thinking-dot"></div>'
+    '<span>Processing…</span>'
+    '</div>'
+)
+
+
 def _stream_pending() -> None:
     pending_message = st.session_state.pending
     if not pending_message:
@@ -354,14 +404,22 @@ def _stream_pending() -> None:
     st.session_state.turns.append(assistant_turn)
 
     with st.chat_message("assistant"):
+        thinking_placeholder = st.empty()
         tool_area = st.container()
         text_placeholder = st.empty()
         error_placeholder = st.empty()
 
         step_placeholders: list = []  # parallel to assistant_turn["tool_steps"]
 
+        # Pulsing indicator while we wait for the first stream event.
+        thinking_placeholder.markdown(_THINKING_HTML, unsafe_allow_html=True)
+        thinking_active = True
+
         try:
             for event in stream_chat(pending_message, st.session_state.thread_id):
+                if thinking_active:
+                    thinking_placeholder.empty()
+                    thinking_active = False
                 kind = event.get("kind")
 
                 if kind == "token":
@@ -427,6 +485,7 @@ def _stream_pending() -> None:
             assistant_turn["error"] = f"Stream failed: {err}"
             error_placeholder.error(assistant_turn["error"])
         finally:
+            thinking_placeholder.empty()
             assistant_turn["done"] = True
             st.session_state.pending = None
 

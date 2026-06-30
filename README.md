@@ -10,7 +10,7 @@ consumes it. Each top-level folder is its own deliverable — own entry point, o
 | Folder | What it is | Detailed docs |
 | --- | --- | --- |
 | **[`mqacemcpserver/`](mqacemcpserver/README.md)** | The unified MQ + ACE MCP server exposing composite "single-call" tools over one Streamable HTTP endpoint (legacy SSE selectable). | [`mqacemcpserver/README.md`](mqacemcpserver/README.md) |
-| **[`backend/`](backend/README.md)** | Chatbot agent backend — FastAPI + LangGraph (OpenAI) on `:8002`, talks to an MCP server over Streamable HTTP. | [`backend/README.md`](backend/README.md), [`backend/AGENTIC_AI.md`](backend/AGENTIC_AI.md) |
+| **[`agent/`](agent/README.md)** | Chatbot agent backend — FastAPI + LangGraph (OpenAI) on `:8002`, talks to an MCP server over Streamable HTTP. | [`agent/README.md`](agent/README.md), [`agent/AGENTIC_AI.md`](agent/AGENTIC_AI.md) |
 | **[`frontend/`](frontend/README.md)** | Chatbot UI — Streamlit (`:8003`), MCP-server-agnostic. | [`frontend/README.md`](frontend/README.md) |
 | **[`dashboard/`](dashboard/README.md)** | Log analytics dashboard (`:8004`) — one tab per MCP server. | [`dashboard/README.md`](dashboard/README.md) |
 | `scripts/` | PowerShell launchers (`start-all.ps1`, `start-streamlit.ps1`, `stop-all.ps1`) and ops tooling. Each `-Skip*` switch isolates a tier; no switches brings up the whole stack. | — |
@@ -21,7 +21,7 @@ consumes it. Each top-level folder is its own deliverable — own entry point, o
 - **Shared at repo root:** only `resources/` (the daily-extract CSV manifests
   consumed by the MCP server) and the MCP build's dev `.venv`. There is
   **no repo-root `.env`**.
-- **Isolated per component:** every app (`mqacemcpserver/`, `backend/`,
+- **Isolated per component:** every app (`mqacemcpserver/`, `agent/`,
   `frontend/`, `dashboard/`) owns its entry point, `requirements.txt`,
   `README.md`, and its **own `.env`** (copy that folder's `.env.example`). Deploy
   any one folder on its own.

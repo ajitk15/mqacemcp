@@ -38,7 +38,10 @@
       "Bash(export MCP_TLS_INSECURE=\"true\")",
       "Bash(export MCP_TLS_CA_BUNDLE=\"\")",
       "Bash(git rm *)",
-      "Bash(grep -viE 'backend/\\\\.env|frontend/\\\\.env|dashboard/\\\\.env|backend\\\\\\\\\\\\.env')"
+      "Bash(grep -viE 'backend/\\\\.env|frontend/\\\\.env|dashboard/\\\\.env|backend\\\\\\\\\\\\.env')",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(agent/.venv/Scripts/python.exe -c \"import fastapi, langgraph; print\\('venv OK'\\)\")",
+      "PowerShell(Stop-Process *)"
     ]
   }
 }

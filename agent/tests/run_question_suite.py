@@ -6,9 +6,9 @@ and exits non-zero if unreachable.
 
 Usage (from repo root, with either venv that has httpx):
 
-  python backend/tests/run_question_suite.py --out report.md
-  python backend/tests/run_question_suite.py --filter Q1,Q5 --out smoke.md
-  python backend/tests/run_question_suite.py --only ace --out ace.md
+  python agent/tests/run_question_suite.py --out report.md
+  python agent/tests/run_question_suite.py --filter Q1,Q5 --out smoke.md
+  python agent/tests/run_question_suite.py --only ace --out ace.md
 """
 from __future__ import annotations
 

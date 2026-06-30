@@ -50,7 +50,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot       = Split-Path -Parent $PSScriptRoot
 $McpDir         = Join-Path $RepoRoot "mqacemcpserver"
-$BackendDir     = Join-Path $RepoRoot "backend"
+$BackendDir     = Join-Path $RepoRoot "agent"
 $StreamlitDir   = Join-Path $RepoRoot "frontend"
 $PidFile        = Join-Path $PSScriptRoot ".pids"
 
@@ -74,7 +74,7 @@ function Get-EnvValue {
     return $Default
 }
 
-# The single build loads mqacemcpserver\.env; the backend loads backend\.env.
+# The single build loads mqacemcpserver\.env; the backend loads agent\.env.
 $McpEnv      = Join-Path $McpDir ".env"
 $BackendEnv  = Join-Path $BackendDir ".env"
 $McpPort     = Get-EnvValue $McpEnv "MCP_PORT" "8010"
@@ -106,15 +106,15 @@ if (-not $SkipBackend) {
     $beEnv        = Join-Path $BackendDir ".env"
     if (-not (Test-Path $beVenvPython)) {
         $problems += "Missing backend venv. Fix: cd `"$BackendDir`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r requirements.txt"
-        Write-Bad "backend\.venv\Scripts\python.exe not found"
+        Write-Bad "agent\.venv\Scripts\python.exe not found"
     } else { Write-Ok "backend venv present" }
     if (-not (Test-Path $beApp)) {
-        $problems += "Missing backend\app.py."
-        Write-Bad "backend\app.py not found"
+        $problems += "Missing agent\app.py."
+        Write-Bad "agent\app.py not found"
     } else { Write-Ok "backend app.py present" }
     if (-not (Test-Path $beEnv)) {
-        $problems += "Missing backend\.env. Fix: cd `"$BackendDir`" ; copy .env.example .env ; then edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"
-        Write-Bad "backend\.env not found"
+        $problems += "Missing agent\.env. Fix: cd `"$BackendDir`" ; copy .env.example .env ; then edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"
+        Write-Bad "agent\.env not found"
     } else { Write-Ok "backend .env present" }
 }
 
@@ -180,7 +180,7 @@ if (-not $SkipMcp) {
 
 if (-not $SkipBackend) {
     $cmd = ".\.venv\Scripts\python.exe app.py"
-    $pids += Start-Service-Window -Title "Chat Backend (FastAPI :$BackendPort)" `
+    $pids += Start-Service-Window -Title "Agent (FastAPI :$BackendPort)" `
         -WorkingDirectory $BackendDir -Command $cmd
     Start-Sleep -Seconds 3  # let the backend load tools before the frontend hits it
 }

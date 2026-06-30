@@ -10,10 +10,10 @@ MCP-server-specific tool names hardcoded anywhere.
 > files in this repo, with concrete behaviour walk-throughs.
 
 ```
-Browser → Streamlit UI (:8501)
+Browser → Streamlit UI (:8003)
    │  httpx → /api/chat/stream   (SSE)
    ▼
-FastAPI backend (:8001)
+FastAPI backend (:8002)
    │  LangGraph agent  (OpenAI + MemorySaver)
    │  langchain-mcp-adapters MultiServerMCPClient
    ▼
@@ -52,7 +52,7 @@ Any MCP server over Streamable HTTP (or legacy SSE)
 ## Frontend
 
 The backend is fronted by a **Streamlit** app in `frontend/`
-(`app.py`, `client.py`, `renderers.py`), default port **8501**. It talks
+(`app.py`, `client.py`, `renderers.py`), default port **8003**. It talks
 to the backend over HTTP/SSE via `httpx` and stays MCP-server-agnostic —
 all header text, scope hint, and tool catalog come from `/api/health`.
 
@@ -99,7 +99,7 @@ copy .env.example .env
 #           Add MCP_AUTH_USER/PASSWORD if your MCP server uses Basic Auth.
 python app.py
 # Verify the backend can talk to your MCP server:
-curl http://localhost:8001/api/health
+curl http://localhost:8002/api/health
 ```
 
 A successful `/api/health` response now looks like:
@@ -107,13 +107,13 @@ A successful `/api/health` response now looks like:
 ```json
 {
   "status": "ok",
-  "mcp_sse_url": "http://localhost:8000/sse",
+  "mcp_sse_url": "https://localhost:8010/mcp",
   "tool_count": 14,
   "tools": ["dspmq", "list_ace_nodes", "get_cert_details", "..."],
   "bot_domain": "IBM MQ and IBM ACE",
   "header_title": "IBM MQ and ACE assistant",
   "header_subtitle": "",
-  "prompt_source": "C:/.../backend/prompts/system.md",
+  "prompt_source": "C:/.../agent/prompts/system.md",
   "tool_allowlist": [],
   "tool_denylist": []
 }
@@ -126,14 +126,14 @@ cd frontend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env          # edit if your backend isn't on :8001
-.\.venv\Scripts\python.exe -m streamlit run app.py --server.port 8501
-# → http://localhost:8501
+copy .env.example .env          # edit if your backend isn't on :8002
+.\.venv\Scripts\python.exe -m streamlit run app.py --server.port 8003
+# → http://localhost:8003
 ```
 
 ## Configuration
 
-### Backend (`backend/.env`)
+### Backend (`agent/.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -146,17 +146,17 @@ copy .env.example .env          # edit if your backend isn't on :8001
 | `HEADER_TITLE` | `MCP Chatbot` | UI title bar text. |
 | `HEADER_SUBTITLE` | — | Optional subtitle override. When empty, the UI auto-derives one from `BOT_DOMAIN`. |
 | `BOT_DOMAIN` | — | When set, the LLM only answers questions about this domain and refuses everything else. Empty = unrestricted. |
-| `SYSTEM_PROMPT_FILE` | — | Optional path override for the system prompt template. Default resolution looks for `backend/prompts/system.md`, then falls back to the inline template. |
+| `SYSTEM_PROMPT_FILE` | — | Optional path override for the system prompt template. Default resolution looks for `agent/prompts/system.md`, then falls back to the inline template. |
 | `TOOL_ALLOWLIST` | — | Comma-separated tool names; when non-empty, ONLY these tools are exposed to the agent. |
 | `TOOL_DENYLIST` | — | Comma-separated tool names; always removed (wins over allowlist for the same name). |
 | `CHAT_HOST`, `CHAT_PORT` | `0.0.0.0`, `8001` | FastAPI bind. |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:8501` | Comma-separated browser origins allowed to call the backend. (Streamlit calls the backend server-side, so this only matters for direct browser-origin callers.) |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:8003` | Comma-separated browser origins allowed to call the backend. (Streamlit calls the backend server-side, so this only matters for direct browser-origin callers.) |
 
 ### Frontend (`frontend/.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MCP_BACKEND_URL` | `http://localhost:8001` | URL of the FastAPI backend. |
+| `MCP_BACKEND_URL` | `http://localhost:8002` | URL of the FastAPI backend. |
 | `PAGE_TITLE` | backend's `HEADER_TITLE` | Override the browser tab title. |
 | `PAGE_ICON` | `💬` | Page icon (any single emoji). |
 
@@ -169,7 +169,7 @@ backend `.env` through `/api/health`.
 
 ### Edit the system prompt
 
-The active system prompt lives at **`backend/prompts/system.md`**.
+The active system prompt lives at **`agent/prompts/system.md`**.
 It's plain markdown with two required placeholders:
 
 - `{scope_block}` — auto-replaced with the BOT_DOMAIN refusal block when
@@ -271,7 +271,7 @@ sanitised error in the chat — no stack trace.
 The chatbot stack is two sibling folders at the repo root:
 
 ```
-backend/                                   ← this folder (FastAPI agent, :8001)
+agent/                                   ← this folder (FastAPI agent, :8002)
 ├── README.md                              ← this file
 ├── AGENTIC_AI.md                          ← agentic-AI component map
 ├── SAMPLE_QUESTIONS.md                    ← curated demo prompts
@@ -290,7 +290,7 @@ backend/                                   ← this folder (FastAPI agent, :8001
 ├── requirements.txt
 └── .env.example
 
-frontend/                                  ← Streamlit UI (:8501)
+frontend/                                  ← Streamlit UI (:8003)
 ├── app.py                                 ← Streamlit page, session state,
 │                                            streaming loop
 ├── client.py                              ← httpx client for /api/health,

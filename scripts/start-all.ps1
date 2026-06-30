@@ -6,7 +6,7 @@
     Opens one new PowerShell window per service so each has its own visible log
     stream:
       1. MCP server   (mqacemcpserver\mqacemcpserver.py, Streamable HTTP on :8010)
-      2. Chat backend (backend\app.py, FastAPI on :8002)
+      2. Agent (agent\app.py, FastAPI on :8002)
       3. Streamlit UI (frontend\app.py, on :8003)
       4. Dashboard    (dashboard\dashboard_server.py, on :8004)
 
@@ -77,7 +77,7 @@ $RepoRoot     = Split-Path -Parent $PSScriptRoot
 $McpDir       = Join-Path $RepoRoot "mqacemcpserver"
 $McpEntry     = Join-Path $McpDir "mqacemcpserver.py"
 $McpReqs      = Join-Path $McpDir "requirements.txt"
-$BackendDir   = Join-Path $RepoRoot "backend"
+$BackendDir   = Join-Path $RepoRoot "agent"
 $FrontendDir  = Join-Path $RepoRoot "frontend"
 $DashboardDir = Join-Path $RepoRoot "dashboard"
 $RootVenvPy   = Join-Path $RepoRoot ".venv\Scripts\python.exe"
@@ -151,7 +151,7 @@ if ($Setup) {
     Write-Step "Setup: installing per-component requirements"
     # The MCP server uses the repo-root .venv.
     if (-not $SkipMcp)       { Initialize-Venv -Label "mcp"       -VenvDir $RepoRoot     -ReqFile $McpReqs }
-    if (-not $SkipBackend)   { Initialize-Venv -Label "backend"   -VenvDir $BackendDir   -ReqFile (Join-Path $BackendDir "requirements.txt") }
+    if (-not $SkipBackend)   { Initialize-Venv -Label "agent"   -VenvDir $BackendDir   -ReqFile (Join-Path $BackendDir "requirements.txt") }
     if (-not $SkipFrontend)  { Initialize-Venv -Label "frontend"  -VenvDir $FrontendDir  -ReqFile (Join-Path $FrontendDir "requirements.txt") }
     if (-not $SkipDashboard) { Initialize-Venv -Label "dashboard" -VenvDir $DashboardDir -ReqFile (Join-Path $DashboardDir "requirements.txt") }
     Write-Host ""
@@ -181,14 +181,14 @@ if (-not $SkipBackend) {
     Write-Step "Checking chat backend prerequisites"
     if (-not (Test-Path (Join-Path $BackendDir ".venv\Scripts\python.exe"))) {
         $problems += "Missing backend venv. Fix: .\scripts\start-all.ps1 -Setup"
-        Write-Bad "backend\.venv\Scripts\python.exe not found"
+        Write-Bad "agent\.venv\Scripts\python.exe not found"
     } else { Write-Ok "backend venv present" }
     if (-not (Test-Path (Join-Path $BackendDir "app.py"))) {
-        $problems += "Missing backend\app.py."; Write-Bad "backend\app.py not found"
+        $problems += "Missing agent\app.py."; Write-Bad "agent\app.py not found"
     } else { Write-Ok "backend app.py present" }
     if (-not (Test-Path (Join-Path $BackendDir ".env"))) {
-        $problems += "Missing backend\.env. Fix: cd `"$BackendDir`" ; copy .env.example .env ; then edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"
-        Write-Bad "backend\.env not found"
+        $problems += "Missing agent\.env. Fix: cd `"$BackendDir`" ; copy .env.example .env ; then edit it (OPENAI_API_KEY, MCP_SSE_URL, MCP_AUTH_*)"
+        Write-Bad "agent\.env not found"
     } else { Write-Ok "backend .env present" }
 }
 
@@ -261,7 +261,7 @@ if (-not $SkipMcp) {
 
 if (-not $SkipBackend) {
     $cmd = ".\.venv\Scripts\python.exe app.py"
-    $pids += Start-Service-Window -Title "Chat Backend (FastAPI :$BackendPort)" `
+    $pids += Start-Service-Window -Title "Agent (FastAPI :$BackendPort)" `
         -WorkingDirectory $BackendDir -Command $cmd
     Start-Sleep -Seconds 3  # let the backend load tools before the frontend hits it
 }
@@ -312,7 +312,7 @@ if (-not $SkipMcp) {
     Write-Host "    Health     : ${McpScheme}://localhost:$McpPort/healthz"  -ForegroundColor Gray
 }
 if (-not $SkipBackend) {
-    Write-Host "  Chat backend (:$BackendPort)" -ForegroundColor Cyan
+    Write-Host "  Agent (:$BackendPort)" -ForegroundColor Cyan
     Write-Host "    Health     : http://localhost:$BackendPort/api/health"      -ForegroundColor Gray
     Write-Host "    Chat stream: http://localhost:$BackendPort/api/chat/stream" -ForegroundColor Gray
     Write-Host "    Chat reset : http://localhost:$BackendPort/api/chat/reset"  -ForegroundColor Gray

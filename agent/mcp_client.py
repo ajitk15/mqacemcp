@@ -103,7 +103,7 @@ def _resolve_ca_bundle() -> Path | None:
         return None
     p = Path(raw)
     if not p.is_absolute():
-        # Resolve relative to repo root (backend/mcp_client.py -> ../)
+        # Resolve relative to repo root (agent/mcp_client.py -> ../)
         p = (Path(__file__).resolve().parent.parent / p).resolve()
     if not p.is_file():
         raise RuntimeError(f"MCP_TLS_CA_BUNDLE={raw} not found at {p}")

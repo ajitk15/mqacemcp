@@ -3,7 +3,7 @@
 How to run the stack. For what each component is, the ports, and how they fit
 together, see [`DESIGN.md`](DESIGN.md).
 
-The four apps — `mqacemcpserver/`, `backend/`, `frontend/`, `dashboard/` — are each
+The four apps — `mqacemcpserver/`, `agent/`, `frontend/`, `dashboard/` — are each
 independently deployable with their own `requirements.txt` and `.env` (copy from
 `.env.example`). There is **no repo-root `.env`**.
 
@@ -51,7 +51,7 @@ First run, copy each `.env`:
 
 ```powershell
 copy mqacemcpserver\.env.example mqacemcpserver\.env
-copy backend\.env.example        backend\.env       # set OPENAI_API_KEY
+copy agent\.env.example          agent\.env         # set OPENAI_API_KEY
 copy frontend\.env.example       frontend\.env
 copy dashboard\.env.example      dashboard\.env
 ```

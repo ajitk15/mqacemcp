@@ -141,5 +141,5 @@ modification verbs).
   doesn't carry context across unrelated tests.
 - Reset the thread (UI reset control) between modification tests so the refusal
   isn't influenced by prior context.
-- If a tool times out, check `backend/.env` → `MCP_SSE_URL` and the running MCP
+- If a tool times out, check `agent/.env` → `MCP_SSE_URL` and the running MCP
   server's `/healthz`.

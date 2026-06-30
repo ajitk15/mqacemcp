@@ -15,11 +15,11 @@ server registered it still works as a one-server baseline run.
 Assumes the stack is already running (the MCP server(s) under test, backend,
 dashboard). Probes ``/api/health`` first and exits non-zero if unreachable.
 
-Usage (from repo root, with the backend venv that has httpx):
+Usage (from repo root, with the agent venv that has httpx):
 
-  backend\\.venv\\Scripts\\python.exe backend\\tests\\compare_servers.py --limit 6
-  ...\\python.exe backend\\tests\\compare_servers.py --only ace --out custom-logs\\compare_results.json
-  ...\\python.exe backend\\tests\\compare_servers.py --servers https://localhost:8010/sse,https://remote-host:8010/sse
+  agent\\.venv\\Scripts\\python.exe agent\\tests\\compare_servers.py --limit 6
+  ...\\python.exe agent\\tests\\compare_servers.py --only ace --out custom-logs\\compare_results.json
+  ...\\python.exe agent\\tests\\compare_servers.py --servers https://localhost:8010/sse,https://remote-host:8010/sse
 
 NOTE: this drives the real LLM (costs tokens) and temporarily switches the
 backend's active server. By default it restores the startup default server when

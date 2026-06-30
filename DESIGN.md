@@ -64,13 +64,13 @@ tools**: `mq_queue_inspect`, `mq_channel_inspect`, `mq_host_overview`,
 - Writes one JSONL line per tool call to `LOG_DIR` (`queries-*.jsonl`) — the
   dashboard's data source.
 
-### Backend — `backend/` (FastAPI `:8002`)
+### Backend — `agent/` (FastAPI `:8002`)
 The agent that turns natural language into MCP tool calls:
 - A LangGraph `create_react_agent` (`ChatOpenAI` + `MemorySaver` for per-thread
-  memory) in `backend/agent.py`.
+  memory) in `agent/agent.py`.
 - Loads the MCP tools over **Streamable HTTP** (transport selectable via
   `MCP_TRANSPORT`) using `langchain_mcp_adapters.MultiServerMCPClient`
-  pointed at `MCP_SSE_URL` (`backend/mcp_client.py`).
+  pointed at `MCP_SSE_URL` (`agent/mcp_client.py`).
 - Endpoints: `/api/health`, `/api/mcp/servers`, `/api/mcp/connect`,
   `/api/chat/stream` (Server-Sent Events), `/api/chat/reset`.
 - MCP-server-agnostic — no tool names hardcoded; retarget by changing `MCP_SSE_URL`.

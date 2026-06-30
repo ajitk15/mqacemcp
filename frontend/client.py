@@ -6,7 +6,7 @@ Three backend endpoints:
   POST /api/chat/stream    -> server-sent events of typed chat events
 
 This module is MCP-server-agnostic; it only speaks the wire protocol
-defined in `chatbot/backend/schemas.py`.
+defined in `chatbot/agent/schemas.py`.
 """
 from __future__ import annotations
 

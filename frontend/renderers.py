@@ -1,6 +1,6 @@
 """Block + tool-step renderers for the Streamlit chat UI.
 
-These mirror the `Block` shapes in `chatbot/backend/schemas.py`. They are
+These mirror the `Block` shapes in `chatbot/agent/schemas.py`. They are
 MCP-server-agnostic — no tool names are referenced.
 """
 from __future__ import annotations
@@ -108,7 +108,7 @@ def render_block(block: Dict[str, Any]) -> None:
                 {col: (row[col_index] if col_index < len(row) else "") for col_index, col in enumerate(columns)}
                 for row in rows
             ]
-            st.dataframe(data, use_container_width=True, hide_index=True)
+            st.dataframe(data, width='stretch', hide_index=True)
         else:
             for row in rows:
                 st.markdown(" | ".join(str(cell) for cell in row))
@@ -145,7 +145,7 @@ def render_tool_step(step: Dict[str, Any], running: bool = False) -> None:
     if args_summary:
         label = f"{label}  ({args_summary})"
 
-    with st.expander(label, expanded=True):
+    with st.expander(label, expanded=False):  # collapsed by default — keep the answer front-and-center
         if result is not None:
             render_block(result)
         elif running:

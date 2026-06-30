@@ -7,7 +7,7 @@
 [server]
 enableStaticServing = true
 
-# Accenture-inspired palette: signature purple (#A100FF) on a clean white theme.
+# Brand palette: purple (#A100FF) on a clean white theme.
 [theme]
 primaryColor = "#A100FF"
 backgroundColor = "#FFFFFF"

@@ -358,7 +358,7 @@ mqacemcpserver/
 │   └── smoke_test_aws.py      #   same scaffolding, call table tuned to AWS extracts
 ├── tests/                     # OFFLINE pytest suite (in-process, no server)
 │   ├── conftest.py            # Sets temp LOG_DIR before importing server.*
-│   ├── test_composite_tools.py # 25 offline tests
+│   ├── test_composite_tools.py # 39 offline tests
 │   └── test_csv_cache.py      # 4 tests — manifest auto-reload + freshness
 ├── requirements.txt           # mcp, httpx, pandas, python-dotenv, uvicorn, urllib3
 ├── .env.example               # Template; LOG_DIR=./logs, MCP_PORT=8010
@@ -434,7 +434,7 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
-# Expected: 21 passed in ~3s
+# Expected: 43 passed in ~10s
 ```
 
 ### Useful pytest invocations
@@ -458,7 +458,7 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver
 .venv\Scripts\python.exe -m pytest -s
 ```
 
-### What the 25 tests cover
+### What the tests cover (43 total)
 
 | # | Group | Test | What it asserts |
 | --- | --- | --- | --- |
