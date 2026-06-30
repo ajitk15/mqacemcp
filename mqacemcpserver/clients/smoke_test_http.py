@@ -228,6 +228,12 @@ def classify(text, mode):
     s = text.lstrip()
     is_warn = s.startswith("⚠️") or s.startswith("⚠")
     is_err = s.startswith("❌") or s.startswith("🚫")
+    # A FastMCP framework error (bad/missing arguments, or the tool itself
+    # raised) is a smoke-test bug, not a valid tool response — fail it in EVERY
+    # mode so it can never hide behind a "pass". Classic case: passing
+    # `search_string` instead of the required `search_strings` list.
+    if s.startswith("Error executing tool") or "validation error for" in s:
+        return "fail", "tool/argument error (check this call's args)"
     parsed_status = None
     if s.startswith("{"):
         try:
