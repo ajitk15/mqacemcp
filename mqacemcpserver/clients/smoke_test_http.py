@@ -1,15 +1,14 @@
 """Streamable-HTTP smoke-test client for mqacemcpserver.
 
-Identical in intent to `smoke_test.py` (lists tools, then exercises each
-composite tool), but speaks the **Streamable HTTP** transport against the
-`/mcp` endpoint instead of legacy SSE's `/sse`. Use this when the server runs
-with `MCP_TRANSPORT=streamable-http` (the default).
+Connects to the composites server over the **Streamable HTTP** transport
+(`/mcp` endpoint), lists tools, then exercises each of the composite tools.
+Use this when the server runs with `MCP_TRANSPORT=streamable-http` (the
+default). For the legacy SSE transport (`/sse`) use `smoke_test.py` instead.
 
-All the test data and helpers (`CALLS`, `EXPECTED_TOOLS`, `classify`,
-`select_calls`, `preview`, `heading`, the insecure httpx factory, and the
-resolved credentials) are imported from `smoke_test` so the two clients never
-drift. Run from inside `mqacemcpserver/clients/` or anywhere — the file adds its
-own directory to `sys.path` so the sibling import resolves.
+This client is fully self-contained — it does NOT import `smoke_test.py`. The
+two clients are kept independent on purpose; if you change the test data
+(`CALLS`) or the result rules (`classify`) here, mirror the change in
+`smoke_test.py` if you want both transports tested the same way.
 
 Usage (from the build folder, with the shared repo-root venv):
     ..\\.venv\\Scripts\\python.exe clients\\smoke_test_http.py            # all calls
@@ -20,23 +19,220 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import httpx
 import urllib3
+from dotenv import load_dotenv
 
-# Make the sibling `smoke_test` importable regardless of cwd.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
-import smoke_test as st  # noqa: E402  (reuse CALLS, helpers, creds, factory)
+MCP_AUTH_USER = os.getenv("MCP_AUTH_USER", "")
+MCP_AUTH_PASSWORD = os.getenv("MCP_AUTH_PASSWORD", "")
+MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+MCP_PORT = os.getenv("MCP_PORT", "8010")
+MCP_TLS_CERT = os.getenv("MCP_TLS_CERT", "")
+MCP_TLS_KEY = os.getenv("MCP_TLS_KEY", "")
 
-# The streamable-http endpoint mirrors smoke_test's host/port but targets /mcp.
-# Honour an explicit MCP_REMOTE_SERVER_URL override (e.g. behind a proxy).
-_parsed = urlparse(st.SSE_URL)
-_scheme = _parsed.scheme or "http"
-MCP_URL = f"{_scheme}://{st.MCP_HOST}:{st.MCP_PORT}/mcp"
+if MCP_HOST in ("", "0.0.0.0"):
+    MCP_HOST = "127.0.0.1"
+
+_scheme = "https" if (MCP_TLS_CERT and MCP_TLS_KEY) else "http"
+# Honour an explicit override (e.g. behind a proxy); otherwise target /mcp.
+MCP_URL = os.getenv("MCP_REMOTE_SERVER_URL", f"{_scheme}://{MCP_HOST}:{MCP_PORT}/mcp")
+
+
+def _make_insecure_httpx_client(headers=None, timeout=None, auth=None):
+    kwargs = {"follow_redirects": True, "verify": False}
+    kwargs["timeout"] = timeout if timeout is not None else httpx.Timeout(30.0, read=300.0)
+    if headers is not None:
+        kwargs["headers"] = headers
+    if auth is not None:
+        kwargs["auth"] = auth
+    return httpx.AsyncClient(**kwargs)
+
+
+def heading(text):
+    bar = "=" * 64
+    print(f"\n{bar}\n  {text}\n{bar}")
+
+
+def preview(text, limit=12):
+    """Print an indented preview of `text`. `limit=None` prints every line."""
+    lines = text.split("\n")
+    shown = lines if limit is None else lines[:limit]
+    for line in shown:
+        print(f"    {line}")
+    if limit is not None and len(lines) > limit:
+        print(f"    ... ({len(lines) - limit} more lines)")
+
+
+EXPECTED_TOOLS = {
+    "mq_queue_inspect", "mq_channel_inspect", "mq_host_overview",
+    "ace_node_overview", "ace_server_explore", "ace_search",
+    "get_cert_details",
+}
+
+# Object names below are drawn from the current offline manifests under
+# resources/ (qmgr_dump.csv, node_dump.csv, node_config.csv, cert_dump.csv).
+# QMs:    MQNODE1, MQNODE2, MQQM1, MQREPO1, MQREPO2  (all on localhost)
+# Queues: QL.INPUT / QL.OUT / QL.SOURCE (MQNODE1/2), DEV.QUEUE.1 (MQQM1),
+#         QL.ADMIN.REQUEST(+.ALIAS) (MQREPO1), QL.REPO.AUDIT (MQREPO2)
+# Chans:  <QM>.CLUSRCVR / <QM>.CLUSSDR, DEV.APP.SVRCONN (MQQM1)
+# ACE:    NODE1, NODE2 -> servers ACE_DEMO_CACHE/CONNECTORS/MESSAGING/TRANSFORM
+# Certs:  aliases mq-ssl-2026, mqweb-https, ace-admin-tls, ace-rest-api-tls, ...
+CALLS = [
+    # --- mq_queue_inspect (6) -------------------------------------------------
+    ("mq_queue_inspect", {"queue_names": ["QL.INPUT"]}, "live"),                                          # default MQ_URL_BASE QM
+    ("mq_queue_inspect", {"queue_names": ["QL.INPUT", "QL.OUT"], "qmgr_name": "MQNODE1"}, "live"),        # MULTI-TARGET: two queues, one call
+    ("mq_queue_inspect", {"queue_names": ["QL.SOURCE"], "qmgr_name": "MQNODE1"}, "live"),
+    ("mq_queue_inspect", {"queue_names": ["DEV.QUEUE.1"], "qmgr_name": "MQQM1"}, "live"),
+    ("mq_queue_inspect", {"queue_names": ["QL.ADMIN.REQUEST.ALIAS"], "qmgr_name": "MQREPO1"}, "live"),    # QALIAS -> TARGET resolution
+    ("mq_queue_inspect", {"queue_names": ["NOPE.DOES.NOT.EXIST"], "qmgr_name": "MQNODE1"}, "expect_not_found"),
+
+    # --- mq_channel_inspect (4) -----------------------------------------------
+    ("mq_channel_inspect", {"channel_names": ["MQNODE1.CLUSRCVR"], "qmgr_name": "MQNODE1"}, "live"),
+    ("mq_channel_inspect", {"channel_names": ["MQNODE1.CLUSRCVR", "MQNODE1.CLUSSDR"], "qmgr_name": "MQNODE1"}, "live"),  # MULTI-TARGET: two channels, one call
+    ("mq_channel_inspect", {"channel_names": ["DEV.APP.SVRCONN"], "qmgr_name": "MQQM1"}, "live"),         # SVRCONN channel
+    ("mq_channel_inspect", {"channel_names": ["CH.UNKNOWN.XYZ"], "qmgr_name": "MQNODE1"}, "expect_not_found"),
+
+    # --- mq_host_overview (13) ------------------------------------------------
+    ("mq_host_overview", {}, "live"),                                                              # default MQ_URL_BASE
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"]}, "live"),                                     # resolved via manifest
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1", "MQREPO1"]}, "live"),                          # MULTI-TARGET: two QMs, one call
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY QMGR ALL"}, "live"),    # + read-only DISPLAY
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY QLOCAL(QL.INPUT) ALL"}, "live"),                                       # full queue properties
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY QLOCAL(QL.INPUT) MAXDEPTH CURDEPTH QDEPTHHI QDEPTHLO"}, "live"),       # max depth + thresholds
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY QLOCAL(QL.INPUT) CRDATE CRTIME"}, "live"),                             # queue creation date/time
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY QMGR DEADQ DEFXMITQ MAXMSGL MAXHANDS CCSID"}, "live"),                 # focused QMGR properties
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY QLOCAL(QL.*) CURDEPTH MAXDEPTH"}, "live"),                             # wildcard queue scan
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY CHANNEL(MQNODE1.CLUSRCVR) ALL"}, "live"),                              # channel properties
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY CHSTATUS(MQNODE1.CLUSRCVR)"}, "live"),                                 # channel status
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DEFINE QLOCAL(SMOKE.BLOCK.TEST)"}, "expect_blocked"),
+    ("mq_host_overview", {"hostnames": ["loq-mq01"], "mqsc_command": "DISPLAY QMGR"}, "expect_warn_no_qmgr"),
+
+    # --- ace_node_overview (5) ------------------------------------------------
+    ("ace_node_overview", {"nodes": ["NODE1"]}, "live"),                               # configured node (resources/node_config.csv)
+    ("ace_node_overview", {"nodes": ["NODE1", "NODE2"]}, "live"),                      # MULTI-TARGET: two nodes, one call
+    ("ace_node_overview", {"nodes": ["NODE2"]}, "live"),
+    ("ace_node_overview", {"nodes": ["NODE3"]}, "expect_error_envelope"),              # not configured
+    ("ace_node_overview", {"nodes": ["GHOST.NODE"]}, "expect_error_envelope"),
+
+    # --- ace_server_explore (6) -----------------------------------------------
+    ("ace_server_explore", {"node": "NODE1", "servers": ["ACE_DEMO_CACHE"]}, "live"),
+    ("ace_server_explore", {"node": "NODE1", "servers": ["ACE_DEMO_CACHE", "ACE_DEMO_TRANSFORM"]}, "live"),  # MULTI-TARGET: two servers, one call
+    ("ace_server_explore", {"node": "NODE2", "servers": ["ACE_DEMO_MESSAGING"]}, "live"),
+    ("ace_server_explore", {"node": "NODE1", "servers": ["ACE_DEMO_CONNECTORS"]}, "live"),
+    ("ace_server_explore", {"node": "NODE1", "servers": ["ACE_DEMO_CONNECTORS"], "application": "AmazonS3"}, "live"),  # scope flows to one application
+    ("ace_server_explore", {"node": "NODE1", "servers": ["GHOST.SERVER"]}, "expect_error_envelope"),
+
+    # --- ace_search (5) -------------------------------------------------------
+    ("ace_search", {"search_strings": [""], "scope": "nodes"}, "offline"),
+    ("ace_search", {"search_strings": ["ACE_DEMO_TRANSFORM"], "scope": "dump"}, "offline"),
+    ("ace_search", {"search_strings": ["AmazonS3", "Salesforce"], "scope": "dump"}, "offline"),  # MULTI-TARGET: match either, one call
+    ("ace_search", {"search_strings": [""]}, "offline"),                                         # default scope = all
+    ("ace_search", {"search_strings": ["x"], "scope": "bogus"}, "expect_error_envelope"),
+
+    # --- get_cert_details (4) -------------------------------------------------
+    ("get_cert_details", {"search_strings": ["mq-ssl-2026"]}, "offline"),                            # match by alias
+    ("get_cert_details", {"search_strings": ["mqweb-https"]}, "offline"),                            # match by alias
+    ("get_cert_details", {"search_strings": ["ace-admin-tls", "ace-rest-api-tls"]}, "offline"),      # MULTI-TARGET: two queries merged, one call
+    ("get_cert_details", {"search_strings": ["no-such-cert-anywhere"]}, "offline"),                  # success, empty results
+]
+
+
+# Category selectors for the optional CLI filter (see select_calls).
+_CATEGORY = {
+    "mq": lambda n: n.startswith("mq_"),
+    "ace": lambda n: n.startswith("ace_"),
+    "cert": lambda n: "cert" in n,
+}
+
+
+def select_calls(calls, selectors):
+    """Filter CALLS by CLI selectors.
+
+    Each selector is either a category keyword ('mq', 'ace', 'cert') or an
+    exact / substring tool name (e.g. 'mq_queue_inspect', 'overview'). A call
+    is kept if it matches ANY selector. Empty selectors -> run everything.
+    """
+    if not selectors:
+        return list(calls)
+
+    def matches(name, sel):
+        if sel in _CATEGORY:
+            return _CATEGORY[sel](name)
+        return sel == name or sel in name
+
+    return [c for c in calls if any(matches(c[0], s) for s in selectors)]
+
+
+def classify(text, mode):
+    s = text.lstrip()
+    is_warn = s.startswith("⚠️") or s.startswith("⚠")
+    is_err = s.startswith("❌") or s.startswith("🚫")
+    parsed_status = None
+    if s.startswith("{"):
+        try:
+            parsed_status = json.loads(s).get("status")
+        except Exception:
+            pass
+
+    if mode == "expect_not_found":
+        # Two valid shapes depending on reachability:
+        #   1. The sanitised "❌ ... not found ..." hint (QM not in manifest, or
+        #      the host could not be queried).
+        #   2. The live MQSC object-not-found text returned when the QM IS
+        #      reachable but the object is absent, e.g.
+        #      "AMQ8147E: IBM MQ object ... not found." / "AMQ8420I: ... not found.".
+        if "not found" in s.lower():
+            return "pass", ""
+        return "fail", "expected a 'not found' signal (❌ hint or AMQ…not found)"
+
+    if mode == "expect_blocked":
+        if "Modification requests are not permitted" in s:
+            return "pass", ""
+        return "fail", "expected MODIFY_BLOCKED_MSG banner"
+
+    if mode == "expect_warn_no_qmgr":
+        if "without `qmgr_name`" in s:
+            return "pass", ""
+        return "fail", "expected '⚠️ ... without `qmgr_name`' warning"
+
+    if mode == "expect_error_envelope":
+        # Three valid shapes for a sanitised error:
+        #   1. Top-level {"status": "error", ...}
+        #   2. Text starting with ❌/🚫/⚠️
+        #   3. JSON envelope whose dict has any key ending in "_error"
+        #      (e.g. ace_server_explore's {"applications_error": "...", ...})
+        has_field_error = False
+        if s.startswith("{"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, dict):
+                    has_field_error = any(
+                        k.endswith("_error") for k in parsed.keys()
+                    )
+            except Exception:
+                pass
+        if parsed_status == "error" or is_err or is_warn or has_field_error:
+            return "pass", ""
+        return "fail", "expected sanitised error envelope"
+
+    if mode == "offline":
+        if is_warn or is_err or parsed_status == "error":
+            return "fail", "offline tool returned an error envelope"
+        return "pass", ""
+    if is_warn:
+        return "skip", "upstream curated ⚠️ envelope"
+    if parsed_status == "error":
+        return "skip", "upstream JSON status=error"
+    if is_err:
+        return "skip", "manifest miss / restricted"
+    return "pass", ""
 
 
 async def main():
@@ -55,14 +251,14 @@ async def main():
         return 1
 
     auth = None
-    if st.MCP_AUTH_USER and st.MCP_AUTH_PASSWORD:
-        auth = httpx.BasicAuth(st.MCP_AUTH_USER, st.MCP_AUTH_PASSWORD)
-        print(f"Basic Auth user={st.MCP_AUTH_USER}")
+    if MCP_AUTH_USER and MCP_AUTH_PASSWORD:
+        auth = httpx.BasicAuth(MCP_AUTH_USER, MCP_AUTH_PASSWORD)
+        print(f"Basic Auth user={MCP_AUTH_USER}")
 
-    st.heading(f"mqacemcpserver smoke ({MCP_URL})")
+    heading(f"mqacemcpserver smoke ({MCP_URL})")
 
     async with streamablehttp_client(
-        MCP_URL, auth=auth, httpx_client_factory=st._make_insecure_httpx_client
+        MCP_URL, auth=auth, httpx_client_factory=_make_insecure_httpx_client
     ) as (read, write, _get_session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -77,15 +273,15 @@ async def main():
                     desc = desc[:70] + "..."
                 print(f"  - {t.name}: {desc}")
 
-            missing = st.EXPECTED_TOOLS - names
-            extra = names - st.EXPECTED_TOOLS
+            missing = EXPECTED_TOOLS - names
+            extra = names - EXPECTED_TOOLS
             if missing:
                 print(f"  FAIL: missing tools: {sorted(missing)}")
                 return 1
             if extra:
                 print(f"  FAIL: unexpected tools: {sorted(extra)}")
                 return 1
-            print(f"  OK: catalogue == {len(st.EXPECTED_TOOLS)} expected tools")
+            print(f"  OK: catalogue == {len(EXPECTED_TOOLS)} expected tools")
 
             selectors = [a for a in sys.argv[1:] if not a.startswith("-")]
             flags = [a for a in sys.argv[1:] if a.startswith("-")]
@@ -100,9 +296,9 @@ async def main():
                         preview_limit = int(f.split("=", 1)[1])
                     except ValueError:
                         pass
-            calls = st.select_calls(st.CALLS, selectors)
+            calls = select_calls(CALLS, selectors)
             if selectors:
-                print(f"\n[Filter: {selectors} -> {len(calls)}/{len(st.CALLS)} calls]")
+                print(f"\n[Filter: {selectors} -> {len(calls)}/{len(CALLS)} calls]")
                 if not calls:
                     print(f"  No calls match {selectors}. "
                           f"Use a category (mq/ace/cert) or a tool name.")
@@ -110,12 +306,12 @@ async def main():
 
             results = []
             for i, (name, args, mode) in enumerate(calls, start=1):
-                st.heading(f"[{i}] {name}  ({mode})  args={json.dumps(args)}")
+                heading(f"[{i}] {name}  ({mode})  args={json.dumps(args)}")
                 try:
                     res = await session.call_tool(name, args)
                     text = res.content[0].text if res.content and getattr(res.content[0], "text", None) else ""
-                    st.preview(text, preview_limit)
-                    outcome, reason = st.classify(text, mode)
+                    preview(text, preview_limit)
+                    outcome, reason = classify(text, mode)
                     results.append((i, name, mode, outcome, reason))
                     print(f"  -> {outcome}{(' (' + reason + ')') if reason else ''}")
                 except Exception as e:
@@ -126,7 +322,7 @@ async def main():
             passed = sum(1 for *_, o, _ in results if o == "pass")
             skipped = sum(1 for *_, o, _ in results if o == "skip")
             failed = sum(1 for *_, o, _ in results if o == "fail")
-            st.heading(f"Summary: pass={passed} skip={skipped} fail={failed} of {len(results)}")
+            heading(f"Summary: pass={passed} skip={skipped} fail={failed} of {len(results)}")
 
             # Column-aligned summary: index, tool, online/offline kind, result, mode tag, reason.
             print(f"  {'#':>3}  {'Tool':<22} {'Kind':<8} {'Result':<6}  {'Mode':<22} Reason")
