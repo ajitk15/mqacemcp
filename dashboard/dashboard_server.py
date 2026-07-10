@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import sys
+import urllib.parse
 from pathlib import Path
 
 # Self-contained: only `analyze_logs` (beside this file) is imported, so just
@@ -123,6 +124,20 @@ def _servers() -> list[dict]:
     return [{"name": "MCP server", "key": "default", "log_dir": Path(LOG_DIR)}]
 
 
+def _theme_from_scope(scope) -> str:
+    """Resolve the color theme for a request: ?theme= (validated) wins, else the
+    DASHBOARD_THEME env var, else the default."""
+    try:
+        params = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        q = (params.get("theme", [""])[0] or "").strip().lower()
+    except Exception:
+        q = ""
+    if q in analyze_logs.THEMES:
+        return q
+    env = os.getenv("DASHBOARD_THEME", analyze_logs.DEFAULT_THEME).strip().lower()
+    return env if env in analyze_logs.THEMES else analyze_logs.DEFAULT_THEME
+
+
 async def _send_response(send, status: int, content_type: bytes, body: bytes) -> None:
     await send(
         {
@@ -137,13 +152,21 @@ async def _send_response(send, status: int, content_type: bytes, body: bytes) ->
     await send({"type": "http.response.body", "body": body})
 
 
-def _build_tabs_page(servers: list[dict]) -> bytes:
+def _build_tabs_page(servers: list[dict], theme: str) -> bytes:
     """A small wrapper page: one tab button per server + an iframe.
 
-    Each tab loads /dashboard/<key> (the full per-server dashboard) in the
-    iframe, so the heavy HTML from analyze_logs is reused unchanged.
+    Each tab loads /dashboard/<key>?theme=<theme> (the full per-server dashboard)
+    in the iframe, so the heavy HTML from analyze_logs is reused unchanged and the
+    inner pages match the wrapper's theme.
     """
     from html import escape
+
+    pal = analyze_logs._get_theme(theme)
+    c_primary = pal["primary"]
+    c_primary_dark = pal["primary_dark"]
+    c_page_bg = pal["page_bg"]
+    c_btn_text = pal["btn_text"]
+    qs = f"?theme={escape(theme)}"
 
     buttons = "".join(
         f'<button class="tab{" active" if i == 0 else ""}" '
@@ -159,10 +182,10 @@ def _build_tabs_page(servers: list[dict]) -> bytes:
 <title>MQ + ACE — Log Insights</title>
 <style>
   :root {{ color-scheme: light; }}
-  html, body {{ margin: 0; height: 100%; background: #F7F3FC;
+  html, body {{ margin: 0; height: 100%; background: {c_page_bg};
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }}
-  /* Brand purple nav — mirrors the chat UI's fixed top bar. */
-  .topbar {{ background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+  /* Brand nav — mirrors the chat UI's fixed top bar. */
+  .topbar {{ background: linear-gradient(90deg, {c_primary} 0%, {c_primary_dark} 100%);
     padding: 8px 16px 0; box-shadow: 0 1px 5px rgba(0,0,0,0.12); }}
   .brandline {{ color: #ffffff; font-size: 13px; font-weight: 600;
     letter-spacing: .2px; padding: 2px 4px 8px; }}
@@ -171,7 +194,7 @@ def _build_tabs_page(servers: list[dict]) -> bytes:
     border: 1px solid rgba(255,255,255,0.28); border-bottom: none;
     border-radius: 8px 8px 0 0; padding: 8px 16px; font-size: 0.9rem; cursor: pointer; }}
   .tab:hover {{ background: rgba(255,255,255,0.28); }}
-  .tab.active {{ background: #F7F3FC; color: #6b21a8; border-color: transparent;
+  .tab.active {{ background: {c_page_bg}; color: {c_btn_text}; border-color: transparent;
     font-weight: 700; }}
   .tab.questions {{ margin-left: auto; }}
   iframe {{ border: 0; width: 100%; height: calc(100vh - 70px); display: block; background: #ffffff; }}
@@ -180,25 +203,26 @@ def _build_tabs_page(servers: list[dict]) -> bytes:
     <div class="brandline">MQ + ACE &mdash; Log Insights</div>
     <div class="tabs">{buttons}</div>
   </div>
-  <iframe id="frame" src="dashboard/{first_key}" title="dashboard"></iframe>
+  <iframe id="frame" src="dashboard/{first_key}{qs}" title="dashboard"></iframe>
   <script>
+    var THEME_QS = "{qs}";
     function pick(btn) {{
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById('frame').src = 'dashboard/' + btn.dataset.key;
+      document.getElementById('frame').src = 'dashboard/' + btn.dataset.key + THEME_QS;
     }}
   </script>
 </body></html>"""
     return page.encode("utf-8")
 
 
-async def _serve_tabs(send) -> None:
-    await _send_response(send, 200, b"text/html; charset=utf-8", _build_tabs_page(_servers()))
+async def _serve_tabs(send, theme: str) -> None:
+    await _send_response(send, 200, b"text/html; charset=utf-8", _build_tabs_page(_servers(), theme))
 
 
-async def _serve_dashboard(send, log_dir: Path) -> None:
+async def _serve_dashboard(send, log_dir: Path, theme: str) -> None:
     try:
-        html = analyze_logs.compute_dashboard_html(log_dir)
+        html = analyze_logs.compute_dashboard_html(log_dir, theme=theme)
         body = html.encode("utf-8")
         status = 200
     except Exception:
@@ -252,8 +276,9 @@ async def app(scope, receive, send) -> None:
     if scope.get("type") != "http":
         return
     path = scope.get("path", "")
+    theme = _theme_from_scope(scope)
     if path in ("/dashboard", "/"):
-        await _serve_tabs(send)
+        await _serve_tabs(send, theme)
     elif path == "/dashboard/questions":
         await _serve_questions(send)
     elif path.startswith("/dashboard/"):
@@ -262,7 +287,7 @@ async def app(scope, receive, send) -> None:
         if match is None:
             await _serve_404(send)
         else:
-            await _serve_dashboard(send, match["log_dir"])
+            await _serve_dashboard(send, match["log_dir"], theme)
     elif path == "/healthz":
         await _serve_healthz(send)
     else:

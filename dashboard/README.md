@@ -82,6 +82,16 @@ from the environment (process-env overrides the file):
 | `MCP_DASHBOARD_REFRESH_SECONDS` | `60` | Auto-reload interval for each dashboard page; `0` disables. The wrapper's selected tab is preserved (only the inner page reloads). |
 | `LOG_DIR` | `<dir>/logs` | Fallback single-tab log dir when the JSON above is unset. Relative paths resolve under `dashboard/`. |
 | `MCP_TLS_CERT` / `MCP_TLS_KEY` | unset (HTTP) | Both set → serve HTTPS. Relative paths resolve under `dashboard/`. |
+| `DASHBOARD_THEME` | `purple` | Color palette: `purple` or `green`. |
+
+### Theming
+
+The dashboard ships two color palettes, `purple` (default) and `green` (MQ
+green, ACE teal, success stays green). Set the default with `DASHBOARD_THEME`, or
+override per request with a `?theme=purple|green` query on the `/dashboard` URL —
+the tab wrapper propagates the choice to every tab, and unknown values fall back
+to `purple`. Palettes are defined as token dicts in `analyze_logs.py` (`THEMES`),
+so adding another color is a matter of adding an entry.
 
 ### Per-server tabs
 

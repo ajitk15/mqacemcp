@@ -35,6 +35,67 @@ ACE_TOOLS = {
 }
 
 
+# --- Color themes -----------------------------------------------------------
+# Each theme is a dict of color tokens referenced everywhere the dashboard emits
+# a color. `emerald` (success) and the inverted `slate` greys are identical in
+# both themes — success always reads green; only the brand accents and the ACE
+# series change. Select by color name via DASHBOARD_THEME (env) or the ?theme=
+# URL override (values: "purple", "green").
+THEMES: dict[str, dict] = {
+    # Brand-purple palette (matches the chat UI).
+    "purple": {
+        "primary": "#A100FF",
+        "primary_dark": "#7500C0",
+        "accent_mid": "#8B2FD6",
+        "heading": "#2A0A4A",
+        "tooltip_time": "#E9D5FF",
+        "pie_extra": "#C77DFF",
+        "page_bg": "#F7F3FC",
+        "border": "#E6D9F5",
+        "hover": "#F1E9FB",
+        "btn_text": "#6b21a8",
+        "grid": "#EAE0F6",
+        "baseline": "#D9C7EF",
+        "glow_rgba": "161, 0, 255",
+        "shadow_rgba": "117, 0, 192",
+        "ace_series": "#10B981",       # ACE reads green (distinct from MQ purple)
+        "ace_text_class": "text-emerald-400",
+        "ace_bg_class": "bg-emerald-500",
+        "cyan_remap": None,
+    },
+    # Green palette: MQ green, ACE teal, success still green.
+    "green": {
+        "primary": "#78BE20",
+        "primary_dark": "#5A9E31",
+        "accent_mid": "#6AAE2A",
+        "heading": "#14380A",
+        "tooltip_time": "#DDEFC2",
+        "pie_extra": "#A9D66B",
+        "page_bg": "#F1F7E9",
+        "border": "#D7E8C2",
+        "hover": "#E9F3D8",
+        "btn_text": "#3F7A1E",
+        "grid": "#E4EFD5",
+        "baseline": "#CBE0B0",
+        "glow_rgba": "120, 190, 32",
+        "shadow_rgba": "90, 158, 49",
+        "ace_series": "#06B6D4",       # ACE reads teal (distinct from MQ green)
+        "ace_text_class": "text-cyan-400",
+        "ace_bg_class": "bg-cyan-500",
+        "cyan_remap": {"400": "#06B6D4", "500": "#06B6D4"},
+    },
+}
+
+DEFAULT_THEME = "purple"
+
+
+def _get_theme(name: str | None = None) -> dict:
+    """Resolve a theme dict from an explicit name or DASHBOARD_THEME; falls back
+    to the default on any unknown value."""
+    key = (name or os.getenv("DASHBOARD_THEME", DEFAULT_THEME) or DEFAULT_THEME).strip().lower()
+    return THEMES.get(key, THEMES[DEFAULT_THEME])
+
+
 def _refresh_meta() -> str:
     """`<meta http-equiv=refresh>` tag so dashboard pages reload themselves.
 
@@ -351,27 +412,27 @@ _USAGE_SECTION_TEMPLATE = """
             <svg id="usage-svg" viewBox="0 0 1000 160" class="w-full h-full">
                 <defs>
                     <linearGradient id="usage-grad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stop-color="#A100FF" stop-opacity="0.35"/>
-                        <stop offset="100%" stop-color="#A100FF" stop-opacity="0.0"/>
+                        <stop offset="0%" stop-color="__PRIMARY__" stop-opacity="0.35"/>
+                        <stop offset="100%" stop-color="__PRIMARY__" stop-opacity="0.0"/>
                     </linearGradient>
                 </defs>
-                <line x1="40" y1="20" x2="980" y2="20" stroke="#EAE0F6" stroke-dasharray="3"/>
-                <line x1="40" y1="75" x2="980" y2="75" stroke="#EAE0F6" stroke-dasharray="3"/>
-                <line x1="40" y1="130" x2="980" y2="130" stroke="#D9C7EF"/>
+                <line x1="40" y1="20" x2="980" y2="20" stroke="__GRID__" stroke-dasharray="3"/>
+                <line x1="40" y1="75" x2="980" y2="75" stroke="__GRID__" stroke-dasharray="3"/>
+                <line x1="40" y1="130" x2="980" y2="130" stroke="__BASELINE__"/>
                 <text id="usage-ymax" x="12" y="24" fill="#64748B" font-size="9">0</text>
                 <text id="usage-ymid" x="12" y="79" fill="#64748B" font-size="9">0</text>
                 <text x="20" y="134" fill="#64748B" font-size="9">0</text>
                 <path id="usage-area" d="" fill="url(#usage-grad)"/>
-                <path id="usage-line" d="" fill="none" stroke="#A100FF" stroke-width="2.5"/>
-                <circle id="usage-peak" r="4" fill="#7500C0" style="display:none"/>
+                <path id="usage-line" d="" fill="none" stroke="__PRIMARY__" stroke-width="2.5"/>
+                <circle id="usage-peak" r="4" fill="__PRIMARY_DARK__" style="display:none"/>
                 <g id="usage-xlabels"></g>
                 <!-- Hover tooltip (line + dot + panel); capture rect on top, cues below it via pointer-events:none -->
                 <rect id="usage-hit" x="40" y="20" width="940" height="110" fill="transparent" pointer-events="all" style="cursor:crosshair"/>
-                <line id="usage-hoverline" y1="20" y2="130" stroke="#7500C0" stroke-width="1" stroke-dasharray="3" pointer-events="none" style="display:none"/>
-                <circle id="usage-hoverdot" r="4.5" fill="#A100FF" stroke="#ffffff" stroke-width="1.5" pointer-events="none" style="display:none"/>
+                <line id="usage-hoverline" y1="20" y2="130" stroke="__PRIMARY_DARK__" stroke-width="1" stroke-dasharray="3" pointer-events="none" style="display:none"/>
+                <circle id="usage-hoverdot" r="4.5" fill="__PRIMARY__" stroke="#ffffff" stroke-width="1.5" pointer-events="none" style="display:none"/>
                 <g id="usage-tip" pointer-events="none" style="display:none">
-                    <rect id="usage-tip-bg" rx="5" fill="#2A0A4A" opacity="0.96"/>
-                    <text id="usage-tip-time" fill="#E9D5FF" font-size="8" font-weight="600"></text>
+                    <rect id="usage-tip-bg" rx="5" fill="__HEADING__" opacity="0.96"/>
+                    <text id="usage-tip-time" fill="__TOOLTIP_TIME__" font-size="8" font-weight="600"></text>
                     <text id="usage-tip-val" fill="#ffffff" font-size="9" font-weight="700"></text>
                 </g>
             </svg>
@@ -515,13 +576,50 @@ _USAGE_SECTION_TEMPLATE = """
 """
 
 
-def build_html_dashboard(metrics: dict) -> str:
+def build_html_dashboard(metrics: dict, theme: str | None = None) -> str:
     """Build the dashboard HTML in-memory and return it as a string.
 
     Pure function over ``calculate_metrics``'s output — no file IO. Used by
     both the CLI wrapper ``generate_html_dashboard`` and the standalone
-    dashboard HTTP server (``scripts/dashboard_server.py``).
+    dashboard HTTP server (``scripts/dashboard_server.py``). ``theme`` selects a
+    color palette (see ``THEMES``); ``None`` falls back to ``DASHBOARD_THEME``.
     """
+    pal = _get_theme(theme)
+    c_primary = pal["primary"]
+    c_primary_dark = pal["primary_dark"]
+    c_accent_mid = pal["accent_mid"]
+    c_heading = pal["heading"]
+    c_tooltip_time = pal["tooltip_time"]
+    c_pie_extra = pal["pie_extra"]
+    c_page_bg = pal["page_bg"]
+    c_border = pal["border"]
+    c_hover = pal["hover"]
+    c_btn_text = pal["btn_text"]
+    c_grid = pal["grid"]
+    c_baseline = pal["baseline"]
+    c_glow = pal["glow_rgba"]
+    c_shadow = pal["shadow_rgba"]
+    c_ace = pal["ace_series"]
+    ace_text_class = pal["ace_text_class"]
+    ace_bg_class = pal["ace_bg_class"]
+
+    # Tailwind palette remap built from the theme tokens. `emerald`/`slate` are
+    # theme-invariant; `cyan` is added only when the theme needs it (green ACE).
+    _tw_colors = {
+        "blue": {"400": c_primary, "500": c_primary},
+        "indigo": {"400": c_primary_dark, "500": c_primary_dark},
+        "violet": {"400": c_primary_dark, "500": c_accent_mid},
+        "emerald": {"400": "#059669", "500": "#10B981"},
+        "yellow": {"400": "#B45309", "500": "#F59E0B"},
+        "slate": {
+            "200": "#334155", "300": "#3f4657", "400": "#5b6472", "500": "#6b7280",
+            "600": "#b3a0cc", "700": "#c9b6e3", "800": "#ece3f7", "900": "#ffffff",
+        },
+    }
+    if pal.get("cyan_remap"):
+        _tw_colors["cyan"] = pal["cyan_remap"]
+    tw_config_json = json.dumps({"theme": {"extend": {"colors": _tw_colors}}})
+
     total_calls = metrics["total_calls"]
     success_rate = metrics["success_rate"]
     success_calls = metrics["success_calls"]
@@ -572,9 +670,9 @@ def build_html_dashboard(metrics: dict) -> str:
         cx_only = 270
         mq_y_only = 200 - (only["mq"] / dv_max) * 160
         ace_y_only = 200 - (only["ace"] / dv_max) * 160
-        dv_mq_area = f'<circle cx="{cx_only}" cy="{mq_y_only:.1f}" r="6" fill="#A100FF" class="glow-blue"/>'
+        dv_mq_area = f'<circle cx="{cx_only}" cy="{mq_y_only:.1f}" r="6" fill="{c_primary}" class="glow-blue"/>'
         dv_mq_line = ""
-        dv_ace_area = f'<circle cx="{cx_only}" cy="{ace_y_only:.1f}" r="6" fill="#10B981" class="glow-emerald"/>'
+        dv_ace_area = f'<circle cx="{cx_only}" cy="{ace_y_only:.1f}" r="6" fill="{c_ace}" class="glow-emerald"/>'
         dv_ace_line = ""
         dv_x_labels = f'<text x="{cx_only}" y="222" fill="#64748B" font-size="9" text-anchor="middle">{only["date"]}</text>'
         dv_y_top = str(dv_max)
@@ -588,9 +686,9 @@ def build_html_dashboard(metrics: dict) -> str:
         mq_line_pts = " ".join(f"L {x:.1f} {y:.1f}" for x, y in zip(dv_xs[1:], mq_ys[1:]))
         ace_line_pts = " ".join(f"L {x:.1f} {y:.1f}" for x, y in zip(dv_xs[1:], ace_ys[1:]))
         dv_mq_area = f'<path d="M {dv_xs[0]:.1f} 200 {mq_pts} L {dv_xs[-1]:.1f} 200 Z" fill="url(#mq-grad)"/>'
-        dv_mq_line = f'<path d="M {dv_xs[0]:.1f} {mq_ys[0]:.1f} {mq_line_pts}" fill="none" stroke="#A100FF" stroke-width="3" class="glow-blue"/>'
+        dv_mq_line = f'<path d="M {dv_xs[0]:.1f} {mq_ys[0]:.1f} {mq_line_pts}" fill="none" stroke="{c_primary}" stroke-width="3" class="glow-blue"/>'
         dv_ace_area = f'<path d="M {dv_xs[0]:.1f} 200 {ace_pts} L {dv_xs[-1]:.1f} 200 Z" fill="url(#ace-grad)"/>'
-        dv_ace_line = f'<path d="M {dv_xs[0]:.1f} {ace_ys[0]:.1f} {ace_line_pts}" fill="none" stroke="#10B981" stroke-width="3" class="glow-emerald"/>'
+        dv_ace_line = f'<path d="M {dv_xs[0]:.1f} {ace_ys[0]:.1f} {ace_line_pts}" fill="none" stroke="{c_ace}" stroke-width="3" class="glow-emerald"/>'
         mid_i = dv_n // 2
         label_idxs = sorted({0, mid_i, dv_n - 1})
         dv_x_labels = "".join(
@@ -601,7 +699,7 @@ def build_html_dashboard(metrics: dict) -> str:
         dv_y_mid = str(dv_max // 2)
 
     # --- Tool popularity pie (viewBox 200x200, center (100,100), r=90) ---
-    PIE_COLORS = ["#A100FF", "#10B981", "#F59E0B", "#7500C0", "#C77DFF", "#94a3b8"]
+    PIE_COLORS = [c_primary, c_ace, "#F59E0B", c_primary_dark, c_pie_extra, "#94a3b8"]
     pie_sectors_html = ""
     pie_legend_html = ""
     if tool_share:
@@ -648,7 +746,7 @@ def build_html_dashboard(metrics: dict) -> str:
         elif p95v > 500:
             color = "#F59E0B"
         else:
-            color = "#A100FF"
+            color = c_primary
         lat_labels_html += (
             f'<text x="130" y="{y + 11}" fill="#374151" font-size="9" '
             f'text-anchor="end" font-weight="bold">{t["tool"]}</text>'
@@ -735,6 +833,12 @@ def build_html_dashboard(metrics: dict) -> str:
         _USAGE_SECTION_TEMPLATE
         .replace("__USAGE_JSON__", json.dumps(usage_windows))
         .replace("__ANCHOR_NOTE__", usage_windows.get("note", ""))
+        .replace("__PRIMARY_DARK__", c_primary_dark)
+        .replace("__PRIMARY__", c_primary)
+        .replace("__HEADING__", c_heading)
+        .replace("__TOOLTIP_TIME__", c_tooltip_time)
+        .replace("__GRID__", c_grid)
+        .replace("__BASELINE__", c_baseline)
     )
 
     html_content = f"""<!DOCTYPE html>
@@ -746,53 +850,41 @@ def build_html_dashboard(metrics: dict) -> str:
     <title>IBM MQ+ACE MCP Server — Log Insights Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // Light "brand purple" theme: remap the dark-theme utility palettes so the
-      // existing markup renders on a light background without touching every class.
-      // Primary brand purple #A100FF / #7500C0 (matches the chat UI); the `slate`
-      // scale is INVERTED (was light text on dark; now dark text on light).
-      tailwind.config = {{
-        theme: {{ extend: {{ colors: {{
-          blue:   {{ 400: '#A100FF', 500: '#A100FF' }},
-          indigo: {{ 400: '#7500C0', 500: '#7500C0' }},
-          violet: {{ 400: '#7500C0', 500: '#8B2FD6' }},
-          emerald:{{ 400: '#059669', 500: '#10B981' }},
-          yellow: {{ 400: '#B45309', 500: '#F59E0B' }},
-          slate: {{
-            200: '#334155', 300: '#3f4657', 400: '#5b6472', 500: '#6b7280',
-            600: '#b3a0cc', 700: '#c9b6e3', 800: '#ece3f7', 900: '#ffffff'
-          }}
-        }} }} }}
-      }}
+      // Light theme: remap the dark-theme utility palettes so the existing markup
+      // renders on a light background without touching every class. Colors come
+      // from the selected theme (see THEMES); the `slate` scale is INVERTED (was
+      // light text on dark; now dark text on light).
+      tailwind.config = {tw_config_json};
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body {{
             font-family: 'Plus Jakarta Sans', sans-serif;
-            background: linear-gradient(180deg, #F7F3FC 0%, #ffffff 240px);
+            background: linear-gradient(180deg, {c_page_bg} 0%, #ffffff 240px);
             background-attachment: fixed;
             color: #1A1A1A;
         }}
-        /* Slim brand bar echoing the chat UI's fixed purple top nav. */
+        /* Slim brand bar echoing the chat UI's fixed top nav. */
         .brand-bar {{
             position: fixed; top: 0; left: 0; width: 100%; height: 5px;
-            background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+            background: linear-gradient(90deg, {c_primary} 0%, {c_primary_dark} 100%);
             z-index: 1000;
         }}
-        /* Headings were `text-white` on dark — force to deep brand purple on light.
+        /* Headings were `text-white` on dark — force to a deep brand tone on light.
            Higher specificity than Tailwind's single-class utility, so it wins. */
-        body .text-white {{ color: #2A0A4A; }}
+        body .text-white {{ color: {c_heading}; }}
         .brand-title {{
-            background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+            background: linear-gradient(90deg, {c_primary} 0%, {c_primary_dark} 100%);
             -webkit-background-clip: text; background-clip: text;
             -webkit-text-fill-color: transparent; color: transparent;
         }}
         .glass {{
             background: #ffffff;
-            border: 1px solid #E6D9F5;
-            box-shadow: 0 4px 20px rgba(117, 0, 192, 0.06);
+            border: 1px solid {c_border};
+            box-shadow: 0 4px 20px rgba({c_shadow}, 0.06);
         }}
         .glow-blue {{
-            filter: drop-shadow(0 0 8px rgba(161, 0, 255, 0.35));
+            filter: drop-shadow(0 0 8px rgba({c_glow}, 0.35));
         }}
         .glow-emerald {{
             filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.35));
@@ -800,12 +892,12 @@ def build_html_dashboard(metrics: dict) -> str:
         /* Window toggle buttons for the usage-over-time chart. */
         .usage-btn {{
             font-size: 12px; font-weight: 700; padding: 5px 14px; border-radius: 999px;
-            border: 1px solid #E6D9F5; background: #F7F3FC; color: #6b21a8;
+            border: 1px solid {c_border}; background: {c_page_bg}; color: {c_btn_text};
             cursor: pointer; transition: all .15s ease;
         }}
-        .usage-btn:hover {{ background: #F1E9FB; }}
+        .usage-btn:hover {{ background: {c_hover}; }}
         .usage-btn.active {{
-            background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+            background: linear-gradient(90deg, {c_primary} 0%, {c_primary_dark} 100%);
             color: #ffffff; border-color: transparent;
         }}
     </style>
@@ -906,7 +998,7 @@ def build_html_dashboard(metrics: dict) -> str:
                 </div>
                 <div class="flex gap-4 text-xs font-semibold">
                     <span class="flex items-center gap-1.5 text-blue-400"><span class="h-2 w-2 rounded-full bg-blue-500"></span> IBM MQ</span>
-                    <span class="flex items-center gap-1.5 text-emerald-400"><span class="h-2 w-2 rounded-full bg-emerald-500"></span> IBM ACE</span>
+                    <span class="flex items-center gap-1.5 {ace_text_class}"><span class="h-2 w-2 rounded-full {ace_bg_class}"></span> IBM ACE</span>
                 </div>
             </div>
             <div class="h-72 w-full mt-auto flex items-center justify-center">
@@ -914,18 +1006,18 @@ def build_html_dashboard(metrics: dict) -> str:
                 <svg viewBox="0 0 500 250" class="w-full h-full">
                     <defs>
                         <linearGradient id="mq-grad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stop-color="#A100FF" stop-opacity="0.4"/>
-                            <stop offset="100%" stop-color="#A100FF" stop-opacity="0.0"/>
+                            <stop offset="0%" stop-color="{c_primary}" stop-opacity="0.4"/>
+                            <stop offset="100%" stop-color="{c_primary}" stop-opacity="0.0"/>
                         </linearGradient>
                         <linearGradient id="ace-grad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stop-color="#10B981" stop-opacity="0.4"/>
-                            <stop offset="100%" stop-color="#10B981" stop-opacity="0.0"/>
+                            <stop offset="0%" stop-color="{c_ace}" stop-opacity="0.4"/>
+                            <stop offset="100%" stop-color="{c_ace}" stop-opacity="0.0"/>
                         </linearGradient>
                     </defs>
                     <!-- Y-Axis Grid Lines -->
-                    <line x1="40" y1="40" x2="480" y2="40" stroke="#EAE0F6" stroke-dasharray="3"/>
-                    <line x1="40" y1="120" x2="480" y2="120" stroke="#EAE0F6" stroke-dasharray="3"/>
-                    <line x1="40" y1="200" x2="480" y2="200" stroke="#D9C7EF"/>
+                    <line x1="40" y1="40" x2="480" y2="40" stroke="{c_grid}" stroke-dasharray="3"/>
+                    <line x1="40" y1="120" x2="480" y2="120" stroke="{c_grid}" stroke-dasharray="3"/>
+                    <line x1="40" y1="200" x2="480" y2="200" stroke="{c_baseline}"/>
                     <!-- Y-axis labels (data-driven) -->
                     <text x="15" y="45" fill="#64748B" font-size="9">{dv_y_top}</text>
                     <text x="15" y="125" fill="#64748B" font-size="9">{dv_y_mid}</text>
@@ -952,7 +1044,7 @@ def build_html_dashboard(metrics: dict) -> str:
             <div class="h-72 w-full mt-auto flex flex-col md:flex-row items-center justify-around gap-6">
                 <!-- SVG Pie Chart (data-driven sectors) -->
                 <svg viewBox="0 0 200 200" class="w-48 h-48">
-                    <circle cx="100" cy="100" r="90" fill="none" stroke="#EAE0F6" stroke-width="12"/>
+                    <circle cx="100" cy="100" r="90" fill="none" stroke="{c_grid}" stroke-width="12"/>
                     {pie_sectors_html}
                     <circle cx="100" cy="100" r="50" fill="#ffffff"/>
                 </svg>
@@ -973,11 +1065,11 @@ def build_html_dashboard(metrics: dict) -> str:
             </div>
             <div class="h-72 w-full mt-auto flex items-center justify-center">
                 <svg viewBox="0 0 500 250" class="w-full h-full">
-                    <line x1="140" y1="20" x2="140" y2="210" stroke="#D9C7EF"/>
-                    <line x1="225" y1="20" x2="225" y2="210" stroke="#EAE0F6" stroke-dasharray="2"/>
-                    <line x1="310" y1="20" x2="310" y2="210" stroke="#EAE0F6" stroke-dasharray="2"/>
-                    <line x1="395" y1="20" x2="395" y2="210" stroke="#EAE0F6" stroke-dasharray="2"/>
-                    <line x1="480" y1="20" x2="480" y2="210" stroke="#EAE0F6" stroke-dasharray="2"/>
+                    <line x1="140" y1="20" x2="140" y2="210" stroke="{c_baseline}"/>
+                    <line x1="225" y1="20" x2="225" y2="210" stroke="{c_grid}" stroke-dasharray="2"/>
+                    <line x1="310" y1="20" x2="310" y2="210" stroke="{c_grid}" stroke-dasharray="2"/>
+                    <line x1="395" y1="20" x2="395" y2="210" stroke="{c_grid}" stroke-dasharray="2"/>
+                    <line x1="480" y1="20" x2="480" y2="210" stroke="{c_grid}" stroke-dasharray="2"/>
 
                     <!-- SLA line at 1.0s (data-driven position) -->
                     <line x1="{sla_x:.1f}" y1="15" x2="{sla_x:.1f}" y2="215" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="3"/>
@@ -1018,9 +1110,9 @@ def build_html_dashboard(metrics: dict) -> str:
         </div>
         <div class="h-44 w-full flex items-center justify-center">
             <svg viewBox="0 0 1000 150" class="w-full h-full">
-                <line x1="40" y1="20" x2="960" y2="20" stroke="#EAE0F6" stroke-dasharray="3"/>
-                <line x1="40" y1="70" x2="960" y2="70" stroke="#EAE0F6" stroke-dasharray="3"/>
-                <line x1="40" y1="120" x2="960" y2="120" stroke="#D9C7EF"/>
+                <line x1="40" y1="20" x2="960" y2="20" stroke="{c_grid}" stroke-dasharray="3"/>
+                <line x1="40" y1="70" x2="960" y2="70" stroke="{c_grid}" stroke-dasharray="3"/>
+                <line x1="40" y1="120" x2="960" y2="120" stroke="{c_baseline}"/>
 
                 {hourly_path}
                 {hourly_peak_dot}
@@ -1059,7 +1151,7 @@ def build_html_dashboard(metrics: dict) -> str:
         lat_color = "text-red-400" if row["p95_latency"] > 1000 else "text-slate-300"
         html_content += f"""                    <tr class="hover:bg-slate-800/20 transition-colors">
                         <td class="p-4 font-bold text-white">{row["tool"]}</td>
-                        <td class="p-4 text-xs font-semibold {'text-blue-400' if row['product'] == 'IBM MQ' else 'text-emerald-400'}">{row["product"]}</td>
+                        <td class="p-4 text-xs font-semibold {'text-blue-400' if row['product'] == 'IBM MQ' else ace_text_class}">{row["product"]}</td>
                         <td class="p-4">{row["total_calls"]}</td>
                         <td class="p-4 font-bold {color_class}">{row["success_rate"]}%</td>
                         <td class="p-4">{row["mean_latency"]} ms</td>
@@ -1188,11 +1280,12 @@ def generate_html_dashboard(metrics: dict, output_file: Path) -> None:
     print(f"✨ Standalone HTML Dashboard successfully compiled at {output_file}")
 
 
-def compute_dashboard_html(log_dir: Path | None = None) -> str:
+def compute_dashboard_html(log_dir: Path | None = None, theme: str | None = None) -> str:
     """Render the dashboard HTML in one call. Used by the dashboard HTTP server.
 
     Falls back to a small placeholder page when the log directory is missing
-    or empty so the endpoint never 500s on a fresh deployment.
+    or empty so the endpoint never 500s on a fresh deployment. ``theme`` selects
+    the color palette (see ``THEMES``); ``None`` uses ``DASHBOARD_THEME``.
     """
     if log_dir is None:
         log_dir = load_env_config()
@@ -1203,7 +1296,7 @@ def compute_dashboard_html(log_dir: Path | None = None) -> str:
     if not records:
         return _empty_dashboard_html("No query log entries found yet.")
     metrics = calculate_metrics(records)
-    return build_html_dashboard(metrics)
+    return build_html_dashboard(metrics, theme=theme)
 
 
 def _empty_dashboard_html(reason: str) -> str:
