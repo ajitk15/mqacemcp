@@ -41,6 +41,60 @@ def _env_bool(name: str, default: bool = True) -> bool:
 # Default visibility of the 🔧 tool-call panels; user can still toggle at runtime.
 _SHOW_TOOL_CALLS_DEFAULT = _env_bool("SHOW_TOOL_CALLS", True)
 
+# --- Color themes -----------------------------------------------------------
+# Palettes named by color (never by company). Default via APP_THEME; the user
+# can switch live in the sidebar. Each is a dict of tokens substituted into the
+# CSS template below (placeholders like __PRIMARY__).
+_THEMES: dict[str, dict] = {
+    "purple": {
+        "primary": "#A100FF",
+        "primary_dark": "#7500C0",
+        "primary_rgb": "161, 0, 255",
+        "accent_text": "#6b21a8",
+        "tint_bg": "#F1E9FB",
+        "border": "#E6D9F5",
+        "msg_bg": "#faf8fd",
+        "msg_border": "#ece3f7",
+        "sidebar_bg": "#F7F3FC",
+    },
+    "green": {
+        "primary": "#78BE20",
+        "primary_dark": "#5A9E31",
+        "primary_rgb": "120, 190, 32",
+        "accent_text": "#3F7A1E",
+        "tint_bg": "#E9F3D8",
+        "border": "#D7E8C2",
+        "msg_bg": "#F6FAEF",
+        "msg_border": "#E4EFD5",
+        "sidebar_bg": "#F1F7E9",
+    },
+}
+_DEFAULT_THEME = "purple"
+
+
+def _resolve_theme(name: str | None) -> str:
+    """Validate a theme name against _THEMES; fall back to the default."""
+    key = (name or "").strip().lower()
+    return key if key in _THEMES else _DEFAULT_THEME
+
+
+def _build_css(pal: dict) -> str:
+    """Fill the CSS template's color placeholders from a theme palette."""
+    css = _CSS_TEMPLATE
+    for token, value in (
+        ("__PRIMARY_DARK__", pal["primary_dark"]),
+        ("__PRIMARY_RGB__", pal["primary_rgb"]),
+        ("__PRIMARY__", pal["primary"]),
+        ("__ACCENT_TEXT__", pal["accent_text"]),
+        ("__TINT_BG__", pal["tint_bg"]),
+        ("__MSG_BORDER__", pal["msg_border"]),
+        ("__MSG_BG__", pal["msg_bg"]),
+        ("__SIDEBAR_BG__", pal["sidebar_bg"]),
+        ("__BORDER__", pal["border"]),
+    ):
+        css = css.replace(token, value)
+    return css
+
 # Sidebar quick-links (open in a new browser tab). The sample-questions page is
 # served by Streamlit's static file server (frontend/static/, enabled in
 # .streamlit/config.toml) at a relative URL.
@@ -58,14 +112,23 @@ st.set_page_config(
     initial_sidebar_state="expanded",  # visible on load; collapse/expand via the chevron
 )
 
-_CUSTOM_CSS = """
+_CSS_TEMPLATE = """
 <style>
   .stApp { background-color: #ffffff; color: #1A1A1A; }
 
-  /* Fixed full-width top nav — brand purple */
+  /* Make Streamlit's NATIVE accent follow the selected theme. config.toml sets a
+     static primaryColor; these per-theme overrides recolor primary buttons and
+     the widgets that derive from the accent variable. */
+  :root { --primary-color: __PRIMARY__; }
+  .stApp button[kind="primary"],
+  .stApp [data-testid="stBaseButton-primary"] {
+    background-color: __PRIMARY__ !important; border-color: __PRIMARY__ !important;
+  }
+
+  /* Fixed full-width top nav — brand accent */
   .top-nav {
     position: fixed; top: 0; left: 0; width: 100%;
-    background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+    background: linear-gradient(90deg, __PRIMARY__ 0%, __PRIMARY_DARK__ 100%);
     color: #ffffff; padding: 6px 24px; z-index: 1000;
     box-shadow: 0 1px 5px rgba(0,0,0,0.12);
     display: flex; justify-content: space-between; align-items: center;
@@ -83,11 +146,11 @@ _CUSTOM_CSS = """
 
   /* Sidebar breadcrumb */
   .sidebar-crumb {
-    font-size: 12px; font-weight: 600; color: #6b21a8;
-    background: #F1E9FB; border: 1px solid #E6D9F5; border-radius: 8px;
+    font-size: 12px; font-weight: 600; color: __ACCENT_TEXT__;
+    background: __TINT_BG__; border: 1px solid __BORDER__; border-radius: 8px;
     padding: 6px 10px; margin: 2px 0 12px;
   }
-  .sidebar-crumb .sep { color: #A100FF; margin: 0 5px; }
+  .sidebar-crumb .sep { color: __PRIMARY__; margin: 0 5px; }
   /* Transparent (not height:0 — that clipped the sidebar expand control) */
   header[data-testid="stHeader"] { background: transparent; }
   /* Hide ONLY the Deploy button + top decoration — NOT the whole toolbar
@@ -95,11 +158,11 @@ _CUSTOM_CSS = """
      Correct 1.58 id for Deploy is stAppDeployButton. */
   [data-testid="stDecoration"], [data-testid="stAppDeployButton"] { display: none !important; }
   #MainMenu { display: none !important; }
-  /* Sidebar open/close controls must sit ABOVE the fixed purple bar (z 1000).
+  /* Sidebar open/close controls must sit ABOVE the fixed brand bar (z 1000).
      Streamlit 1.58 ids: stExpandSidebarButton (collapsed) / stSidebarCollapseButton (open). */
   [data-testid="stExpandSidebarButton"],
   [data-testid="stSidebarCollapseButton"] { z-index: 1003 !important; visibility: visible !important; }
-  /* The expand control overlays the purple bar when collapsed → white icon */
+  /* The expand control overlays the brand bar when collapsed → white icon */
   [data-testid="stExpandSidebarButton"] button,
   [data-testid="stExpandSidebarButton"] svg { color: #ffffff !important; fill: #ffffff !important; }
   /* Push sidebar content below the fixed top bar so it isn't hidden under it */
@@ -111,35 +174,35 @@ _CUSTOM_CSS = """
   /* Chat messages — rounded, light */
   [data-testid="stChatMessage"] {
     border-radius: 12px; margin-bottom: 8px; padding: 6px 14px;
-    background: #faf8fd; border: 1px solid #ece3f7;
+    background: __MSG_BG__; border: 1px solid __MSG_BORDER__;
   }
   /* Agent (assistant) → left, roomy */
   [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
     margin-right: auto; max-width: 92%;
   }
-  /* User → right-aligned bubble (avatar on the right), purple tint */
+  /* User → right-aligned bubble (avatar on the right), brand tint */
   [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
     flex-direction: row-reverse;
     margin-left: auto; max-width: 80%;
-    background: rgba(161, 0, 255, 0.06); border-color: rgba(161, 0, 255, 0.28);
+    background: rgba(__PRIMARY_RGB__, 0.06); border-color: rgba(__PRIMARY_RGB__, 0.28);
   }
 
-  /* Pulsing "thinking" indicator — brand purple dots */
+  /* Pulsing "thinking" indicator — brand accent dots */
   @keyframes pulse { 0%{opacity:.6;transform:scale(.98)} 50%{opacity:1;transform:scale(1.01)} 100%{opacity:.6;transform:scale(.98)} }
   .thinking-box {
-    background:#ffffff; border:1px solid #ece3f7; border-radius:8px;
+    background:#ffffff; border:1px solid __MSG_BORDER__; border-radius:8px;
     padding:6px 12px; display:flex; align-items:center; gap:8px; width:fit-content;
     animation:pulse 1.6s infinite ease-in-out; box-shadow:0 2px 5px rgba(0,0,0,0.05);
   }
-  .thinking-box span { font-size:13px; color:#6b21a8; font-weight:500; letter-spacing:.2px; }
-  .thinking-dot { width:6px; height:6px; background:#A100FF; border-radius:50%; }
+  .thinking-box span { font-size:13px; color:__ACCENT_TEXT__; font-weight:500; letter-spacing:.2px; }
+  .thinking-dot { width:6px; height:6px; background:__PRIMARY__; border-radius:50%; }
 
   /* Expander (tool step) */
-  [data-testid="stExpander"] { border: 1px solid #ece3f7; border-radius: 8px; margin: 8px 0; background: #faf8fd; }
+  [data-testid="stExpander"] { border: 1px solid __MSG_BORDER__; border-radius: 8px; margin: 8px 0; background: __MSG_BG__; }
   [data-testid="stExpander"] summary { font-size: 0.82rem; }
 
-  /* Sidebar — faint purple tint */
-  section[data-testid="stSidebar"] { background: #F7F3FC; border-right: 1px solid #E6D9F5; }
+  /* Sidebar — faint brand tint */
+  section[data-testid="stSidebar"] { background: __SIDEBAR_BG__; border-right: 1px solid __BORDER__; }
 
   /* Fixed footer */
   .fixed-footer {
@@ -153,7 +216,12 @@ _CUSTOM_CSS = """
   footer { visibility: hidden; }
 </style>
 """
-st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
+# Seed the theme (env default, overridable live in the sidebar) BEFORE injecting
+# CSS. The sidebar selector writes st.session_state.theme via key="theme"; on the
+# resulting rerun this reads the new value and re-injects the matching palette.
+if "theme" not in st.session_state:
+    st.session_state.theme = _resolve_theme(os.getenv("APP_THEME", _DEFAULT_THEME))
+st.markdown(_build_css(_THEMES[st.session_state.theme]), unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +323,13 @@ with st.sidebar:
         "Show tool calls",
         key="show_tool_calls",
         help="Show the expandable 🔧 tool-invocation panels in each answer.",
+    )
+    st.selectbox(
+        "Theme",
+        options=list(_THEMES.keys()),
+        format_func=str.title,
+        key="theme",
+        help="UI color palette. Applies immediately.",
     )
 
     st.divider()
