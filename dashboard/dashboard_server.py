@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """Standalone HTTP server that exposes the MQ+ACE log insights dashboard.
 
-This runs in its own process, completely independent of the MCP server. It
-reads the same ``LOG_DIR`` from ``.env`` (via ``server.config``) and renders
-fresh HTML on every request by reusing the functions in ``analyze_logs.py``.
+This runs in its own process and is fully self-contained: it depends only on
+the standard library, ``uvicorn``, ``python-dotenv`` and its sibling
+``analyze_logs.py`` — NOT on the MCP server's ``server`` package. It loads its
+own ``dashboard/.env`` and renders fresh HTML on every request.
 
 Endpoints
 ---------
@@ -12,13 +13,14 @@ Endpoints
   GET /dashboard/questions  — static MQ/ACE/cert question-bank page
   GET /healthz              — liveness probe (lists every server's log dir)
 
-Configuration (.env)
---------------------
+Configuration (dashboard/.env, or process env which takes precedence)
+---------------------------------------------------------------------
   MCP_DASHBOARD_HOST          default 0.0.0.0
   MCP_DASHBOARD_PORT          default 8002
   MCP_DASHBOARD_SERVERS_JSON  JSON array of {"name","key","log_dir"} — one tab
                               per entry. Unset -> single tab from LOG_DIR.
-  LOG_DIR                     shared with the MCP server (fallback single tab)
+  LOG_DIR                     log directory for the fallback single tab
+  MCP_TLS_CERT / MCP_TLS_KEY  set BOTH to serve HTTPS; unset -> HTTP
 
 The endpoint has no authentication by design; do not bind to a publicly
 reachable interface unless that is acceptable in your environment.
@@ -30,31 +32,60 @@ Run
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 
-# This component lives in `dashboard/` but reuses the MCP server's config and
-# logger. `analyze_logs` sits beside this file; the `server` package lives in
-# `mqacemcpserver/`. Put both on the path. `MCP_SERVER_DIR` can override
-# the MCP directory (e.g. to point at another build's `server` package).
+# Self-contained: only `analyze_logs` (beside this file) is imported, so just
+# this directory goes on sys.path. Load our OWN dashboard/.env (process env
+# still wins, which load_dotenv honours by default).
 _DASHBOARD_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _DASHBOARD_DIR.parent
-_MCP_DIR = Path(os.getenv("MCP_SERVER_DIR", str(_REPO_ROOT / "mqacemcpserver"))).resolve()
-for _p in (_DASHBOARD_DIR, _MCP_DIR):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+if str(_DASHBOARD_DIR) not in sys.path:
+    sys.path.insert(0, str(_DASHBOARD_DIR))
+
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(_DASHBOARD_DIR / ".env")
 
 import uvicorn  # noqa: E402
 
 import analyze_logs  # noqa: E402
-from server.config import LOG_DIR, MCP_TLS_CERT, MCP_TLS_KEY, tls_enabled  # noqa: E402
-from server.logger import get_logger  # noqa: E402
 
-logger = get_logger("mqacemcpserver.dashboard")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("mqacemcpserver.dashboard")
 
 DASHBOARD_HOST: str = os.getenv("MCP_DASHBOARD_HOST", "0.0.0.0")
 DASHBOARD_PORT: int = int(os.getenv("MCP_DASHBOARD_PORT", "8002"))
+
+
+def _resolve_path(value: str) -> str:
+    """Expand ~ / $VARS and anchor a relative path under the dashboard dir."""
+    if not value or not value.strip():
+        return ""
+    p = Path(os.path.expandvars(os.path.expanduser(value.strip())))
+    return str(p if p.is_absolute() else (_DASHBOARD_DIR / p).resolve())
+
+
+# TLS is optional: serve HTTPS only when BOTH cert and key are provided.
+MCP_TLS_CERT: str = _resolve_path(os.getenv("MCP_TLS_CERT", ""))
+MCP_TLS_KEY: str = _resolve_path(os.getenv("MCP_TLS_KEY", ""))
+
+
+def _tls_enabled() -> bool:
+    return bool(MCP_TLS_CERT and MCP_TLS_KEY)
+
+
+# Fallback single-tab log dir. Resolved the SAME way as the TLS paths above:
+# a relative LOG_DIR is anchored under dashboard/ (NOT the current working
+# directory), so it's deterministic no matter how the process is launched.
+# Default when unset: dashboard/logs.
+_log_dir_env = os.getenv("LOG_DIR", "").strip()
+LOG_DIR: Path = Path(_resolve_path(_log_dir_env)) if _log_dir_env else (_DASHBOARD_DIR / "logs")
 
 
 def _resolve_log_dir(raw: str) -> Path:
@@ -67,7 +98,7 @@ def _servers() -> list[dict]:
     """Per-server tab config: list of {name, key, log_dir(Path)}.
 
     Parsed from MCP_DASHBOARD_SERVERS_JSON; falls back to a single tab reading
-    the imported server.config LOG_DIR (the legacy single-server behaviour).
+    the local LOG_DIR (the legacy single-server behaviour).
     """
     raw = os.getenv("MCP_DASHBOARD_SERVERS_JSON", "").strip()
     if raw:
@@ -239,7 +270,7 @@ async def app(scope, receive, send) -> None:
 
 
 def main() -> None:
-    scheme = "https" if tls_enabled() else "http"
+    scheme = "https" if _tls_enabled() else "http"
     logger.info(
         "Starting dashboard server on %s://%s:%s/dashboard",
         scheme, DASHBOARD_HOST, DASHBOARD_PORT,
@@ -247,7 +278,7 @@ def main() -> None:
     for s in _servers():
         logger.info("Tab %r (%s) reads logs from: %s", s["name"], s["key"], s["log_dir"])
     uvicorn_kwargs: dict = {"host": DASHBOARD_HOST, "port": DASHBOARD_PORT}
-    if tls_enabled():
+    if _tls_enabled():
         uvicorn_kwargs["ssl_certfile"] = MCP_TLS_CERT
         uvicorn_kwargs["ssl_keyfile"] = MCP_TLS_KEY
         logger.info("TLS enabled (cert=%s, key=%s)", MCP_TLS_CERT, MCP_TLS_KEY)

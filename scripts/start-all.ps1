@@ -111,7 +111,20 @@ $DashboardEnv = Join-Path $DashboardDir ".env"
 # MCP_TLS_CERT / LOG_DIR from it so the banner and the dashboard tab match what binds.
 $McpEnv      = Join-Path $McpDir ".env"
 $McpPort     = Get-EnvValue $McpEnv "MCP_PORT" "8010"
-$McpScheme   = if (Get-EnvValue $McpEnv "MCP_TLS_CERT" "") { "https" } else { "http" }
+# TLS cert/key from the MCP build's .env. Paths there are relative to the BUILD
+# folder (config resolves them against the build dir), so make them ABSOLUTE —
+# the now-standalone dashboard resolves relative paths under dashboard\, not the
+# build dir, so we hand it fully-resolved paths (injected into its env below).
+$McpTlsCertRaw = Get-EnvValue $McpEnv "MCP_TLS_CERT" ""
+$McpTlsKeyRaw  = Get-EnvValue $McpEnv "MCP_TLS_KEY" ""
+function Resolve-UnderMcp([string]$p) {
+    if (-not $p) { return "" }
+    if ([System.IO.Path]::IsPathRooted($p)) { return $p }
+    return [System.IO.Path]::GetFullPath((Join-Path $McpDir $p))
+}
+$McpTlsCert  = Resolve-UnderMcp $McpTlsCertRaw
+$McpTlsKey   = Resolve-UnderMcp $McpTlsKeyRaw
+$McpScheme   = if ($McpTlsCert -and $McpTlsKey) { "https" } else { "http" }
 # LOG_DIR in the build's .env is relative to the BUILD folder (config resolves it
 # against the build dir, not cwd) — resolve it the same way for the dashboard tab.
 $McpLogDirRaw = Get-EnvValue $McpEnv "LOG_DIR" "logs"
@@ -125,7 +138,7 @@ $BackendPort = Get-EnvValue $BackendEnv "CHAT_PORT" "8002"
 # fall back to the code default. Keep this the single source so the banner
 # matches the port we hand the process below.
 $DashPort    = Get-EnvValue $DashboardEnv "MCP_DASHBOARD_PORT" "8004"
-# The dashboard shares the MCP build's TLS config (MCP_SERVER_DIR points there).
+# The dashboard mirrors the MCP build's TLS (cert/key injected into its env below).
 $DashScheme  = $McpScheme
 
 # ---------------------------------------------------------------------------
@@ -280,20 +293,28 @@ if (-not $SkipDashboard) {
     # The dashboard renders one tab for the MCP build. We hand it the build's log
     # dir via MCP_DASHBOARD_SERVERS_JSON; it reads that directory directly, so the
     # tab shows the build's logs regardless of whether the server is running.
-    # MCP_SERVER_DIR points at the MCP build for its shared TLS config.
     #
-    # dashboard_server.py never loads dashboard\.env itself — it reads process
-    # env (set below, inherited by the spawned window) plus the build's
-    # server.config. Setting the JSON via the parent environment (rather than
-    # inlining it in the command) avoids Start-Process double-quote mangling.
+    # dashboard_server.py is self-contained: it loads its OWN dashboard\.env, but
+    # process env wins. We inject the config below (inherited by the spawned
+    # window) so the dashboard matches the MCP build — including TLS, so its
+    # scheme lines up with $DashScheme. Setting the JSON via the parent
+    # environment (rather than inlining it) avoids Start-Process quote mangling.
     $dashServers = @(
         @{ name = "mqacemcpserver (:$McpPort)"; key = "single"; log_dir = "$McpLogDir" }
     )
-    $env:MCP_SERVER_DIR            = $McpDir
     $env:MCP_DASHBOARD_PORT        = $DashPort
     $env:MCP_DASHBOARD_SERVERS_JSON = ($dashServers | ConvertTo-Json -Compress -Depth 5)
     # Auto-refresh each dashboard page every N seconds (0 disables).
     $env:MCP_DASHBOARD_REFRESH_SECONDS = "60"
+    # Mirror the MCP build's TLS so the dashboard serves the same scheme. When the
+    # build has no TLS, clear any inherited values so it falls back to plain HTTP.
+    if ($McpTlsCert -and $McpTlsKey) {
+        $env:MCP_TLS_CERT = $McpTlsCert
+        $env:MCP_TLS_KEY  = $McpTlsKey
+    } else {
+        Remove-Item Env:MCP_TLS_CERT -ErrorAction SilentlyContinue
+        Remove-Item Env:MCP_TLS_KEY  -ErrorAction SilentlyContinue
+    }
     $cmd = ".\dashboard\.venv\Scripts\python.exe dashboard\dashboard_server.py"
     $pids += Start-Service-Window -Title "Dashboard (:$DashPort)" `
         -WorkingDirectory $RepoRoot -Command $cmd

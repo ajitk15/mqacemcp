@@ -201,16 +201,18 @@ as separate products in one repo, each independently deployable (own
   at runtime (see backend `MCP_SERVERS_JSON` and `/api/mcp/connect`). `-SkipMcp`
   skips the MCP server; other `-Skip*` switches isolate a tier. Both
   `start-all.ps1` and `start-streamlit.ps1` launch the Streamlit UI from `frontend/`.
-- The dashboard process (`dashboard/dashboard_server.py`) does **not** load
-  `dashboard/.env` itself — it reads `MCP_DASHBOARD_PORT` / `MCP_SERVER_DIR` /
-  `MCP_DASHBOARD_SERVERS_JSON` from the process environment and gets TLS from the
-  imported build's `server.config`. It renders **one tab per configured MCP server**:
-  `/dashboard` is a tabbed wrapper, `/dashboard/<key>` is that server's full
-  dashboard for its log dir. `start-all.*` injects `MCP_SERVER_DIR`
-  (`mqacemcpserver`, for TLS), `MCP_DASHBOARD_PORT`, and
-  `MCP_DASHBOARD_SERVERS_JSON` (the build's log dir, `mqacemcpserver/logs`).
-  If you launch the dashboard another way, set those env vars yourself or it falls
-  back to a single tab from the imported `server.config` `LOG_DIR`.
+- The dashboard process (`dashboard/dashboard_server.py`) is **fully self-contained**
+  — it does **not** import the MCP server's `server` package. It loads its own
+  `dashboard/.env` (via `python-dotenv`, process env wins) and reads `LOG_DIR`,
+  `MCP_TLS_CERT`/`MCP_TLS_KEY` (TLS), `MCP_DASHBOARD_HOST`/`MCP_DASHBOARD_PORT`, and
+  `MCP_DASHBOARD_SERVERS_JSON` from the environment; the `LOG_DIR` fallback reuses its
+  sibling `analyze_logs.load_env_config()`. It renders **one tab per configured MCP
+  server**: `/dashboard` is a tabbed wrapper, `/dashboard/<key>` is that server's full
+  dashboard for its log dir. `start-all.*` injects `MCP_DASHBOARD_PORT` and
+  `MCP_DASHBOARD_SERVERS_JSON` (the build's log dir, `mqacemcpserver/logs`); set
+  `MCP_TLS_CERT`/`MCP_TLS_KEY` in `dashboard/.env` for HTTPS. If you launch the
+  dashboard another way, set those env vars yourself or it falls back to a single tab
+  from `LOG_DIR`.
 
 ### Hard rules when working in this repo
 - **Do not modify any file under `mqacemcpserver/` or `resources/` from

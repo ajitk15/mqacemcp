@@ -2,10 +2,11 @@
 
 A standalone HTTP server that renders the MQ + ACE **log-insights dashboard**
 from the JSONL/text logs the MCP server writes. It runs in its own process and
-its own venv, completely independent of the MCP server at runtime — it only
-*reads* the same `LOG_DIR` and reuses the chosen build's `server.config` /
-`server.logger` for `LOG_DIR` and TLS (bind host/port come from the process
-environment; see [Configuration](#configuration)).
+its own venv, **fully self-contained** — it depends only on the stdlib,
+`uvicorn`, `python-dotenv` and its sibling `analyze_logs.py`, and does **not**
+import the MCP server's `server` package. It only *reads* the log files at the
+configured `LOG_DIR`. All settings come from `dashboard/.env` (or the process
+environment, which wins); see [Configuration](#configuration).
 
 ```
 dashboard/
@@ -14,22 +15,16 @@ dashboard/
   requirements.txt      — uvicorn + python-dotenv
 ```
 
-## How it finds the `server` package
+## Configuration source
 
-`dashboard_server.py` imports `server.config` / `server.logger`, which live in
-`../mqacemcpserver/` (the default). The script reads `MCP_SERVER_DIR` from
-the **process environment**, adds that directory to `sys.path`, and imports the
-`server` package from it. Point it at a different build with:
+`dashboard_server.py` loads its **own** `dashboard/.env` at startup (via
+`python-dotenv`) and reads every setting from the environment — no `server`
+package, no `sys.path` hacks, no `MCP_SERVER_DIR`. Process-env values take
+precedence over the `.env` file, so a launcher can still inject overrides.
 
-```
-MCP_SERVER_DIR=/path/to/some-mcp-build
-```
-
-This matters because the imported build's `server.config` is what loads that
-build's `.env` and therefore sets **`LOG_DIR`** (which logs the dashboard reads)
-and **TLS** (`MCP_TLS_CERT` / `MCP_TLS_KEY`). `MCP_SERVER_DIR` must point at the
-build whose logs you want to see; if it points at a build with a different
-`LOG_DIR`, the dashboard reads an empty directory and renders "No data".
+Point `LOG_DIR` at the log directory whose data you want to visualise (e.g. an
+MCP build's `logs/`); if it points at an empty directory the dashboard renders
+"No data".
 
 ## One-time setup
 
@@ -61,11 +56,12 @@ pip install -r requirements.txt
 ./.venv/bin/python dashboard_server.py
 ```
 
-Run bare like this, it binds the defaults: `http://0.0.0.0:8002/dashboard`. To
-change the port/build/log dir, set the env vars yourself before launching, e.g.:
+Run bare like this, it loads `dashboard/.env` and binds whatever it configures
+(defaults if unset: `http://0.0.0.0:8002/dashboard`). To change the port/log dir
+ad hoc, either edit `dashboard/.env` or set env vars before launching, e.g.:
 
 ```powershell
-$env:MCP_SERVER_DIR    = "..\mqacemcpserver"
+$env:LOG_DIR            = "..\mqacemcpserver\logs"
 $env:MCP_DASHBOARD_PORT = "8004"
 .\.venv\Scripts\python.exe dashboard_server.py
 ```
@@ -75,42 +71,34 @@ Most of the time you don't run it bare — `scripts\start-all.ps1` /
 
 ## Configuration
 
-`dashboard_server.py` does **not** load any `.env` file of its own. It resolves
-config from two places:
+`dashboard_server.py` loads `dashboard/.env` on startup and reads all config
+from the environment (process-env overrides the file):
 
-1. **Process environment** — `MCP_DASHBOARD_HOST`, `MCP_DASHBOARD_PORT`, and
-   `MCP_SERVER_DIR` are read with `os.getenv` (defaults below).
-2. **The imported build's `server.config`** — that module loads the build's own
-   `.env` (`mqacemcpserver/.env` by default) and supplies `LOG_DIR` plus
-   the TLS cert/key.
-
-| Var | Read from | Default | Purpose |
-| --- | --- | --- | --- |
-| `MCP_DASHBOARD_HOST` | process env | `0.0.0.0` | Bind host. |
-| `MCP_DASHBOARD_PORT` | process env | `8002` | Bind port. |
-| `MCP_SERVER_DIR` | process env | `../mqacemcpserver` | Which build's `server` package to import (TLS config + fallback `LOG_DIR`). |
-| `MCP_DASHBOARD_SERVERS_JSON` | process env | unset → single tab | JSON array of `{name,key,log_dir}`; one tab per entry. |
-| `MCP_DASHBOARD_REFRESH_SECONDS` | process env | `60` | Auto-reload interval for each dashboard page; `0` disables. The wrapper's selected tab is preserved (only the inner page reloads). |
-| `LOG_DIR` | build's `.env` | `<build>/logs` | Fallback single-tab log dir when the JSON above is unset. |
-| `MCP_TLS_CERT` / `MCP_TLS_KEY` | build's `.env` | unset (HTTP) | Both set → serve HTTPS. |
+| Var | Default | Purpose |
+| --- | --- | --- |
+| `MCP_DASHBOARD_HOST` | `0.0.0.0` | Bind host. |
+| `MCP_DASHBOARD_PORT` | `8002` | Bind port. |
+| `MCP_DASHBOARD_SERVERS_JSON` | unset → single tab | JSON array of `{name,key,log_dir}`; one tab per entry. |
+| `MCP_DASHBOARD_REFRESH_SECONDS` | `60` | Auto-reload interval for each dashboard page; `0` disables. The wrapper's selected tab is preserved (only the inner page reloads). |
+| `LOG_DIR` | `<dir>/logs` | Fallback single-tab log dir when the JSON above is unset. Relative paths resolve under `dashboard/`. |
+| `MCP_TLS_CERT` / `MCP_TLS_KEY` | unset (HTTP) | Both set → serve HTTPS. Relative paths resolve under `dashboard/`. |
 
 ### Per-server tabs
 
 The dashboard renders **one tab per configured MCP server**. `GET /dashboard` is
 a tabbed wrapper; `GET /dashboard/<key>` is that server's full dashboard for its
 own log dir. The tab set comes from `MCP_DASHBOARD_SERVERS_JSON`; if it is unset
-the dashboard shows a single tab from the imported build's `LOG_DIR`.
+the dashboard shows a single tab from `LOG_DIR`.
 
 ### `dashboard/.env` and the launchers
 
-`dashboard/.env` documents the intended dashboard settings, but **the server
-does not auto-load it**. Instead, `scripts/start-all.ps1` / `start-all.sh` read
-`MCP_DASHBOARD_PORT` from it and inject it — along with `MCP_SERVER_DIR` (the MCP
-build, for TLS) and `MCP_DASHBOARD_SERVERS_JSON` (the build's log dir,
-`mqacemcpserver/logs`) — into the dashboard process. That is why, started
-via `start-all`, the dashboard serves on
-**`https://localhost:8004/dashboard`** with a tab for the MCP build, rather than
-the bare-run defaults of `http://…:8002`.
+The dashboard auto-loads `dashboard/.env`, so bare runs pick it up directly.
+`scripts/start-all.ps1` / `start-all.sh` additionally inject
+`MCP_DASHBOARD_PORT` and `MCP_DASHBOARD_SERVERS_JSON` (the build's log dir,
+`mqacemcpserver/logs`) into the dashboard process so, started via `start-all`,
+it serves on **`https://localhost:8004/dashboard`** with a tab for the MCP build.
+For HTTPS there, set `MCP_TLS_CERT` / `MCP_TLS_KEY` in `dashboard/.env` (the
+dashboard no longer inherits TLS from the MCP build).
 
 The endpoint has **no authentication** by design — do not bind it to a publicly
 reachable interface unless that is acceptable in your environment.

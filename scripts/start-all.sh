@@ -93,7 +93,21 @@ get_env() {
 
 # Derive the real bind ports/scheme/log dir from the MCP build's .env.
 MCP_PORT="$(get_env "$MCP_ENV" MCP_PORT 8010)"
-if [[ -n "$(get_env "$MCP_ENV" MCP_TLS_CERT '')" ]]; then MCP_SCHEME=https; else MCP_SCHEME=http; fi
+# TLS cert/key from the MCP build's .env. Paths there are relative to the BUILD
+# folder (config resolves them against the build dir), so make them ABSOLUTE —
+# the now-standalone dashboard resolves relative paths under dashboard/, not the
+# build dir, so we hand it fully-resolved paths (injected into its env below).
+resolve_under_mcp() {
+    local p="$1"
+    [[ -z "$p" ]] && { echo ""; return; }
+    case "$p" in
+        /*) echo "$p" ;;
+        *)  realpath -m -- "$MCP_DIR/$p" ;;
+    esac
+}
+MCP_TLS_CERT_ABS="$(resolve_under_mcp "$(get_env "$MCP_ENV" MCP_TLS_CERT '')")"
+MCP_TLS_KEY_ABS="$(resolve_under_mcp "$(get_env "$MCP_ENV" MCP_TLS_KEY '')")"
+if [[ -n "$MCP_TLS_CERT_ABS" && -n "$MCP_TLS_KEY_ABS" ]]; then MCP_SCHEME=https; else MCP_SCHEME=http; fi
 # LOG_DIR in the build's .env is relative to the BUILD folder (config resolves it
 # against the build dir, not cwd) — resolve it the same way for the dashboard tab.
 MCP_LOGDIR_RAW="$(get_env "$MCP_ENV" LOG_DIR logs)"
@@ -104,7 +118,7 @@ MCP_TRANSPORT_V="$(get_env "$MCP_ENV" MCP_TRANSPORT streamable-http)"
 if [[ "$MCP_TRANSPORT_V" == "sse" ]]; then MCP_PATH=/sse; else MCP_PATH=/mcp; fi
 BACKEND_PORT_V="$(get_env "$BACKEND_ENV" CHAT_PORT 8002)"
 DASH_PORT_V="$(get_env "$DASHBOARD_ENV" MCP_DASHBOARD_PORT 8004)"
-# The dashboard shares the MCP build's TLS config (MCP_SERVER_DIR points there).
+# The dashboard mirrors the MCP build's TLS (cert/key injected into its env below).
 DASH_SCHEME="$MCP_SCHEME"
 
 # --- setup helper ----------------------------------------------------------
@@ -214,16 +228,25 @@ fi
 # 4. Dashboard
 if [[ $SKIP_DASHBOARD -eq 0 ]]; then
     # Render one tab for the MCP build: hand it the build's log dir via
-    # MCP_DASHBOARD_SERVERS_JSON. MCP_SERVER_DIR points at the MCP build for
-    # shared TLS config. dashboard_server.py never loads dashboard/.env itself —
-    # it reads these from process env. Build the JSON with python so paths and
-    # quotes are escaped correctly.
+    # MCP_DASHBOARD_SERVERS_JSON. dashboard_server.py is self-contained (loads its
+    # own dashboard/.env), but process env wins — so we inject the config here,
+    # including TLS mirrored from the MCP build so the scheme matches DASH_SCHEME.
+    # Build the JSON with python so paths and quotes are escaped correctly.
     DASH_SERVERS_JSON="$("$PYTHON_BIN" -c 'import json,sys; print(json.dumps([{"name":sys.argv[1],"key":"single","log_dir":sys.argv[2]}]))' \
         "mqacemcpserver (:$MCP_PORT)" "$MCP_LOGDIR")"
+    dash_env=(
+        "MCP_DASHBOARD_PORT=$DASH_PORT_V"
+        "MCP_DASHBOARD_SERVERS_JSON=$DASH_SERVERS_JSON"
+        "MCP_DASHBOARD_REFRESH_SECONDS=60"
+    )
+    if [[ -n "$MCP_TLS_CERT_ABS" && -n "$MCP_TLS_KEY_ABS" ]]; then
+        dash_env+=("MCP_TLS_CERT=$MCP_TLS_CERT_ABS" "MCP_TLS_KEY=$MCP_TLS_KEY_ABS")
+    else
+        # No TLS on the build → clear any inherited values so it serves plain HTTP.
+        dash_env=(-u MCP_TLS_CERT -u MCP_TLS_KEY "${dash_env[@]}")
+    fi
     start_service "Dashboard (:$DASH_PORT_V)" "$DASHBOARD_DIR" "dashboard" \
-        env "MCP_SERVER_DIR=$MCP_DIR" "MCP_DASHBOARD_PORT=$DASH_PORT_V" \
-        "MCP_DASHBOARD_SERVERS_JSON=$DASH_SERVERS_JSON" \
-        "MCP_DASHBOARD_REFRESH_SECONDS=60" \
+        env "${dash_env[@]}" \
         "$DASHBOARD_DIR/.venv/bin/python" dashboard_server.py
 fi
 
