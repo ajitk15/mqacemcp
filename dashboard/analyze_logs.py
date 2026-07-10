@@ -11,7 +11,7 @@ import json
 import math
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Define product categorizations for tools
@@ -116,6 +116,55 @@ def parse_logs(log_dir: Path, verbose: bool = True) -> list[dict]:
                         print(f"⚠️ Warning: Could not parse line {line_no} in {log_file.name}: {e}")
                     
     return records
+
+
+def compute_windowed_usage(records: list[dict]) -> dict:
+    """Rolling hourly usage over 24h / 48h / 7d / 30d windows.
+
+    Each window is a list of per-hour call counts, oldest→newest. Anchored to
+    wall-clock now; if no record falls within the largest (30-day) window, fall
+    back to anchoring on the most recent record so the charts still show data
+    for historical/demo logs.
+    """
+    times: list[datetime] = []
+    for r in records:
+        raw = (r.get("ts") or "").replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(raw)
+        except Exception:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        times.append(dt)
+    if not times:
+        return {"windows": {}, "note": ""}
+
+    windows_def = [("24h", 24), ("48h", 48), ("7d", 168), ("month", 720)]
+    now = datetime.now(timezone.utc)
+    latest = max(times)
+    largest_hours = max(h for _, h in windows_def)
+    if any(t >= now - timedelta(hours=largest_hours) for t in times):
+        anchor = now
+        note = f"Anchored to current time ({anchor.strftime('%Y-%m-%d %H:%M')} UTC)."
+    else:
+        anchor = latest
+        note = (
+            f"No activity in the last {largest_hours // 24} days — anchored to the "
+            f"latest recorded call ({anchor.strftime('%Y-%m-%d %H:%M')} UTC)."
+        )
+
+    anchor_hour = anchor.replace(minute=0, second=0, microsecond=0)
+    out: dict[str, dict] = {}
+    for key, hours in windows_def:
+        start = anchor_hour - timedelta(hours=hours - 1)
+        counts = [0] * hours
+        for t in times:
+            idx = int((t - start).total_seconds() // 3600)
+            if 0 <= idx < hours:
+                counts[idx] += 1
+        labels = [(start + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M") for i in range(hours)]
+        out[key] = {"counts": counts, "labels": labels}
+    return {"windows": out, "note": note}
 
 
 def calculate_metrics(records: list[dict]) -> dict:
@@ -276,7 +325,194 @@ def calculate_metrics(records: list[dict]) -> dict:
         "date_range": date_range,
         "tool_share": tool_share,
         "top_latency": top_latency,
+        "usage_windows": compute_windowed_usage(records),
     }
+
+
+_USAGE_SECTION_TEMPLATE = """
+    <!-- Usage Over Time (rolling windows, hourly) -->
+    <section class="glass rounded-3xl p-6 flex flex-col mb-10">
+        <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+            <div>
+                <h3 class="text-base font-extrabold text-white">Usage Over Time (hourly)</h3>
+                <p class="text-xs text-slate-400 mt-0.5">Tool calls bucketed by hour across a rolling window. __ANCHOR_NOTE__</p>
+            </div>
+            <div class="flex items-center gap-4 flex-wrap">
+                <div id="usage-buttons" class="flex gap-2">
+                    <button class="usage-btn active" data-key="24h" onclick="pickUsage(this)">24h</button>
+                    <button class="usage-btn" data-key="48h" onclick="pickUsage(this)">48h</button>
+                    <button class="usage-btn" data-key="7d" onclick="pickUsage(this)">7 days</button>
+                    <button class="usage-btn" data-key="month" onclick="pickUsage(this)">Month</button>
+                </div>
+                <span id="usage-summary" class="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-0.5 rounded-full font-bold">&mdash;</span>
+            </div>
+        </div>
+        <div class="h-56 w-full flex items-center justify-center">
+            <svg id="usage-svg" viewBox="0 0 1000 160" class="w-full h-full">
+                <defs>
+                    <linearGradient id="usage-grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#A100FF" stop-opacity="0.35"/>
+                        <stop offset="100%" stop-color="#A100FF" stop-opacity="0.0"/>
+                    </linearGradient>
+                </defs>
+                <line x1="40" y1="20" x2="980" y2="20" stroke="#EAE0F6" stroke-dasharray="3"/>
+                <line x1="40" y1="75" x2="980" y2="75" stroke="#EAE0F6" stroke-dasharray="3"/>
+                <line x1="40" y1="130" x2="980" y2="130" stroke="#D9C7EF"/>
+                <text id="usage-ymax" x="12" y="24" fill="#64748B" font-size="9">0</text>
+                <text id="usage-ymid" x="12" y="79" fill="#64748B" font-size="9">0</text>
+                <text x="20" y="134" fill="#64748B" font-size="9">0</text>
+                <path id="usage-area" d="" fill="url(#usage-grad)"/>
+                <path id="usage-line" d="" fill="none" stroke="#A100FF" stroke-width="2.5"/>
+                <circle id="usage-peak" r="4" fill="#7500C0" style="display:none"/>
+                <g id="usage-xlabels"></g>
+                <!-- Hover tooltip (line + dot + panel); capture rect on top, cues below it via pointer-events:none -->
+                <rect id="usage-hit" x="40" y="20" width="940" height="110" fill="transparent" pointer-events="all" style="cursor:crosshair"/>
+                <line id="usage-hoverline" y1="20" y2="130" stroke="#7500C0" stroke-width="1" stroke-dasharray="3" pointer-events="none" style="display:none"/>
+                <circle id="usage-hoverdot" r="4.5" fill="#A100FF" stroke="#ffffff" stroke-width="1.5" pointer-events="none" style="display:none"/>
+                <g id="usage-tip" pointer-events="none" style="display:none">
+                    <rect id="usage-tip-bg" rx="5" fill="#2A0A4A" opacity="0.96"/>
+                    <text id="usage-tip-time" fill="#E9D5FF" font-size="8" font-weight="600"></text>
+                    <text id="usage-tip-val" fill="#ffffff" font-size="9" font-weight="700"></text>
+                </g>
+            </svg>
+        </div>
+    </section>
+    <script>
+      const USAGE_DATA = __USAGE_JSON__;
+      let _usageState = null;   // {counts, labels, key, n, maxv} for the drawn window
+      const USAGE_GEO = { x0: 40, x1: 980, y0: 20, y1: 130 };
+      function pickUsage(btn){
+        document.querySelectorAll('#usage-buttons .usage-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        try { sessionStorage.setItem('usageWin', btn.dataset.key); } catch(e){}
+        drawUsage(btn.dataset.key);
+      }
+      function _fmtLabel(iso, key){
+        const p = iso.split('T');
+        if (key === '24h' || key === '48h') return p[1];   // HH:MM
+        return p[0].slice(5);                                // MM-DD
+      }
+      function _usageXY(i, n, maxv, count){
+        const g = USAGE_GEO;
+        const x = n<=1 ? (g.x0+g.x1)/2 : g.x0 + i*(g.x1-g.x0)/(n-1);
+        const y = g.y1 - (count/maxv)*(g.y1-g.y0);
+        return { x: x, y: y };
+      }
+      function _usageHover(evt){
+        const st = _usageState;
+        if (!st || !st.n) return;
+        const svg = document.getElementById('usage-svg');
+        const ctm = svg.getScreenCTM();
+        if (!ctm) return;
+        const pt = svg.createSVGPoint();
+        pt.x = evt.clientX; pt.y = evt.clientY;
+        const loc = pt.matrixTransform(ctm.inverse());
+        const g = USAGE_GEO;
+        let frac = (loc.x - g.x0) / (g.x1 - g.x0);
+        frac = Math.max(0, Math.min(1, frac));
+        const i = st.n<=1 ? 0 : Math.round(frac * (st.n - 1));
+        const val = st.counts[i];
+        const pos = _usageXY(i, st.n, st.maxv, val);
+        const hl = document.getElementById('usage-hoverline');
+        hl.setAttribute('x1', pos.x.toFixed(1)); hl.setAttribute('x2', pos.x.toFixed(1));
+        hl.style.display = '';
+        const hd = document.getElementById('usage-hoverdot');
+        hd.setAttribute('cx', pos.x.toFixed(1)); hd.setAttribute('cy', pos.y.toFixed(1));
+        hd.style.display = '';
+        const t1 = (st.labels[i] || '').replace('T', ' ');
+        const t2 = val + (val === 1 ? ' call' : ' calls');
+        const tip = document.getElementById('usage-tip');
+        const bg = document.getElementById('usage-tip-bg');
+        const tt = document.getElementById('usage-tip-time');
+        const tv = document.getElementById('usage-tip-val');
+        tt.textContent = t1; tv.textContent = t2;
+        const w = Math.max(t1.length, t2.length) * 4.9 + 14, h = 30;
+        let tx = pos.x + 10;
+        if (tx + w > g.x1) tx = pos.x - 10 - w;          // flip left near right edge
+        let ty = Math.max(g.y0, pos.y - h - 8);
+        bg.setAttribute('x', tx.toFixed(1)); bg.setAttribute('y', ty.toFixed(1));
+        bg.setAttribute('width', w.toFixed(1)); bg.setAttribute('height', h);
+        tt.setAttribute('x', (tx + 7).toFixed(1)); tt.setAttribute('y', (ty + 12).toFixed(1));
+        tv.setAttribute('x', (tx + 7).toFixed(1)); tv.setAttribute('y', (ty + 24).toFixed(1));
+        tip.style.display = '';
+      }
+      function _usageLeave(){
+        ['usage-hoverline','usage-hoverdot','usage-tip'].forEach(function(id){
+          const el = document.getElementById(id); if (el) el.style.display = 'none';
+        });
+      }
+      function drawUsage(key){
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const w = (USAGE_DATA.windows || {})[key];
+        const area = document.getElementById('usage-area');
+        const line = document.getElementById('usage-line');
+        const peak = document.getElementById('usage-peak');
+        const xlabels = document.getElementById('usage-xlabels');
+        xlabels.innerHTML = '';
+        if (!w || !w.counts || !w.counts.length){
+          area.setAttribute('d',''); line.setAttribute('d','');
+          peak.style.display='none';
+          document.getElementById('usage-summary').textContent = 'no data';
+          _usageState = null; _usageLeave();
+          return;
+        }
+        const counts = w.counts, labels = w.labels || [];
+        const n = counts.length;
+        const maxv = Math.max(1, ...counts);
+        const x0=40, x1=980, y0=20, y1=130;
+        const X = i => n<=1 ? (x0+x1)/2 : x0 + i*(x1-x0)/(n-1);
+        const Y = v => y1 - (v/maxv)*(y1-y0);
+        let ap = 'M ' + X(0).toFixed(1) + ' ' + y1;
+        let lp = '';
+        for (let i=0;i<n;i++){
+          ap += ' L ' + X(i).toFixed(1) + ' ' + Y(counts[i]).toFixed(1);
+          lp += (i? 'L':'M') + ' ' + X(i).toFixed(1) + ' ' + Y(counts[i]).toFixed(1) + ' ';
+        }
+        ap += ' L ' + X(n-1).toFixed(1) + ' ' + y1 + ' Z';
+        area.setAttribute('d', ap);
+        line.setAttribute('d', lp.trim());
+        let pi=0; for (let i=1;i<n;i++) if (counts[i]>counts[pi]) pi=i;
+        if (counts[pi]>0){
+          peak.setAttribute('cx', X(pi).toFixed(1));
+          peak.setAttribute('cy', Y(counts[pi]).toFixed(1));
+          peak.style.display='';
+        } else { peak.style.display='none'; }
+        document.getElementById('usage-ymax').textContent = maxv;
+        document.getElementById('usage-ymid').textContent = Math.round(maxv/2);
+        const ticks = Math.min(7, n);
+        for (let t=0;t<ticks;t++){
+          const i = ticks<=1 ? 0 : Math.round(t*(n-1)/(ticks-1));
+          const tx = document.createElementNS(svgNS,'text');
+          tx.setAttribute('x', X(i).toFixed(1));
+          tx.setAttribute('y', 148);
+          tx.setAttribute('fill', '#64748B');
+          tx.setAttribute('font-size','8');
+          tx.setAttribute('text-anchor','middle');
+          tx.textContent = labels[i] ? _fmtLabel(labels[i], key) : '';
+          xlabels.appendChild(tx);
+        }
+        const total = counts.reduce((a,b)=>a+b,0);
+        document.getElementById('usage-summary').textContent = total + ' calls · peak ' + counts[pi] + '/h';
+        _usageState = { counts: counts, labels: labels, key: key, n: n, maxv: maxv };
+        _usageLeave();
+      }
+      (function(){
+        let init = '24h';
+        try { init = sessionStorage.getItem('usageWin') || '24h'; } catch(e){}
+        const buttons = document.querySelectorAll('#usage-buttons .usage-btn');
+        let btn = document.querySelector('#usage-buttons .usage-btn[data-key="'+init+'"]');
+        if (!btn && buttons.length) btn = buttons[0];
+        buttons.forEach(b=>b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+        drawUsage(btn ? btn.dataset.key : '24h');
+        const hit = document.getElementById('usage-hit');
+        if (hit){
+          hit.addEventListener('mousemove', _usageHover);
+          hit.addEventListener('mouseleave', _usageLeave);
+        }
+      })();
+    </script>
+"""
 
 
 def build_html_dashboard(metrics: dict) -> str:
@@ -308,6 +544,7 @@ def build_html_dashboard(metrics: dict) -> str:
     date_range = metrics["date_range"]
     tool_share = metrics["tool_share"]
     top_latency = metrics["top_latency"]
+    usage_windows = metrics.get("usage_windows", {"windows": {}, "note": ""})
 
     # --- Subtitle date range ---
     min_date, max_date = date_range
@@ -335,7 +572,7 @@ def build_html_dashboard(metrics: dict) -> str:
         cx_only = 270
         mq_y_only = 200 - (only["mq"] / dv_max) * 160
         ace_y_only = 200 - (only["ace"] / dv_max) * 160
-        dv_mq_area = f'<circle cx="{cx_only}" cy="{mq_y_only:.1f}" r="6" fill="#3B82F6" class="glow-blue"/>'
+        dv_mq_area = f'<circle cx="{cx_only}" cy="{mq_y_only:.1f}" r="6" fill="#A100FF" class="glow-blue"/>'
         dv_mq_line = ""
         dv_ace_area = f'<circle cx="{cx_only}" cy="{ace_y_only:.1f}" r="6" fill="#10B981" class="glow-emerald"/>'
         dv_ace_line = ""
@@ -351,7 +588,7 @@ def build_html_dashboard(metrics: dict) -> str:
         mq_line_pts = " ".join(f"L {x:.1f} {y:.1f}" for x, y in zip(dv_xs[1:], mq_ys[1:]))
         ace_line_pts = " ".join(f"L {x:.1f} {y:.1f}" for x, y in zip(dv_xs[1:], ace_ys[1:]))
         dv_mq_area = f'<path d="M {dv_xs[0]:.1f} 200 {mq_pts} L {dv_xs[-1]:.1f} 200 Z" fill="url(#mq-grad)"/>'
-        dv_mq_line = f'<path d="M {dv_xs[0]:.1f} {mq_ys[0]:.1f} {mq_line_pts}" fill="none" stroke="#3B82F6" stroke-width="3" class="glow-blue"/>'
+        dv_mq_line = f'<path d="M {dv_xs[0]:.1f} {mq_ys[0]:.1f} {mq_line_pts}" fill="none" stroke="#A100FF" stroke-width="3" class="glow-blue"/>'
         dv_ace_area = f'<path d="M {dv_xs[0]:.1f} 200 {ace_pts} L {dv_xs[-1]:.1f} 200 Z" fill="url(#ace-grad)"/>'
         dv_ace_line = f'<path d="M {dv_xs[0]:.1f} {ace_ys[0]:.1f} {ace_line_pts}" fill="none" stroke="#10B981" stroke-width="3" class="glow-emerald"/>'
         mid_i = dv_n // 2
@@ -364,7 +601,7 @@ def build_html_dashboard(metrics: dict) -> str:
         dv_y_mid = str(dv_max // 2)
 
     # --- Tool popularity pie (viewBox 200x200, center (100,100), r=90) ---
-    PIE_COLORS = ["#2563EB", "#10B981", "#F59E0B", "#8B5CF6", "#60A5FA", "#64748B"]
+    PIE_COLORS = ["#A100FF", "#10B981", "#F59E0B", "#7500C0", "#C77DFF", "#94a3b8"]
     pie_sectors_html = ""
     pie_legend_html = ""
     if tool_share:
@@ -384,7 +621,7 @@ def build_html_dashboard(metrics: dict) -> str:
             pie_sectors_html += (
                 f'<path d="M {cx} {cy} L {x1:.2f} {y1:.2f} '
                 f'A {r_pie} {r_pie} 0 {large_arc} 1 {x2:.2f} {y2:.2f} Z" '
-                f'fill="{color}" stroke="#0B0F19" stroke-width="2"/>'
+                f'fill="{color}" stroke="#ffffff" stroke-width="2"/>'
             )
             pie_legend_html += (
                 f'<span class="flex items-center gap-1.5 text-slate-300 font-semibold">'
@@ -411,9 +648,9 @@ def build_html_dashboard(metrics: dict) -> str:
         elif p95v > 500:
             color = "#F59E0B"
         else:
-            color = "#E2E8F0"
+            color = "#A100FF"
         lat_labels_html += (
-            f'<text x="130" y="{y + 11}" fill="#E2E8F0" font-size="9" '
+            f'<text x="130" y="{y + 11}" fill="#374151" font-size="9" '
             f'text-anchor="end" font-weight="bold">{t["tool"]}</text>'
         )
         lat_bars_html += f'<rect x="140" y="{y}" width="{width:.1f}" height="16" fill="{color}" rx="3"/>'
@@ -492,6 +729,14 @@ def build_html_dashboard(metrics: dict) -> str:
     # Calculate dynamic percentages for endpoints
     total_eps = total_endpoint_hits
 
+    # Rolling-window usage section (self-contained HTML+JS; braces stay out of the
+    # main f-string by rendering via .replace on a plain-string template).
+    usage_section_html = (
+        _USAGE_SECTION_TEMPLATE
+        .replace("__USAGE_JSON__", json.dumps(usage_windows))
+        .replace("__ANCHOR_NOTE__", usage_windows.get("note", ""))
+    )
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -500,28 +745,73 @@ def build_html_dashboard(metrics: dict) -> str:
     {_refresh_meta()}
     <title>IBM MQ+ACE MCP Server — Log Insights Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Light "brand purple" theme: remap the dark-theme utility palettes so the
+      // existing markup renders on a light background without touching every class.
+      // Primary brand purple #A100FF / #7500C0 (matches the chat UI); the `slate`
+      // scale is INVERTED (was light text on dark; now dark text on light).
+      tailwind.config = {{
+        theme: {{ extend: {{ colors: {{
+          blue:   {{ 400: '#A100FF', 500: '#A100FF' }},
+          indigo: {{ 400: '#7500C0', 500: '#7500C0' }},
+          violet: {{ 400: '#7500C0', 500: '#8B2FD6' }},
+          emerald:{{ 400: '#059669', 500: '#10B981' }},
+          yellow: {{ 400: '#B45309', 500: '#F59E0B' }},
+          slate: {{
+            200: '#334155', 300: '#3f4657', 400: '#5b6472', 500: '#6b7280',
+            600: '#b3a0cc', 700: '#c9b6e3', 800: '#ece3f7', 900: '#ffffff'
+          }}
+        }} }} }}
+      }}
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body {{
             font-family: 'Plus Jakarta Sans', sans-serif;
-            background-color: #0B0F19;
-            color: #E2E8F0;
+            background: linear-gradient(180deg, #F7F3FC 0%, #ffffff 240px);
+            background-attachment: fixed;
+            color: #1A1A1A;
+        }}
+        /* Slim brand bar echoing the chat UI's fixed purple top nav. */
+        .brand-bar {{
+            position: fixed; top: 0; left: 0; width: 100%; height: 5px;
+            background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+            z-index: 1000;
+        }}
+        /* Headings were `text-white` on dark — force to deep brand purple on light.
+           Higher specificity than Tailwind's single-class utility, so it wins. */
+        body .text-white {{ color: #2A0A4A; }}
+        .brand-title {{
+            background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+            -webkit-background-clip: text; background-clip: text;
+            -webkit-text-fill-color: transparent; color: transparent;
         }}
         .glass {{
-            background: rgba(17, 24, 39, 0.7);
-            backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.04);
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+            background: #ffffff;
+            border: 1px solid #E6D9F5;
+            box-shadow: 0 4px 20px rgba(117, 0, 192, 0.06);
         }}
         .glow-blue {{
-            filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.5));
+            filter: drop-shadow(0 0 8px rgba(161, 0, 255, 0.35));
         }}
         .glow-emerald {{
-            filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.5));
+            filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.35));
+        }}
+        /* Window toggle buttons for the usage-over-time chart. */
+        .usage-btn {{
+            font-size: 12px; font-weight: 700; padding: 5px 14px; border-radius: 999px;
+            border: 1px solid #E6D9F5; background: #F7F3FC; color: #6b21a8;
+            cursor: pointer; transition: all .15s ease;
+        }}
+        .usage-btn:hover {{ background: #F1E9FB; }}
+        .usage-btn.active {{
+            background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+            color: #ffffff; border-color: transparent;
         }}
     </style>
 </head>
 <body class="p-6 md:p-12 min-h-screen">
+    <div class="brand-bar"></div>
     <!-- Header -->
     <header class="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
@@ -529,7 +819,7 @@ def build_html_dashboard(metrics: dict) -> str:
                 <span class="px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">Production Audit Ready</span>
                 <span class="px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Observability Verified</span>
             </div>
-            <h1 class="text-3xl font-extrabold mt-3 text-white tracking-tight">IBM MQ & IBM ACE AI Diagnostic Engine</h1>
+            <h1 class="text-3xl font-extrabold mt-3 brand-title tracking-tight">IBM MQ & IBM ACE AI Diagnostic Engine</h1>
             <p class="text-slate-400 mt-1 text-sm">Aggregated Log Analytics & Observability Dashboard ({subtitle_range})</p>
         </div>
         <div class="text-right glass rounded-2xl px-6 py-4 self-start flex items-center gap-4 border border-emerald-500/10">
@@ -604,6 +894,7 @@ def build_html_dashboard(metrics: dict) -> str:
         </div>
     </section>
 
+    {usage_section_html}
     <!-- Visual Analytics Charts Grid (SVGs) -->
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
         <!-- Area Chart: Volume Trend -->
@@ -623,8 +914,8 @@ def build_html_dashboard(metrics: dict) -> str:
                 <svg viewBox="0 0 500 250" class="w-full h-full">
                     <defs>
                         <linearGradient id="mq-grad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.4"/>
-                            <stop offset="100%" stop-color="#3B82F6" stop-opacity="0.0"/>
+                            <stop offset="0%" stop-color="#A100FF" stop-opacity="0.4"/>
+                            <stop offset="100%" stop-color="#A100FF" stop-opacity="0.0"/>
                         </linearGradient>
                         <linearGradient id="ace-grad" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="0%" stop-color="#10B981" stop-opacity="0.4"/>
@@ -632,9 +923,9 @@ def build_html_dashboard(metrics: dict) -> str:
                         </linearGradient>
                     </defs>
                     <!-- Y-Axis Grid Lines -->
-                    <line x1="40" y1="40" x2="480" y2="40" stroke="#1E293B" stroke-dasharray="3"/>
-                    <line x1="40" y1="120" x2="480" y2="120" stroke="#1E293B" stroke-dasharray="3"/>
-                    <line x1="40" y1="200" x2="480" y2="200" stroke="#334155"/>
+                    <line x1="40" y1="40" x2="480" y2="40" stroke="#EAE0F6" stroke-dasharray="3"/>
+                    <line x1="40" y1="120" x2="480" y2="120" stroke="#EAE0F6" stroke-dasharray="3"/>
+                    <line x1="40" y1="200" x2="480" y2="200" stroke="#D9C7EF"/>
                     <!-- Y-axis labels (data-driven) -->
                     <text x="15" y="45" fill="#64748B" font-size="9">{dv_y_top}</text>
                     <text x="15" y="125" fill="#64748B" font-size="9">{dv_y_mid}</text>
@@ -661,9 +952,9 @@ def build_html_dashboard(metrics: dict) -> str:
             <div class="h-72 w-full mt-auto flex flex-col md:flex-row items-center justify-around gap-6">
                 <!-- SVG Pie Chart (data-driven sectors) -->
                 <svg viewBox="0 0 200 200" class="w-48 h-48">
-                    <circle cx="100" cy="100" r="90" fill="none" stroke="#1E293B" stroke-width="12"/>
+                    <circle cx="100" cy="100" r="90" fill="none" stroke="#EAE0F6" stroke-width="12"/>
                     {pie_sectors_html}
-                    <circle cx="100" cy="100" r="50" fill="#0B0F19"/>
+                    <circle cx="100" cy="100" r="50" fill="#ffffff"/>
                 </svg>
                 <!-- Legend list (data-driven) -->
                 <div class="grid grid-cols-2 gap-3 text-xs w-full max-w-[240px]">
@@ -682,11 +973,11 @@ def build_html_dashboard(metrics: dict) -> str:
             </div>
             <div class="h-72 w-full mt-auto flex items-center justify-center">
                 <svg viewBox="0 0 500 250" class="w-full h-full">
-                    <line x1="140" y1="20" x2="140" y2="210" stroke="#334155"/>
-                    <line x1="225" y1="20" x2="225" y2="210" stroke="#1E293B" stroke-dasharray="2"/>
-                    <line x1="310" y1="20" x2="310" y2="210" stroke="#1E293B" stroke-dasharray="2"/>
-                    <line x1="395" y1="20" x2="395" y2="210" stroke="#1E293B" stroke-dasharray="2"/>
-                    <line x1="480" y1="20" x2="480" y2="210" stroke="#1E293B" stroke-dasharray="2"/>
+                    <line x1="140" y1="20" x2="140" y2="210" stroke="#D9C7EF"/>
+                    <line x1="225" y1="20" x2="225" y2="210" stroke="#EAE0F6" stroke-dasharray="2"/>
+                    <line x1="310" y1="20" x2="310" y2="210" stroke="#EAE0F6" stroke-dasharray="2"/>
+                    <line x1="395" y1="20" x2="395" y2="210" stroke="#EAE0F6" stroke-dasharray="2"/>
+                    <line x1="480" y1="20" x2="480" y2="210" stroke="#EAE0F6" stroke-dasharray="2"/>
 
                     <!-- SLA line at 1.0s (data-driven position) -->
                     <line x1="{sla_x:.1f}" y1="15" x2="{sla_x:.1f}" y2="215" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="3"/>
@@ -727,9 +1018,9 @@ def build_html_dashboard(metrics: dict) -> str:
         </div>
         <div class="h-44 w-full flex items-center justify-center">
             <svg viewBox="0 0 1000 150" class="w-full h-full">
-                <line x1="40" y1="20" x2="960" y2="20" stroke="#1E293B" stroke-dasharray="3"/>
-                <line x1="40" y1="70" x2="960" y2="70" stroke="#1E293B" stroke-dasharray="3"/>
-                <line x1="40" y1="120" x2="960" y2="120" stroke="#334155"/>
+                <line x1="40" y1="20" x2="960" y2="20" stroke="#EAE0F6" stroke-dasharray="3"/>
+                <line x1="40" y1="70" x2="960" y2="70" stroke="#EAE0F6" stroke-dasharray="3"/>
+                <line x1="40" y1="120" x2="960" y2="120" stroke="#D9C7EF"/>
 
                 {hourly_path}
                 {hourly_peak_dot}
@@ -921,7 +1212,7 @@ def _empty_dashboard_html(reason: str) -> str:
         f"{_refresh_meta()}"
         "<title>IBM MQ+ACE MCP Server — Dashboard</title></head>"
         "<body style=\"font-family: sans-serif; padding: 2em; "
-        "background:#0B0F19; color:#E2E8F0;\">"
+        "background:#F7F3FC; color:#1A1A1A;\">"
         "<h1>Dashboard not available</h1>"
         f"<p>{reason}</p></body></html>"
     )
@@ -938,9 +1229,8 @@ _PAGE_HEAD = """<!DOCTYPE html>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        body {{ font-family: 'Plus Jakarta Sans', sans-serif; background-color: #0B0F19; color: #E2E8F0; }}
-        .glass {{ background: rgba(17,24,39,0.7); backdrop-filter: blur(16px);
-            border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 4px 30px rgba(0,0,0,0.4); }}
+        body {{ font-family: 'Plus Jakarta Sans', sans-serif; background: #F7F3FC; color: #1A1A1A; }}
+        .glass {{ background: #ffffff; border: 1px solid #E6D9F5; box-shadow: 0 4px 20px rgba(117,0,192,0.06); }}
     </style>
 </head>
 """

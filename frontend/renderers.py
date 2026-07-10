@@ -15,6 +15,15 @@ import streamlit.components.v1 as components
 
 _MERMAID_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 
+# Backstop for the agent occasionally wrapping a whole answer (or a table) in a
+# language-less ``` fence, which renders as unstyled monospace and hides the
+# table. `_FENCE_RE` captures a fence's language tag + body; `_TABLE_DELIM_RE`
+# matches a Markdown table delimiter row (e.g. `| --- | --- |`).
+_FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
+_TABLE_DELIM_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$", re.M)
+# Only lift fences with no language (or a plain-text/markdown tag) — never real code.
+_LIFTABLE_LANGS = {"", "text", "txt", "markdown", "md"}
+
 
 _MERMAID_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -58,6 +67,25 @@ def render_mermaid(source: str, height: int = 420) -> None:
     components.html(html_doc, height=height, scrolling=True)
 
 
+def _lift_wrapped_tables(text: str) -> str:
+    """Unwrap a language-less ``` fence whose body contains a Markdown table.
+
+    The agent sometimes wraps a whole answer (or just a table) in a bare code
+    fence, which renders as unstyled monospace and hides the table. When a
+    fence has no (or a doc-ish) language tag AND its body has a Markdown table
+    delimiter row, lift the body out so it renders as real Markdown. Genuine
+    ```lang code blocks are left untouched.
+    """
+    def _maybe_lift(match: "re.Match[str]") -> str:
+        lang = (match.group(1) or "").strip().lower()
+        body = match.group(2)
+        if lang in _LIFTABLE_LANGS and _TABLE_DELIM_RE.search(body):
+            return body
+        return match.group(0)
+
+    return _FENCE_RE.sub(_maybe_lift, text)
+
+
 def render_markdown(text: str) -> None:
     """Render markdown, lifting fenced ```mermaid``` blocks into real diagrams."""
     if not text:
@@ -66,6 +94,7 @@ def render_markdown(text: str) -> None:
     # _MERMAID_RE.split returns [md, diagram, md, diagram, ...] when matches exist.
     for index, part in enumerate(parts):
         if index % 2 == 0:
+            part = _lift_wrapped_tables(part)
             stripped = part.strip()
             if stripped:
                 st.markdown(part)
@@ -154,10 +183,20 @@ def render_tool_step(step: Dict[str, Any], running: bool = False) -> None:
             st.caption("no result")
 
 
-def render_assistant_body(text: str, tool_steps: list, error: Optional[str] = None) -> None:
-    """Render the full assistant turn body (tool steps first, then text, then error)."""
-    for step in tool_steps:
-        render_tool_step(step, running=step.get("result") is None)
+def render_assistant_body(
+    text: str,
+    tool_steps: list,
+    error: Optional[str] = None,
+    show_tool_calls: bool = True,
+) -> None:
+    """Render the full assistant turn body (tool steps first, then text, then error).
+
+    ``show_tool_calls`` gates the 🔧 tool-invocation panels; when False the
+    steps are skipped (data is untouched — the caller still owns it).
+    """
+    if show_tool_calls:
+        for step in tool_steps:
+            render_tool_step(step, running=step.get("result") is None)
     if text:
         render_markdown(text)
     if error:

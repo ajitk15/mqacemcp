@@ -127,21 +127,28 @@ def _build_tabs_page(servers: list[dict]) -> bytes:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MQ + ACE — Log Insights</title>
 <style>
-  :root {{ color-scheme: dark; }}
-  html, body {{ margin: 0; height: 100%; background: #0f172a;
+  :root {{ color-scheme: light; }}
+  html, body {{ margin: 0; height: 100%; background: #F7F3FC;
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }}
-  .tabs {{ display: flex; gap: 6px; padding: 10px 14px 0;
-    background: #0f172a; border-bottom: 1px solid #1e293b; }}
-  .tab {{ background: #1e293b; color: #cbd5e1; border: 1px solid #334155;
-    border-bottom: none; border-radius: 8px 8px 0 0; padding: 8px 16px;
-    font-size: 0.9rem; cursor: pointer; }}
-  .tab:hover {{ background: #273449; }}
-  .tab.active {{ background: #0b1220; color: #fff; border-color: #475569;
-    font-weight: 600; }}
-  .tab.questions {{ margin-left: auto; color: #93c5fd; }}
-  iframe {{ border: 0; width: 100%; height: calc(100vh - 49px); display: block; }}
+  /* Brand purple nav — mirrors the chat UI's fixed top bar. */
+  .topbar {{ background: linear-gradient(90deg, #A100FF 0%, #7500C0 100%);
+    padding: 8px 16px 0; box-shadow: 0 1px 5px rgba(0,0,0,0.12); }}
+  .brandline {{ color: #ffffff; font-size: 13px; font-weight: 600;
+    letter-spacing: .2px; padding: 2px 4px 8px; }}
+  .tabs {{ display: flex; gap: 6px; }}
+  .tab {{ background: rgba(255,255,255,0.15); color: #ffffff;
+    border: 1px solid rgba(255,255,255,0.28); border-bottom: none;
+    border-radius: 8px 8px 0 0; padding: 8px 16px; font-size: 0.9rem; cursor: pointer; }}
+  .tab:hover {{ background: rgba(255,255,255,0.28); }}
+  .tab.active {{ background: #F7F3FC; color: #6b21a8; border-color: transparent;
+    font-weight: 700; }}
+  .tab.questions {{ margin-left: auto; }}
+  iframe {{ border: 0; width: 100%; height: calc(100vh - 70px); display: block; background: #ffffff; }}
 </style></head><body>
-  <div class="tabs">{buttons}</div>
+  <div class="topbar">
+    <div class="brandline">MQ + ACE &mdash; Log Insights</div>
+    <div class="tabs">{buttons}</div>
+  </div>
   <iframe id="frame" src="dashboard/{first_key}" title="dashboard"></iframe>
   <script>
     function pick(btn) {{

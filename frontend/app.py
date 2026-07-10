@@ -29,6 +29,18 @@ from renderers import render_assistant_body, render_block, render_markdown, rend
 _PAGE_TITLE_OVERRIDE = os.getenv("PAGE_TITLE", "").strip()
 _PAGE_ICON = os.getenv("PAGE_ICON", "").strip() or "💬"
 
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    """Parse a truthy env var; blank/unset falls back to ``default``."""
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+# Default visibility of the 🔧 tool-call panels; user can still toggle at runtime.
+_SHOW_TOOL_CALLS_DEFAULT = _env_bool("SHOW_TOOL_CALLS", True)
+
 # Sidebar quick-links (open in a new browser tab). The sample-questions page is
 # served by Streamlit's static file server (frontend/static/, enabled in
 # .streamlit/config.toml) at a relative URL.
@@ -159,6 +171,8 @@ if "turns" not in st.session_state:
     st.session_state.turns = []
 if "pending" not in st.session_state:
     st.session_state.pending = None  # message awaiting streaming
+if "show_tool_calls" not in st.session_state:
+    st.session_state.show_tool_calls = _SHOW_TOOL_CALLS_DEFAULT
 
 
 def _refresh_health() -> None:
@@ -234,6 +248,14 @@ with st.sidebar:
     if st.button("Refresh backend info", width='stretch'):
         _refresh_health()
         st.rerun()
+
+    st.divider()
+    st.markdown("### Display")
+    st.checkbox(
+        "Show tool calls",
+        key="show_tool_calls",
+        help="Show the expandable 🔧 tool-invocation panels in each answer.",
+    )
 
     st.divider()
     st.markdown("### MCP Server")
@@ -360,6 +382,7 @@ def _render_history() -> None:
                     turn.get("text", ""),
                     turn.get("tool_steps") or [],
                     turn.get("error"),
+                    show_tool_calls=st.session_state.show_tool_calls,
                 )
 
 
@@ -397,6 +420,8 @@ def _stream_pending() -> None:
     pending_message = st.session_state.pending
     if not pending_message:
         return
+
+    show_tool_calls = st.session_state.show_tool_calls
 
     assistant_turn = {
         "role": "assistant",
@@ -443,8 +468,9 @@ def _stream_pending() -> None:
                     with tool_area:
                         placeholder = st.empty()
                     step_placeholders.append(placeholder)
-                    with placeholder.container():
-                        render_tool_step(step, running=True)
+                    if show_tool_calls:
+                        with placeholder.container():
+                            render_tool_step(step, running=True)
 
                 elif kind == "tool_result":
                     index = _match_step_index(
@@ -454,8 +480,9 @@ def _stream_pending() -> None:
                     )
                     if index >= 0:
                         assistant_turn["tool_steps"][index]["result"] = event.get("block")
-                        with step_placeholders[index].container():
-                            render_tool_step(assistant_turn["tool_steps"][index], running=False)
+                        if show_tool_calls:
+                            with step_placeholders[index].container():
+                                render_tool_step(assistant_turn["tool_steps"][index], running=False)
                     else:
                         # No matching step (shouldn't normally happen) — surface anyway.
                         with tool_area:
@@ -468,8 +495,9 @@ def _stream_pending() -> None:
                             "result": event.get("block"),
                         }
                         assistant_turn["tool_steps"].append(stray_step)
-                        with new_placeholder.container():
-                            render_tool_step(stray_step, running=False)
+                        if show_tool_calls:
+                            with new_placeholder.container():
+                                render_tool_step(stray_step, running=False)
 
                 elif kind == "error":
                     assistant_turn["error"] = event.get("message") or "Unknown error"
