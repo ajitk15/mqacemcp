@@ -17,37 +17,39 @@ errors, allow-list, read-only enforcement) is in-process.
 
 ## Development commands
 
-The build lives in `mqacemcpserver/`. Its dev `.venv` stays at the **repo
-root** (shared), but its code, tests, and `requirements.txt` live in the build
+The build lives in `mqacemcpserver/`. Its dev `.venv` is **module-level**
+(`mqacemcpserver/.venv`) — no repo-root `.venv` is created (every component owns
+its own venv). Its code, tests, and `requirements.txt` also live in the build
 folder. Paths in the architecture section below are relative to
 `mqacemcpserver/`.
 
 ```powershell
-# venv + deps (Windows) — venv at repo root, requirements in the build folder
+# venv + deps (Windows) — venv and requirements both in the build folder
+cd mqacemcpserver
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r mqacemcpserver\requirements.txt
+pip install -r requirements.txt
 
 # Run (stdio, default) — from repo root; cwd stays root so shared resources/ resolve.
 # The build reads its own mqacemcpserver/.env regardless of cwd.
-.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
+mqacemcpserver\.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 
 # Run (Streamable HTTP, default — endpoint at http://MCP_HOST:MCP_PORT/mcp, healthz at /healthz)
 $env:MCP_TRANSPORT = "streamable-http"
-.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
+mqacemcpserver\.venv\Scripts\python.exe mqacemcpserver\mqacemcpserver.py
 # (legacy SSE is still selectable: $env:MCP_TRANSPORT = "sse" -> /sse)
 
 # Smoke check that the tools register (run from inside the build folder)
 cd mqacemcpserver
-..\.venv\Scripts\python.exe -c "import mqacemcpserver as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
+.venv\Scripts\python.exe -c "import mqacemcpserver as m; print(sorted(m.mcp._tool_manager._tools.keys()))"
 
 # Tests — run from INSIDE mqacemcpserver/ (the suite imports the build's
 # top-level `server` package, so run pytest from the build folder).
 cd mqacemcpserver
-..\.venv\Scripts\python.exe -m pip install pytest pytest-asyncio   # one-time
-..\.venv\Scripts\python.exe -m pytest -q                           # full suite
-..\.venv\Scripts\python.exe -m pytest tests/test_composite_tools.py -q  # single file
-..\.venv\Scripts\python.exe -m pytest -k "redacts" -q              # by name
+.venv\Scripts\python.exe -m pip install pytest pytest-asyncio   # one-time
+.venv\Scripts\python.exe -m pytest -q                           # full suite
+.venv\Scripts\python.exe -m pytest tests/test_composite_tools.py -q  # single file
+.venv\Scripts\python.exe -m pytest -k "redacts" -q              # by name
 ```
 
 `mqacemcpserver/tests/conftest.py` redirects `LOG_DIR` to a temp directory

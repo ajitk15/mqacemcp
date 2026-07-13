@@ -19,17 +19,25 @@
     Streamlit port is set by -Port below. The values above are this repo's
     current configuration.
 
-    Each component is self-contained with its own requirements.txt. The MCP
-    server uses the repo-root .venv; backend, frontend, and dashboard each have
-    their own .venv. Pass -Setup to create any missing venvs and
+    Each component is self-contained with its own module-level .venv
+    (mqacemcpserver\.venv, agent\.venv, frontend\.venv, dashboard\.venv). No
+    repo-root .venv is created. Pass -Setup to create any missing venvs and
     `pip install -r` each component's requirements before launching.
 
     PIDs of spawned windows are written to scripts\.pids so stop-all.ps1 can
     clean them up.
 
 .PARAMETER Setup
-    Create any missing venvs and install each (non-skipped) component's
-    requirements.txt before starting. Safe to re-run.
+    Seed each module's .env from its .env.example (asks for confirmation first;
+    never overwrites an existing .env), then create any missing venvs and install
+    each (non-skipped) component's requirements.txt before starting. Safe to
+    re-run. For the agent it also installs the LLM provider chosen via -Llm (or
+    prompted for interactively) and records LLM_PROVIDER in agent\.env.
+
+.PARAMETER Llm
+    LLM provider for the agent: openai | gemini | claude. When -Setup is given
+    and this is omitted, the script prompts for it interactively. Ignored when
+    -SkipBackend is set.
 
 .PARAMETER SkipMcp
     Do not start the MCP server (e.g. it is already running elsewhere).
@@ -61,6 +69,8 @@
 [CmdletBinding()]
 param(
     [switch]$Setup,
+    [ValidateSet("openai", "gemini", "claude")]
+    [string]$Llm,
     [switch]$SkipMcp,
     [switch]$SkipBackend,
     [switch]$SkipFrontend,
@@ -80,7 +90,8 @@ $McpReqs      = Join-Path $McpDir "requirements.txt"
 $BackendDir   = Join-Path $RepoRoot "agent"
 $FrontendDir  = Join-Path $RepoRoot "frontend"
 $DashboardDir = Join-Path $RepoRoot "dashboard"
-$RootVenvPy   = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+# The MCP server has its OWN module-level venv (no repo-root .venv is created).
+$McpVenvPy    = Join-Path $McpDir ".venv\Scripts\python.exe"
 $PidFile      = Join-Path $PSScriptRoot ".pids"
 
 function Write-Step($msg)  { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -143,30 +154,130 @@ $DashScheme  = $McpScheme
 
 # ---------------------------------------------------------------------------
 # Setup helper — create a venv (if missing) and install its requirements.
-# $VenvDir is where the .venv lives; $ReqFile is the requirements to install.
+# $VenvDir is where the .venv lives; $ReqFiles is one or more requirements
+# files (multiple = a base file plus a provider overlay). Every venv is
+# module-level — nothing is ever created at the repo root.
 # ---------------------------------------------------------------------------
 function Initialize-Venv {
-    param([string]$Label, [string]$VenvDir, [string]$ReqFile)
+    param([string]$Label, [string]$VenvDir, [string[]]$ReqFiles)
     $py = Join-Path $VenvDir ".venv\Scripts\python.exe"
     if (-not (Test-Path $py)) {
         Write-Step "[$Label] creating venv in $VenvDir\.venv"
         & python -m venv (Join-Path $VenvDir ".venv")
         if ($LASTEXITCODE -ne 0) { throw "venv creation failed for $Label" }
     }
-    Write-Step "[$Label] pip install -r $ReqFile"
+    $reqArgs = @()
+    foreach ($r in $ReqFiles) { $reqArgs += @("-r", $r) }
+    Write-Step "[$Label] pip install $($reqArgs -join ' ')"
     & $py -m pip install --quiet --upgrade pip
-    & $py -m pip install -r $ReqFile
+    & $py -m pip install @reqArgs
     if ($LASTEXITCODE -ne 0) { throw "pip install failed for $Label" }
     Write-Ok "[$Label] dependencies installed"
 }
 
+# Ask (once) which LLM provider the agent should use. Returns openai|gemini|claude.
+function Get-LlmProvider {
+    param([string]$Preselected)
+    if ($Preselected) { return $Preselected.ToLower() }
+    Write-Host ""
+    Write-Step "Select the LLM provider for the agent"
+    Write-Host "    [1] OpenAI  (langchain-openai, OPENAI_API_KEY)"       -ForegroundColor Gray
+    Write-Host "    [2] Gemini  (langchain-google-genai, GOOGLE_API_KEY)" -ForegroundColor Gray
+    Write-Host "    [3] Claude  (langchain-anthropic, ANTHROPIC_API_KEY)" -ForegroundColor Gray
+    while ($true) {
+        $ans = (Read-Host "Provider [1/2/3 or openai/gemini/claude] (default 1)").Trim().ToLower()
+        switch ($ans) {
+            { $_ -in @("", "1", "openai") } { return "openai" }
+            { $_ -in @("2", "gemini", "google") } { return "gemini" }
+            { $_ -in @("3", "claude", "anthropic") } { return "claude" }
+            default { Write-Bad "Enter 1, 2, or 3 (or openai/gemini/claude)." }
+        }
+    }
+}
+
+# Map a provider to the requirements files the agent venv needs (base + overlay).
+function Get-AgentReqFiles {
+    param([string]$Provider)
+    $base = Join-Path $BackendDir "requirements.txt"
+    switch ($Provider) {
+        "gemini" { return @($base, (Join-Path $BackendDir "requirements-gemini.txt")) }
+        "claude" { return @($base, (Join-Path $BackendDir "requirements-claude.txt")) }
+        default  { return @($base) }   # openai lives in the base requirements
+    }
+}
+
+# Copy each module's .env.example -> .env when the module has no .env yet, after
+# a single confirmation. NEVER overwrites an existing .env (so re-running -Setup
+# is safe and never clobbers real credentials). $Modules is an array of
+# @{ Label=..; Dir=.. } hashtables.
+function Initialize-EnvFiles {
+    param([hashtable[]]$Modules)
+    $toCreate = @()
+    foreach ($m in $Modules) {
+        $envFile = Join-Path $m.Dir ".env"
+        $example = Join-Path $m.Dir ".env.example"
+        if (Test-Path $envFile) { Write-Note "$($m.Label): .env already exists - keeping it"; continue }
+        if (-not (Test-Path $example)) { Write-Note "$($m.Label): no .env.example - skipping"; continue }
+        $toCreate += $m
+    }
+    if ($toCreate.Count -eq 0) { Write-Ok "All module .env files already present (nothing to copy)."; return }
+    Write-Step "These modules have no .env and will be created from .env.example:"
+    $toCreate | ForEach-Object { Write-Host "    - $($_.Label)  ($($_.Dir)\.env)" -ForegroundColor Gray }
+    $ans = (Read-Host "Create these .env files now? [Y/n]").Trim().ToLower()
+    if ($ans -in @("n", "no")) {
+        Write-Note "Skipped .env creation. Copy each module's .env.example to .env before running."
+        return
+    }
+    foreach ($m in $toCreate) {
+        Copy-Item -Path (Join-Path $m.Dir ".env.example") -Destination (Join-Path $m.Dir ".env")
+        Write-Ok "$($m.Label): created .env from .env.example"
+    }
+}
+
+# Update-or-append KEY=value in a .env file (created if missing). Used to record
+# the chosen LLM_PROVIDER so the agent picks the matching model at runtime.
+function Set-EnvValue {
+    param([string]$File, [string]$Key, [string]$Value)
+    $line = "$Key=$Value"
+    if (Test-Path $File) {
+        $content = Get-Content $File
+        if ($content -match "^\s*$([regex]::Escape($Key))\s*=") {
+            $content = $content -replace "^\s*$([regex]::Escape($Key))\s*=.*$", $line
+            Set-Content -Path $File -Value $content -Encoding ascii
+        } else {
+            Add-Content -Path $File -Value $line -Encoding ascii
+        }
+    } else {
+        Set-Content -Path $File -Value $line -Encoding ascii
+    }
+    Write-Ok "agent\.env: $line"
+}
+
 if ($Setup) {
+    # First, seed each module's .env from its .env.example (with confirmation) so
+    # the LLM_PROVIDER write below lands in a real agent\.env.
+    $envModules = @()
+    if (-not $SkipMcp)       { $envModules += @{ Label = "mcp";       Dir = $McpDir } }
+    if (-not $SkipBackend)   { $envModules += @{ Label = "agent";     Dir = $BackendDir } }
+    if (-not $SkipFrontend)  { $envModules += @{ Label = "frontend";  Dir = $FrontendDir } }
+    if (-not $SkipDashboard) { $envModules += @{ Label = "dashboard"; Dir = $DashboardDir } }
+    Initialize-EnvFiles -Modules $envModules
+    Write-Host ""
+
     Write-Step "Setup: installing per-component requirements"
-    # The MCP server uses the repo-root .venv.
-    if (-not $SkipMcp)       { Initialize-Venv -Label "mcp"       -VenvDir $RepoRoot     -ReqFile $McpReqs }
-    if (-not $SkipBackend)   { Initialize-Venv -Label "agent"   -VenvDir $BackendDir   -ReqFile (Join-Path $BackendDir "requirements.txt") }
-    if (-not $SkipFrontend)  { Initialize-Venv -Label "frontend"  -VenvDir $FrontendDir  -ReqFile (Join-Path $FrontendDir "requirements.txt") }
-    if (-not $SkipDashboard) { Initialize-Venv -Label "dashboard" -VenvDir $DashboardDir -ReqFile (Join-Path $DashboardDir "requirements.txt") }
+    # Every component gets its OWN module-level venv — nothing at the repo root.
+    if (-not $SkipMcp)       { Initialize-Venv -Label "mcp"       -VenvDir $McpDir       -ReqFiles $McpReqs }
+    if (-not $SkipBackend)   {
+        # Ask which LLM to install for the agent, install base + provider overlay,
+        # and record the choice so agent.py instantiates the matching model.
+        $provider = Get-LlmProvider -Preselected $Llm
+        Write-Ok "LLM provider: $provider"
+        Initialize-Venv -Label "agent" -VenvDir $BackendDir -ReqFiles (Get-AgentReqFiles $provider)
+        Set-EnvValue -File $BackendEnv -Key "LLM_PROVIDER" -Value $provider
+        Write-Note "Remember to set the matching API key in agent\.env (OPENAI_API_KEY / GOOGLE_API_KEY / ANTHROPIC_API_KEY)."
+    }
+    if (-not $SkipFrontend)  { Initialize-Venv -Label "frontend"  -VenvDir $FrontendDir  -ReqFiles (Join-Path $FrontendDir "requirements.txt") }
+    if (-not $SkipDashboard) { Initialize-Venv -Label "dashboard" -VenvDir $DashboardDir -ReqFiles (Join-Path $DashboardDir "requirements.txt") }
     Write-Host ""
 }
 
@@ -177,10 +288,10 @@ $problems = @()
 
 if (-not $SkipMcp) {
     Write-Step "Checking MCP server prerequisites"
-    if (-not (Test-Path $RootVenvPy)) {
-        $problems += "Missing MCP venv. Fix: .\scripts\start-all.ps1 -Setup   (or: cd `"$RepoRoot`" ; python -m venv .venv ; .\.venv\Scripts\python.exe -m pip install -r `"$McpReqs`")"
-        Write-Bad ".venv\Scripts\python.exe not found"
-    } else { Write-Ok ".venv present" }
+    if (-not (Test-Path $McpVenvPy)) {
+        $problems += "Missing MCP venv. Fix: .\scripts\start-all.ps1 -Setup   (or: cd `"$McpDir`" ; python -m venv .venv ; .\.venv\Scripts\python.exe -m pip install -r `"$McpReqs`")"
+        Write-Bad "mqacemcpserver\.venv\Scripts\python.exe not found"
+    } else { Write-Ok "mqacemcpserver\.venv present" }
     if (-not (Test-Path $McpEntry)) {
         $problems += "Missing MCP entry $McpEntry."
         Write-Bad "$McpEntry not found"
@@ -266,7 +377,8 @@ if (-not $SkipMcp) {
     # The MCP build resolves its own .env via __file__; cwd is the repo root so
     # the shared resources/ and the relative entry path resolve.
     $entryRel = $McpEntry.Substring($RepoRoot.Length).TrimStart('\')
-    $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\.venv\Scripts\python.exe `"$entryRel`""
+    # cwd stays at the repo root (shared resources/ resolve); use the MCP module venv.
+    $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\mqacemcpserver\.venv\Scripts\python.exe `"$entryRel`""
     $pids += Start-Service-Window -Title "MCP Server (:$McpPort $McpTransport)" `
         -WorkingDirectory $RepoRoot -Command $cmd
     Start-Sleep -Seconds 3  # let the MCP server bind before the backend connects

@@ -87,12 +87,12 @@ $problems = @()
 
 if (-not $SkipMcp) {
     Write-Step "Checking MCP server prerequisites"
-    $mcpVenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+    $mcpVenvPython = Join-Path $McpDir ".venv\Scripts\python.exe"
     $mcpEntry      = Join-Path $McpDir "mqacemcpserver.py"
     if (-not (Test-Path $mcpVenvPython)) {
-        $problems += "Missing MCP venv. Fix: cd `"$RepoRoot`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r mqacemcpserver\requirements.txt"
-        Write-Bad ".venv\Scripts\python.exe not found"
-    } else { Write-Ok ".venv present" }
+        $problems += "Missing MCP venv. Fix: cd `"$McpDir`" ; python -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r requirements.txt"
+        Write-Bad "mqacemcpserver\.venv\Scripts\python.exe not found"
+    } else { Write-Ok "mqacemcpserver\.venv present" }
     if (-not (Test-Path $mcpEntry)) {
         $problems += "Missing mqacemcpserver\mqacemcpserver.py."
         Write-Bad "mqacemcpserver\mqacemcpserver.py not found"
@@ -171,8 +171,9 @@ function Start-Service-Window {
 
 if (-not $SkipMcp) {
     # Run from repo root so .env/resources resolve; entry path is relative to it.
+    # Use the MCP server's own module-level venv (no repo-root .venv).
     $entryRel = $McpEntry.Substring($RepoRoot.Length).TrimStart('\')
-    $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\.venv\Scripts\python.exe `"$entryRel`""
+    $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\mqacemcpserver\.venv\Scripts\python.exe `"$entryRel`""
     $pids += Start-Service-Window -Title "MCP Server (:$McpPort $McpTransport)" `
         -WorkingDirectory $RepoRoot -Command $cmd
     Start-Sleep -Seconds 3  # let the MCP server bind before the backend connects

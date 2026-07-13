@@ -137,8 +137,10 @@ copy .env.example .env          # edit if your backend isn't on :8002
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | — | Required. OpenAI API key. |
-| `OPENAI_MODEL` | `gpt-5.5` | LLM model name. |
+| `LLM_PROVIDER` | `openai` | Which LLM to use: `openai`, `gemini`, or `claude`. Selected by `scripts/start-all -Setup`, which also installs the matching package overlay (`requirements-gemini.txt` / `requirements-claude.txt`). |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | — / `gpt-5.5` | Used when `LLM_PROVIDER=openai`. |
+| `GOOGLE_API_KEY` / `GEMINI_MODEL` | — / `gemini-2.5-pro` | Used when `LLM_PROVIDER=gemini` (needs `langchain-google-genai`). |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | — / `claude-sonnet-5` | Used when `LLM_PROVIDER=claude` (needs `langchain-anthropic`). |
 | `MCP_SSE_URL` | `https://localhost:8010/mcp` | Full URL of the MCP server (e.g. `/mcp` for streamable-http, `/sse` for legacy). |
 | `MCP_TRANSPORT` | `streamable_http` | MCP transport: `streamable_http` (default) or `sse`. Must match the server. |
 | `MCP_AUTH_USER`, `MCP_AUTH_PASSWORD` | — | Optional HTTP Basic Auth. |

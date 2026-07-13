@@ -1,0 +1,5 @@
+# LLM provider overlay: Anthropic Claude.
+# Install alongside the base deps:  pip install -r requirements.txt -r requirements-claude.txt
+# scripts/start-all -Setup installs this automatically when you pick "claude".
+# Set LLM_PROVIDER=claude and ANTHROPIC_API_KEY in agent/.env.
+langchain-anthropic>=0.3.0

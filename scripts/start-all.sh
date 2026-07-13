@@ -17,13 +17,20 @@
 # repo-root .env. The backend connects to it by default; users can point at a
 # custom server from the Streamlit sidebar.
 #
-# Each component is self-contained with its own .env and requirements.txt.
-# The MCP server uses the repo-root .venv; backend, frontend, and dashboard
-# each have their own .venv. Pass --setup to create missing venvs and pip
-# install each component's requirements before launching.
+# Each component is self-contained with its own .env and requirements.txt and
+# its own module-level .venv (mqacemcpserver/.venv, agent/.venv, frontend/.venv,
+# dashboard/.venv). No repo-root .venv is created. Pass --setup to create
+# missing venvs and pip install each component's requirements before launching.
+#
+# --setup first seeds each module's .env from its .env.example (asks for
+# confirmation; never overwrites an existing .env). It also asks which LLM
+# provider the agent should use (openai|gemini|claude), installs the matching
+# package overlay, and records LLM_PROVIDER in agent/.env. Use --llm <provider>
+# to answer the provider question non-interactively.
 #
 # Usage:
 #   ./scripts/start-all.sh --setup            # first run: build venvs, then start
+#   ./scripts/start-all.sh --setup --llm claude
 #   ./scripts/start-all.sh                    # start the MCP server + the stack
 #   ./scripts/start-all.sh --skip-mcp --skip-dashboard
 #   ./scripts/start-all.sh --check-only
@@ -38,10 +45,12 @@ SKIP_FRONTEND=0
 SKIP_DASHBOARD=0
 CHECK_ONLY=0
 PORT=8003
+LLM=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --setup)           DO_SETUP=1 ;;
+        --llm)             LLM="$2"; shift ;;
         --skip-mcp)        SKIP_MCP=1 ;;
         --skip-backend)    SKIP_BACKEND=1 ;;
         --skip-frontend)   SKIP_FRONTEND=1 ;;
@@ -53,6 +62,8 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+
+case "$LLM" in ""|openai|gemini|claude) ;; *) echo "Invalid --llm '$LLM' (use openai|gemini|claude)" >&2; exit 2 ;; esac
 
 # --- paths -----------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,7 +81,8 @@ FRONTEND_DIR="$REPO_ROOT/frontend"
 FRONTEND_ENV="$FRONTEND_DIR/.env"
 DASHBOARD_DIR="$REPO_ROOT/dashboard"
 DASHBOARD_ENV="$DASHBOARD_DIR/.env"
-ROOT_VENV_PY="$REPO_ROOT/.venv/bin/python"
+# The MCP server has its OWN module-level venv (no repo-root .venv is created).
+MCP_VENV_PY="$MCP_DIR/.venv/bin/python"
 PID_FILE="$SCRIPT_DIR/.pids"
 LOG_DIR="$SCRIPT_DIR/.logs"
 
@@ -122,25 +134,111 @@ DASH_PORT_V="$(get_env "$DASHBOARD_ENV" MCP_DASHBOARD_PORT 8004)"
 DASH_SCHEME="$MCP_SCHEME"
 
 # --- setup helper ----------------------------------------------------------
-# init_venv <label> <venv_dir> <requirements_file>
+# init_venv <label> <venv_dir> <requirements_file...>  (one or more -r files)
+# Every venv is module-level — nothing is ever created at the repo root.
 init_venv() {
-    local label="$1" venv_dir="$2" req="$3"
+    local label="$1" venv_dir="$2"; shift 2
     local py="$venv_dir/.venv/bin/python"
     if [[ ! -x "$py" ]]; then
         step "[$label] creating venv in $venv_dir/.venv"
         "$PYTHON_BIN" -m venv "$venv_dir/.venv"
     fi
-    step "[$label] pip install -r $req"
+    local req_args=()
+    for r in "$@"; do req_args+=("-r" "$r"); done
+    step "[$label] pip install ${req_args[*]}"
     "$py" -m pip install --quiet --upgrade pip
-    "$py" -m pip install -r "$req"
+    "$py" -m pip install "${req_args[@]}"
     ok "[$label] dependencies installed"
 }
 
+# prompt_llm — set global LLM to openai|gemini|claude (honours --llm if given).
+prompt_llm() {
+    if [[ -n "$LLM" ]]; then return; fi
+    echo
+    step "Select the LLM provider for the agent"
+    note "[1] OpenAI  (langchain-openai, OPENAI_API_KEY)"
+    note "[2] Gemini  (langchain-google-genai, GOOGLE_API_KEY)"
+    note "[3] Claude  (langchain-anthropic, ANTHROPIC_API_KEY)"
+    while [[ -z "$LLM" ]]; do
+        read -r -p "Provider [1/2/3 or openai/gemini/claude] (default 1): " ans
+        case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
+            ""|1|openai)      LLM=openai ;;
+            2|gemini|google)  LLM=gemini ;;
+            3|claude|anthropic) LLM=claude ;;
+            *) bad "Enter 1, 2, or 3 (or openai/gemini/claude)." ;;
+        esac
+    done
+}
+
+# agent_req_files — echo the base + provider-overlay requirements for $LLM.
+agent_req_files() {
+    local base="$BACKEND_DIR/requirements.txt"
+    case "$LLM" in
+        gemini) echo "$base $BACKEND_DIR/requirements-gemini.txt" ;;
+        claude) echo "$base $BACKEND_DIR/requirements-claude.txt" ;;
+        *)      echo "$base" ;;   # openai lives in the base requirements
+    esac
+}
+
+# init_env_files <label:dir>... — copy each module's .env.example to .env when
+# it has no .env yet, after a single confirmation. NEVER overwrites an existing
+# .env, so re-running --setup is safe.
+init_env_files() {
+    local to_create=()
+    local entry label dir
+    for entry in "$@"; do
+        label="${entry%%:*}"; dir="${entry#*:}"
+        if [[ -f "$dir/.env" ]]; then note "$label: .env already exists - keeping it"; continue; fi
+        if [[ ! -f "$dir/.env.example" ]]; then note "$label: no .env.example - skipping"; continue; fi
+        to_create+=("$entry")
+    done
+    if [[ ${#to_create[@]} -eq 0 ]]; then ok "All module .env files already present (nothing to copy)."; return; fi
+    step "These modules have no .env and will be created from .env.example:"
+    for entry in "${to_create[@]}"; do note "- ${entry%%:*} (${entry#*:}/.env)"; done
+    read -r -p "Create these .env files now? [Y/n]: " ans
+    case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
+        n|no) note "Skipped .env creation. Copy each module's .env.example to .env before running."; return ;;
+    esac
+    for entry in "${to_create[@]}"; do
+        dir="${entry#*:}"
+        cp "$dir/.env.example" "$dir/.env"
+        ok "${entry%%:*}: created .env from .env.example"
+    done
+}
+
+# set_env_value <file> <key> <value> — update-or-append KEY=value in a .env.
+set_env_value() {
+    local file="$1" key="$2" value="$3"
+    if [[ -f "$file" ]] && grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$file"; then
+        sed -i -E "s|^[[:space:]]*${key}[[:space:]]*=.*$|${key}=${value}|" "$file"
+    else
+        printf '%s=%s\n' "$key" "$value" >> "$file"
+    fi
+    ok "agent/.env: ${key}=${value}"
+}
+
 if [[ $DO_SETUP -eq 1 ]]; then
+    # First, seed each module's .env from its .env.example (with confirmation) so
+    # the LLM_PROVIDER write below lands in a real agent/.env.
+    env_modules=()
+    [[ $SKIP_MCP -eq 0 ]]       && env_modules+=("mcp:$MCP_DIR")
+    [[ $SKIP_BACKEND -eq 0 ]]   && env_modules+=("agent:$BACKEND_DIR")
+    [[ $SKIP_FRONTEND -eq 0 ]]  && env_modules+=("frontend:$FRONTEND_DIR")
+    [[ $SKIP_DASHBOARD -eq 0 ]] && env_modules+=("dashboard:$DASHBOARD_DIR")
+    [[ ${#env_modules[@]} -gt 0 ]] && init_env_files "${env_modules[@]}"
+    echo
+
     step "Setup: installing per-component requirements"
-    # The MCP server uses the repo-root .venv.
-    [[ $SKIP_MCP -eq 0 ]]       && init_venv "mcp"       "$REPO_ROOT"     "$MCP_REQS"
-    [[ $SKIP_BACKEND -eq 0 ]]   && init_venv "agent"   "$BACKEND_DIR"   "$BACKEND_DIR/requirements.txt"
+    # Every component gets its OWN module-level venv — nothing at the repo root.
+    [[ $SKIP_MCP -eq 0 ]]       && init_venv "mcp"       "$MCP_DIR"       "$MCP_REQS"
+    if [[ $SKIP_BACKEND -eq 0 ]]; then
+        prompt_llm
+        ok "LLM provider: $LLM"
+        # shellcheck disable=SC2046
+        init_venv "agent" "$BACKEND_DIR" $(agent_req_files)
+        set_env_value "$BACKEND_ENV" "LLM_PROVIDER" "$LLM"
+        note "Remember to set the matching API key in agent/.env (OPENAI_API_KEY / GOOGLE_API_KEY / ANTHROPIC_API_KEY)."
+    fi
     [[ $SKIP_FRONTEND -eq 0 ]]  && init_venv "frontend"  "$FRONTEND_DIR"  "$FRONTEND_DIR/requirements.txt"
     [[ $SKIP_DASHBOARD -eq 0 ]] && init_venv "dashboard" "$DASHBOARD_DIR" "$DASHBOARD_DIR/requirements.txt"
     echo
@@ -151,9 +249,9 @@ problems=()
 
 if [[ $SKIP_MCP -eq 0 ]]; then
     step "Checking MCP server prerequisites"
-    if [[ ! -x "$ROOT_VENV_PY" ]]; then
-        problems+=("Missing MCP venv. Fix: ./scripts/start-all.sh --setup"); bad ".venv/bin/python not found"
-    else ok ".venv present"; fi
+    if [[ ! -x "$MCP_VENV_PY" ]]; then
+        problems+=("Missing MCP venv. Fix: ./scripts/start-all.sh --setup"); bad "mqacemcpserver/.venv/bin/python not found"
+    else ok "mqacemcpserver/.venv present"; fi
     [[ -f "$MCP_ENTRY" ]] && ok "mqacemcpserver.py present (:$MCP_PORT)" || { problems+=("Missing MCP entry $MCP_ENTRY."); bad "$MCP_ENTRY not found"; }
     [[ -f "$MCP_ENV" ]] && ok "mqacemcpserver/.env present" || note "mqacemcpserver/.env missing (server will start but tools may error)."
 fi
@@ -206,7 +304,7 @@ start_service() {
 
 # 1. MCP server (reads mqacemcpserver/.env via __file__ -> :8010)
 if [[ $SKIP_MCP -eq 0 ]]; then
-    ( cd "$REPO_ROOT" && MCP_TRANSPORT="$MCP_TRANSPORT_V" nohup "$ROOT_VENV_PY" "$MCP_ENTRY" >"$LOG_DIR/mcp.log" 2>&1 & echo $! >>"$PID_FILE" )
+    ( cd "$REPO_ROOT" && MCP_TRANSPORT="$MCP_TRANSPORT_V" nohup "$MCP_VENV_PY" "$MCP_ENTRY" >"$LOG_DIR/mcp.log" 2>&1 & echo $! >>"$PID_FILE" )
     ok "MCP Server (:$MCP_PORT $MCP_TRANSPORT_V) started (PID $(tail -n1 "$PID_FILE"))"
     sleep 3  # let the MCP server bind before the backend connects
 fi

@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 
 from langchain_core.tools import BaseTool
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
@@ -141,6 +140,46 @@ def _render_system_prompt(
     )
 
 
+def _build_llm():
+    """Instantiate the chat model for the provider named in ``LLM_PROVIDER``.
+
+    Provider packages are imported lazily so only the selected provider's
+    dependency needs to be installed (scripts/start-all -Setup installs the
+    matching requirements overlay). Supported values (case-insensitive):
+
+      * ``openai``            -> ChatOpenAI          (OPENAI_API_KEY / OPENAI_MODEL)
+      * ``gemini`` | ``google`` -> ChatGoogleGenerativeAI (GOOGLE_API_KEY / GEMINI_MODEL)
+      * ``claude`` | ``anthropic`` -> ChatAnthropic  (ANTHROPIC_API_KEY / ANTHROPIC_MODEL)
+    """
+    provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+
+    if provider in ("openai", ""):
+        from langchain_openai import ChatOpenAI
+
+        model_name = os.getenv("OPENAI_MODEL", "gpt-5.5")
+        log.info("LLM provider=openai model=%s", model_name)
+        return ChatOpenAI(model=model_name, temperature=0, streaming=True)
+
+    if provider in ("gemini", "google"):
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+        log.info("LLM provider=gemini model=%s", model_name)
+        return ChatGoogleGenerativeAI(model=model_name, temperature=0)
+
+    if provider in ("claude", "anthropic"):
+        from langchain_anthropic import ChatAnthropic
+
+        model_name = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+        log.info("LLM provider=claude model=%s", model_name)
+        return ChatAnthropic(model=model_name, temperature=0, streaming=True)
+
+    raise ValueError(
+        f"Unsupported LLM_PROVIDER={provider!r}. "
+        "Use one of: openai, gemini, claude."
+    )
+
+
 def build_agent(
     tools: list[BaseTool], prompt_file: str | None = None
 ) -> tuple[object, MemorySaver]:
@@ -151,8 +190,7 @@ def build_agent(
 
     The checkpointer is returned so `app.py` can clear a thread on /reset.
     """
-    model_name = os.getenv("OPENAI_MODEL", "gpt-5.5")
-    llm = ChatOpenAI(model=model_name, temperature=0, streaming=True)
+    llm = _build_llm()
 
     bot_domain = os.getenv("BOT_DOMAIN", "").strip()
     support_team = os.getenv("SUPPORT_TEAM", "").strip() or "MQ_ACE_SUPPORT"
@@ -180,8 +218,8 @@ def build_agent(
         prompt=system_prompt,
     )
     log.info(
-        "Agent built with model=%s, tools=%d, scope=%s, prompt=%s",
-        model_name,
+        "Agent built with provider=%s, tools=%d, scope=%s, prompt=%s",
+        os.getenv("LLM_PROVIDER", "openai").strip().lower(),
         len(tools),
         bot_domain or "(unrestricted)",
         prompt_source,
