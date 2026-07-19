@@ -1,7 +1,7 @@
-"""Offline coverage for the six composite tools.
+"""Offline coverage for the composite tools.
 
 These tests do NOT make real HTTP calls. They exercise:
-- Tool registration (the catalogue is exactly six names).
+- Tool registration (the catalogue is exactly nine names).
 - Manifest discovery paths (search_objects_structured against shared CSVs).
 - Read-only enforcement (modification verbs rejected).
 - Hostname allow-list enforcement (out-of-list hosts rejected).
@@ -30,14 +30,16 @@ def _tool(name: str):
 # ---------------------------------------------------------------------------
 # Tool catalogue
 # ---------------------------------------------------------------------------
-def test_exactly_seven_tools_registered():
+def test_exactly_nine_tools_registered():
     expected = {
         "mq_queue_inspect",
         "mq_channel_inspect",
         "mq_host_overview",
+        "mq_connection_verify",
         "ace_node_overview",
         "ace_server_explore",
         "ace_search",
+        "ace_connection_verify",
         "get_cert_details",
     }
     actual = set(mqacemcpserver.mcp._tool_manager._tools.keys())
@@ -45,7 +47,12 @@ def test_exactly_seven_tools_registered():
 
 
 def test_mq_tool_docstrings_open_with_routing_prefix():
-    for name in ("mq_queue_inspect", "mq_channel_inspect", "mq_host_overview"):
+    for name in (
+        "mq_queue_inspect",
+        "mq_channel_inspect",
+        "mq_host_overview",
+        "mq_connection_verify",
+    ):
         doc = _tool(name).__doc__ or ""
         assert doc.lstrip().startswith("IBM MQ:"), (
             f"{name} docstring must open with 'IBM MQ:' for LLM routing"
@@ -53,7 +60,12 @@ def test_mq_tool_docstrings_open_with_routing_prefix():
 
 
 def test_ace_tool_docstrings_open_with_routing_prefix():
-    for name in ("ace_node_overview", "ace_server_explore", "ace_search"):
+    for name in (
+        "ace_node_overview",
+        "ace_server_explore",
+        "ace_search",
+        "ace_connection_verify",
+    ):
         doc = _tool(name).__doc__ or ""
         assert doc.lstrip().startswith("IBM ACE:"), (
             f"{name} docstring must open with 'IBM ACE:' for LLM routing"
@@ -511,3 +523,92 @@ def test_ace_search_multi_query_ors_and_dedups():
     # Duplicate queries de-duplicate.
     dup = json.loads(fn(search_strings=["NODE", "NODE"], scope="nodes"))
     assert dup["search_strings"] == ["NODE"], dup
+
+
+# ---------------------------------------------------------------------------
+# mq_connection_verify — OFFLINE fact-check of pasted connection details
+# ---------------------------------------------------------------------------
+# Fixture facts (resources/qmgr_dump.csv): MQREPO1 has listener PORT(1414) and
+# channel MQREPO1.CLUSRCVR with CONNAME('server1(1414)'); MQQM1 uses PORT(1415).
+def test_mq_connection_verify_all_fields_correct():
+    fn = _tool("mq_connection_verify")
+    result = asyncio.run(
+        fn(
+            qmgr_name="MQREPO1",
+            hostname="server1",
+            port=1414,
+            channel="MQREPO1.CLUSRCVR",
+        )
+    )
+    assert "all supplied details check out" in result, result
+    assert "❌" not in result, result
+
+
+def test_mq_connection_verify_conname_nested_parens_parse():
+    """Guards the _parse_attr pitfall: CONNAME('server1(1414)') must yield host
+    server1 and port 1414 (not 'server1(1414' truncated at the first paren)."""
+    fn = _tool("mq_connection_verify")
+    result = asyncio.run(
+        fn(qmgr_name="MQREPO1", channel="MQREPO1.CLUSRCVR", hostname="server1", port=1414)
+    )
+    assert "server1(1414)" in result, result
+    assert "✅ Host: 'server1' matches" in result, result
+    assert "✅ Port: 1414 matches" in result, result
+
+
+def test_mq_connection_verify_wrong_port_mismatch():
+    fn = _tool("mq_connection_verify")
+    result = asyncio.run(fn(qmgr_name="MQREPO1", port=9999))
+    assert "❌ Port" in result, result
+    assert "1414" in result, result  # names the authoritative port
+
+
+def test_mq_connection_verify_unknown_channel_not_found():
+    fn = _tool("mq_connection_verify")
+    result = asyncio.run(fn(qmgr_name="MQREPO1", channel="CH.NOPE.NOWHERE"))
+    assert "❌ Channel" in result, result
+    assert "NOT defined on MQREPO1" in result, result
+    # Lists the QM's real channels so the user can correct the claim.
+    assert "MQREPO1.CLUSRCVR" in result, result
+
+
+def test_mq_connection_verify_host_mismatch_against_conname():
+    fn = _tool("mq_connection_verify")
+    result = asyncio.run(
+        fn(qmgr_name="MQREPO1", hostname="wrong-host", channel="MQREPO1.CLUSRCVR")
+    )
+    assert "❌ Host" in result, result
+    assert "server1" in result, result  # the authoritative CONNAME host
+
+
+def test_mq_connection_verify_unknown_qmgr_stops_early():
+    fn = _tool("mq_connection_verify")
+    result = asyncio.run(fn(qmgr_name="NOSUCHQM", port=1414))
+    assert "NOT in the manifest" in result, result
+    # A wrong QM short-circuits — no per-field port line is emitted.
+    assert "✅ Port" not in result and "❌ Port" not in result, result
+
+
+# ---------------------------------------------------------------------------
+# ace_connection_verify — OFFLINE fact-check against node_config.csv
+# ---------------------------------------------------------------------------
+# Fixture facts (resources/node_config.csv): NODE1|localhost|4414.
+def test_ace_connection_verify_all_fields_correct():
+    fn = _tool("ace_connection_verify")
+    result = fn(node="NODE1", host="localhost", port=4414)
+    assert "all supplied details check out" in result, result
+    assert "❌" not in result, result
+
+
+def test_ace_connection_verify_wrong_port_mismatch():
+    fn = _tool("ace_connection_verify")
+    result = fn(node="NODE1", port=9999)
+    assert "❌ Port" in result, result
+    assert "4414" in result, result  # the configured Admin REST port
+
+
+def test_ace_connection_verify_unknown_node_stops_early():
+    fn = _tool("ace_connection_verify")
+    result = fn(node="NODE.DOES.NOT.EXIST", host="localhost")
+    assert "NOT in node_config.csv" in result, result
+    assert "✅ Host" not in result and "❌ Host" not in result, result

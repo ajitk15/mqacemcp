@@ -2,7 +2,7 @@
 
 The unified MQ + ACE MCP server, built for environments where the
 orchestrator/frontend can only invoke **one tool per user turn** — no parallel
-tool calls, no sequential ReAct-style chaining. Each of the seven tools below is
+tool calls, no sequential ReAct-style chaining. Each of the nine tools below is
 self-sufficient: it performs the full discovery-plus-execution workflow
 internally and returns one consolidated answer.
 
@@ -22,9 +22,11 @@ Each composite tool consolidates several granular diagnostic steps into one call
 | `mq_queue_inspect` | `find_mq_object` + `get_queue_depth` + queue `runmqsc` | "what's the depth / config of queue X" (alias-aware) |
 | `mq_channel_inspect` | `find_mq_object` + `get_channel_status` + channel `runmqsc` | "is channel X up, with what SSL / CONNAME / batch settings" |
 | `mq_host_overview` | `dspmq` + `dspmqver` + read-only `runmqsc` | "tell me about this host / QM, optionally with one DISPLAY" |
+| `mq_connection_verify` | OFFLINE manifest fact-check (QM / listener PORT / channel CONNAME) | "are these MQ connection details from an error correct" |
 | `ace_node_overview` | `list_ace_nodes` + `get_ace_node_status` + `list_ace_servers` | "what's on node N1" |
 | `ace_server_explore` | `list_ace_applications` + `list_ace_message_flows` | "what's deployed on server X on N1" |
 | `ace_search` | `list_ace_nodes` (listing) + `search_ace_local_dump` | "find any ACE thing matching X (nodes / BIP log)" |
+| `ace_connection_verify` | OFFLINE `node_config.csv` fact-check (node / host / Admin REST port) | "is this ACE node / host / port from an error correct" |
 | `get_cert_details` | certificate expiry lookup | "when does the cert on host / alias / CN X expire" |
 
 Each tool enforces the same safety contract:
@@ -342,7 +344,7 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 mqacemcpserver/
 ├── mqacemcpserver.py           # Entry point (stdio / SSE / Basic Auth / TLS / healthz)
 ├── server/
-│   ├── composite_tools.py     # The 6 composite tools + get_cert_details (the only new code in this build)
+│   ├── composite_tools.py     # The composite tools (MQ + ACE inspect/verify + get_cert_details) — the only new code in this build
 │   ├── config.py              # env loader, with RESOURCES_DIR override pointing at ../resources/
 │   ├── mq_helpers.py          # MQ REST client, qmgr_dump.csv reader, MQSC prettifiers
 │   ├── ace_helpers.py         # ACE Admin REST client, node CSVs, fetch_ace

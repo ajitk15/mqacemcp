@@ -19,6 +19,7 @@ Safety conventions preserved:
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import re
 
@@ -101,6 +102,38 @@ def _parse_attr(text: str, attr: str) -> str | None:
         return None
     val = m.group(1).strip()
     return val or None
+
+
+def _mqsc_channel_name(text: str) -> str | None:
+    """Extract the channel name from a `DEFINE CHANNEL('NAME') ...` MQSC row.
+
+    The name is the first parenthesised token after CHANNEL; it is quoted in the
+    manifest but tolerate an unquoted form too. Returns None if absent/blank.
+    """
+    m = re.search(r"CHANNEL\('?([^')]+?)'?\)", text, re.IGNORECASE)
+    if not m:
+        return None
+    val = m.group(1).strip()
+    return val or None
+
+
+def _parse_conname(text: str) -> tuple[str | None, int | None]:
+    """Extract (host, port) from a channel's `CONNAME('host(port)')` attribute.
+
+    Quote-aware on purpose: the generic `_parse_attr` regex stops at the first
+    `)` and would mangle the nested parens in `CONNAME('server1(1414)')`. Returns
+    (None, None) when CONNAME is absent or blank (e.g. `CONNAME(' ')`).
+    """
+    m = re.search(r"CONNAME\('([^']*)'\)", text, re.IGNORECASE)
+    if not m:
+        return None, None
+    inner = m.group(1).strip()
+    if not inner:
+        return None, None
+    hp = re.match(r"([^(]+)\((\d+)\)\s*$", inner)
+    if hp:
+        return hp.group(1).strip(), int(hp.group(2))
+    return inner, None  # host without an explicit port
 
 
 async def _resolve_queue_chain(
@@ -627,6 +660,194 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     @logged_tool
+    async def mq_connection_verify(
+        qmgr_name: str,
+        hostname: str | None = None,
+        port: int | None = None,
+        channel: str | None = None,
+    ) -> str:
+        """IBM MQ: Fact-check connection details from an error against the OFFLINE manifest.
+
+        Use this when a user pastes an MQ connection error (e.g. AMQ9213 /
+        AMQ9999 / MQRC 2059) and asks whether the connection details are
+        correct. Extract the claimed values from the error text and pass them
+        in: the queue manager name, and any of the host, port, and channel it
+        mentions (a CONNAME like `server1(1414)` gives both host and port).
+
+        Each supplied field is compared, one by one, against the offline
+        `resources/qmgr_dump.csv` extract and reported as CORRECT / MISMATCH /
+        NOT-FOUND with the authoritative value:
+          - queue manager — present in the manifest (else close-match suggestions);
+          - channel — defined on that queue manager (else the list of its channels);
+          - port — the queue manager's listener PORT(s) and/or the channel's
+            CONNAME port;
+          - host — the channel's CONNAME host (the real client endpoint; the
+            manifest's own hostname column is only the extract host, so a host
+            can be confirmed only when the channel is supplied).
+
+        This is OFFLINE — it says what the details SHOULD be per the last
+        extract, so it works even when the endpoint is unreachable (the usual
+        state during a connection error). It makes NO network call.
+
+        Args:
+            qmgr_name: The queue manager named in the error (required).
+            hostname: Optional claimed host (compared to the channel CONNAME host).
+            port: Optional claimed port (compared to listener/CONNAME port).
+            channel: Optional claimed channel name (e.g. an SVRCONN).
+        """
+        try:
+            qm = (qmgr_name or "").strip()
+            if not qm:
+                return '❌ No queue manager supplied. Pass qmgr_name="MQREPO1".'
+
+            df = load_csv()
+            if df.empty:
+                return (
+                    "⚠️ The queue-manager manifest is empty or unavailable; "
+                    "cannot fact-check."
+                )
+
+            qm_rows = df[df["qmgr"].str.upper() == qm.upper()]
+            claimed_ch = (channel or "").strip() or None
+
+            lines: list[str] = [
+                f"🔎 Fact-check of connection details for queue manager "
+                f"'{qm}' (offline manifest):\n"
+            ]
+            verdicts: list[bool] = []
+
+            # --- Queue manager -------------------------------------------------
+            if qm_rows.empty:
+                known = sorted(
+                    df["qmgr"].dropna().astype(str).str.strip().unique()
+                )
+                suggestions = difflib.get_close_matches(qm, known, n=3, cutoff=0.5)
+                hint = (
+                    f" Did you mean: {', '.join(suggestions)}?"
+                    if suggestions
+                    else f" Known queue managers: {', '.join(known) or '(none)'}."
+                )
+                lines.append(
+                    f"❌ Queue Manager: '{qm}' is NOT in the manifest.{hint}"
+                )
+                lines.append(
+                    "\nOverall: ❌ the queue manager itself does not check out — "
+                    "the remaining details cannot be verified against it."
+                )
+                return "\n".join(lines)
+            lines.append(f"✅ Queue Manager: '{qm}' found in the manifest.")
+
+            # --- Channel (also yields the authoritative CONNAME endpoint) ------
+            conname_host: str | None = None
+            conname_port: int | None = None
+            ch_rows = qm_rows[qm_rows["object_type"].str.upper() == "CHANNEL"]
+            channel_names = sorted(
+                filter(
+                    None,
+                    (_mqsc_channel_name(t) for t in ch_rows["mqsc_command"]),
+                )
+            )
+            if claimed_ch:
+                match_text = None
+                for t in ch_rows["mqsc_command"]:
+                    if (_mqsc_channel_name(t) or "").upper() == claimed_ch.upper():
+                        match_text = t
+                        break
+                if match_text is None:
+                    verdicts.append(False)
+                    avail = ", ".join(channel_names) or "(none defined)"
+                    lines.append(
+                        f"❌ Channel: '{claimed_ch}' is NOT defined on {qm}. "
+                        f"Channels on {qm}: {avail}."
+                    )
+                else:
+                    chltype = _parse_attr(match_text, "CHLTYPE") or "?"
+                    conname_host, conname_port = _parse_conname(match_text)
+                    verdicts.append(True)
+                    if conname_host and conname_port is not None:
+                        endpoint = f" → CONNAME {conname_host}({conname_port})"
+                    elif conname_host:
+                        endpoint = f" → CONNAME {conname_host}"
+                    else:
+                        endpoint = ""
+                    lines.append(
+                        f"✅ Channel: '{claimed_ch}' found on {qm} "
+                        f"(CHLTYPE {chltype}){endpoint}."
+                    )
+
+            # --- Authoritative port set (listeners + channel CONNAME) ----------
+            lstr_rows = qm_rows[qm_rows["object_type"].str.upper() == "LISTENER"]
+            auth_ports: set[int] = set()
+            for t in lstr_rows["mqsc_command"]:
+                p = _parse_attr(t, "PORT")
+                if p and p.isdigit() and int(p) != 0:  # PORT(0) = no fixed port
+                    auth_ports.add(int(p))
+            if conname_port is not None:
+                auth_ports.add(conname_port)
+
+            # --- Port claim ----------------------------------------------------
+            if port is not None:
+                if not auth_ports:
+                    lines.append(
+                        f"ℹ️ Port: claimed {port} — no listener/CONNAME port is "
+                        f"recorded for {qm}, so it can't be confirmed offline."
+                    )
+                elif int(port) in auth_ports:
+                    verdicts.append(True)
+                    lines.append(f"✅ Port: {port} matches {qm}.")
+                else:
+                    verdicts.append(False)
+                    ports_str = ", ".join(map(str, sorted(auth_ports)))
+                    lines.append(
+                        f"❌ Port: claimed {port} does NOT match {qm}. "
+                        f"Manifest port(s): {ports_str}."
+                    )
+
+            # --- Hostname claim ------------------------------------------------
+            if hostname:
+                claimed_host = hostname.strip()
+                if conname_host:
+                    if claimed_host.lower() == conname_host.lower():
+                        verdicts.append(True)
+                        lines.append(
+                            f"✅ Host: '{claimed_host}' matches the channel "
+                            "CONNAME host."
+                        )
+                    else:
+                        verdicts.append(False)
+                        lines.append(
+                            f"❌ Host: claimed '{claimed_host}' does NOT match the "
+                            f"channel CONNAME host '{conname_host}'."
+                        )
+                else:
+                    lines.append(
+                        f"ℹ️ Host: '{claimed_host}' can't be confirmed from the "
+                        "offline manifest — supply the channel so its CONNAME "
+                        "host can be compared (the manifest's hostname column is "
+                        "the extract host, not the client endpoint)."
+                    )
+
+            if port is None and hostname is None and claimed_ch is None:
+                lines.append(
+                    "ℹ️ Only the queue manager was supplied — pass hostname=, "
+                    "port=, and/or channel= to fact-check those too."
+                )
+
+            if not verdicts:
+                summary = "ℹ️ nothing to compare beyond the queue manager."
+            elif all(verdicts):
+                summary = "✅ all supplied details check out."
+            elif any(verdicts):
+                summary = "⚠️ some details do not match the manifest (see ❌ above)."
+            else:
+                summary = "❌ the supplied details do not match the manifest."
+            lines.append(f"\nOverall: {summary}")
+            return "\n".join(lines)
+        except Exception as err:
+            return friendly_error(err, hostname=hostname or qmgr_name)
+
+    @mcp.tool()
+    @logged_tool
     async def mq_host_overview(
         qmgr_names: list[str] | None = None,
         hostnames: list[str] | None = None,
@@ -719,6 +940,145 @@ def register(mcp: FastMCP) -> None:
             {"status": "success", "count": len(results), "nodes": list(results)},
             indent=2,
         )
+
+    @mcp.tool()
+    @logged_tool
+    def ace_connection_verify(
+        node: str,
+        host: str | None = None,
+        port: int | None = None,
+    ) -> str:
+        """IBM ACE: Fact-check integration-node connection details against the OFFLINE config.
+
+        Use this when a user pastes an ACE/BIP error (or asks to validate the
+        Admin REST connection details for an integration node) and wants to know
+        whether the node/host/port are correct. Extract the claimed values from
+        the error and pass them in.
+
+        Each supplied field is compared, one by one, against the offline
+        `resources/node_config.csv` extract (the authoritative node → host:port
+        mapping used to reach the ACE Admin REST API) and reported as CORRECT /
+        MISMATCH / NOT-FOUND with the authoritative value:
+          - node — present in node_config.csv (else close-match suggestions);
+          - host — the configured host for that node;
+          - port — the configured Admin REST port (nodeport).
+        It also surfaces the last-extract status lines for the node from
+        `node_dump.csv` as context (not a hard verdict).
+
+        This is OFFLINE — it says what the details SHOULD be per the last
+        extract and makes NO network call, so it works even when the node is
+        unreachable.
+
+        Args:
+            node: The integration node named in the error (required).
+            host: Optional claimed host (compared to the configured host).
+            port: Optional claimed Admin REST port (compared to nodeport).
+        """
+        try:
+            nd = (node or "").strip()
+            if not nd:
+                return '❌ No integration node supplied. Pass node="NODE1".'
+
+            df = load_node_config()
+            if df.empty:
+                return (
+                    "⚠️ The ACE node config (node_config.csv) is empty or "
+                    "unavailable; cannot fact-check."
+                )
+
+            matches = df[df["node"].str.upper() == nd.upper()]
+            lines: list[str] = [
+                f"🔎 Fact-check of connection details for integration node "
+                f"'{nd}' (offline config):\n"
+            ]
+            verdicts: list[bool] = []
+
+            if matches.empty:
+                known = sorted(
+                    df["node"].dropna().astype(str).str.strip().unique()
+                )
+                suggestions = difflib.get_close_matches(nd, known, n=3, cutoff=0.5)
+                hint = (
+                    f" Did you mean: {', '.join(suggestions)}?"
+                    if suggestions
+                    else f" Configured nodes: {', '.join(known) or '(none)'}."
+                )
+                lines.append(
+                    f"❌ Integration Node: '{nd}' is NOT in node_config.csv.{hint}"
+                )
+                lines.append(
+                    "\nOverall: ❌ the node itself does not check out — the "
+                    "remaining details cannot be verified against it."
+                )
+                return "\n".join(lines)
+
+            row = matches.iloc[0]
+            actual_host = str(row["host"]).strip()
+            actual_port = int(row["nodeport"])
+            lines.append(
+                f"✅ Integration Node: '{nd}' found — Admin REST endpoint "
+                f"{actual_host}:{actual_port}."
+            )
+
+            if host:
+                claimed = host.strip()
+                if claimed.lower() == actual_host.lower():
+                    verdicts.append(True)
+                    lines.append(
+                        f"✅ Host: '{claimed}' matches the configured host."
+                    )
+                else:
+                    verdicts.append(False)
+                    lines.append(
+                        f"❌ Host: claimed '{claimed}' does NOT match the "
+                        f"configured host '{actual_host}'."
+                    )
+
+            if port is not None:
+                if int(port) == actual_port:
+                    verdicts.append(True)
+                    lines.append(
+                        f"✅ Port: {port} matches the configured Admin REST port."
+                    )
+                else:
+                    verdicts.append(False)
+                    lines.append(
+                        f"❌ Port: claimed {port} does NOT match the configured "
+                        f"Admin REST port {actual_port}."
+                    )
+
+            # Context: last-extract status from node_dump.csv (not a hard verdict).
+            dump = search_node_dump(nd)
+            if dump:
+                sample = dump[0].get("status", "")
+                lines.append(
+                    f"ℹ️ Last extract: {len(dump)} node_dump line(s) reference "
+                    f"'{nd}'. Sample: {sample[:120]}"
+                )
+            else:
+                lines.append(
+                    f"ℹ️ Last extract: no node_dump.csv lines reference '{nd}' "
+                    "(no recent status captured)."
+                )
+
+            if host is None and port is None:
+                lines.append(
+                    "ℹ️ Only the node was supplied — pass host= and/or port= to "
+                    "fact-check those too."
+                )
+
+            if not verdicts:
+                summary = "ℹ️ nothing to compare beyond the node."
+            elif all(verdicts):
+                summary = "✅ all supplied details check out."
+            elif any(verdicts):
+                summary = "⚠️ some details do not match the config (see ❌ above)."
+            else:
+                summary = "❌ the supplied details do not match the config."
+            lines.append(f"\nOverall: {summary}")
+            return "\n".join(lines)
+        except Exception as err:
+            return friendly_error(err, hostname=host or node)
 
     @mcp.tool()
     @logged_tool
