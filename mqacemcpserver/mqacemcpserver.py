@@ -2,7 +2,7 @@
 
 Same operational posture as the granular `mqacemcpserver.py` (stdio or SSE,
 optional Basic Auth, optional TLS, `/healthz` always open), but the tool
-catalogue is six composite tools — each one self-sufficient — so a frontend
+catalogue is nine composite tools — each one self-sufficient — so a frontend
 that can only call one tool per user turn can still answer the common MQ
 and ACE diagnostic intents end-to-end.
 
