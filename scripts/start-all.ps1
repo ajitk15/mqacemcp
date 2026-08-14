@@ -54,6 +54,10 @@
 .PARAMETER CheckOnly
     Run all pre-flight checks (and -Setup if given) and exit without starting.
 
+.PARAMETER Yes
+    Accept setup confirmation prompts. Intended for CI and other
+    non-interactive runs; existing .env files are still never overwritten.
+
 .PARAMETER Port
     Streamlit port (default 8003).
 
@@ -76,6 +80,7 @@ param(
     [switch]$SkipFrontend,
     [switch]$SkipDashboard,
     [switch]$CheckOnly,
+    [switch]$Yes,
     [int]$Port = 8003
 )
 
@@ -211,7 +216,7 @@ function Get-AgentReqFiles {
 # is safe and never clobbers real credentials). $Modules is an array of
 # @{ Label=..; Dir=.. } hashtables.
 function Initialize-EnvFiles {
-    param([hashtable[]]$Modules)
+    param([hashtable[]]$Modules, [switch]$AssumeYes)
     $toCreate = @()
     foreach ($m in $Modules) {
         $envFile = Join-Path $m.Dir ".env"
@@ -223,7 +228,11 @@ function Initialize-EnvFiles {
     if ($toCreate.Count -eq 0) { Write-Ok "All module .env files already present (nothing to copy)."; return }
     Write-Step "These modules have no .env and will be created from .env.example:"
     $toCreate | ForEach-Object { Write-Host "    - $($_.Label)  ($($_.Dir)\.env)" -ForegroundColor Gray }
-    $ans = (Read-Host "Create these .env files now? [Y/n]").Trim().ToLower()
+    $ans = ""
+    if (-not $AssumeYes) {
+        $answer = Read-Host "Create these .env files now? [Y/n]"
+        $ans = if ($null -eq $answer) { "" } else { $answer.Trim().ToLower() }
+    }
     if ($ans -in @("n", "no")) {
         Write-Note "Skipped .env creation. Copy each module's .env.example to .env before running."
         return
@@ -261,7 +270,7 @@ if ($Setup) {
     if (-not $SkipBackend)   { $envModules += @{ Label = "agent";     Dir = $BackendDir } }
     if (-not $SkipFrontend)  { $envModules += @{ Label = "frontend";  Dir = $FrontendDir } }
     if (-not $SkipDashboard) { $envModules += @{ Label = "dashboard"; Dir = $DashboardDir } }
-    Initialize-EnvFiles -Modules $envModules
+    Initialize-EnvFiles -Modules $envModules -AssumeYes:$Yes
     Write-Host ""
 
     Write-Step "Setup: installing per-component requirements"
