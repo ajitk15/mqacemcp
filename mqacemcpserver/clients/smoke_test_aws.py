@@ -26,33 +26,30 @@ is the server's job via its loaded manifests; this client only supplies names.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
-import os
 import ssl
 import sys
+from getpass import getpass
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 import urllib3
-from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
-MCP_AUTH_USER = os.getenv("MCP_AUTH_USER", "")
-MCP_AUTH_PASSWORD = os.getenv("MCP_AUTH_PASSWORD", "")
-MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
-MCP_PORT = os.getenv("MCP_PORT", "8010")
-MCP_TLS_CERT = os.getenv("MCP_TLS_CERT", "")
-MCP_TLS_KEY = os.getenv("MCP_TLS_KEY", "")
-
-if MCP_HOST in ("", "0.0.0.0"):
-    MCP_HOST = "127.0.0.1"
-
-_scheme = "https" if (MCP_TLS_CERT and MCP_TLS_KEY) else "http"
-SSE_URL = os.getenv("MCP_REMOTE_SERVER_URL", f"{_scheme}://{MCP_HOST}:{MCP_PORT}/sse")
+# ===========================================================================
+#  EDIT THESE THREE — the server this client talks to.
+#  Nothing is read from the environment or from .env; what is written here is
+#  what runs. Override for a single run with --url / --user / --password, or
+#  pass -i to be prompted (these values are then offered as the defaults).
+# ===========================================================================
+MCP_ENDPOINT_URL = "https://localhost:8010/sse"
+MCP_USER = "mcpadmin"
+MCP_PASSWORD = ""          # blank on purpose - fill in, or pass --password / -i
+# ===========================================================================
 
 
 def _make_insecure_httpx_client(headers=None, timeout=None, auth=None):
@@ -63,6 +60,163 @@ def _make_insecure_httpx_client(headers=None, timeout=None, auth=None):
     if auth is not None:
         kwargs["auth"] = auth
     return httpx.AsyncClient(**kwargs)
+
+
+def normalise_url(raw):
+    """Accept the shorthand people actually type and return a full /sse URL.
+
+    "host:8010" -> "https://host:8010/sse";  "https://host:8010" -> ".../sse".
+    A scheme-less value assumes https because the server ships with TLS
+    configured; give an explicit http:// URL for a plaintext endpoint. An
+    existing path (e.g. a proxy route) is left alone.
+    """
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    if "://" not in url:
+        url = f"https://{url}"
+    parsed = urlparse(url)
+    if parsed.path in ("", "/"):
+        url = f"{url.rstrip('/')}/sse"
+    return url
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="smoke_test_aws.py",
+        description=(
+            "AWS SSE smoke test for mqacemcpserver. With no options it uses the MCP_ENDPOINT_URL / "
+            "MCP_USER / MCP_PASSWORD constants set at the top of this file; "
+            "--url/--user/--password override them for one run, and -i prompts "
+            "for them."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  %(prog)s --url https://host:8010/sse --user mcpadmin --password s3cr3t\n"
+            "  %(prog)s -i                      # prompt for endpoint + credentials\n"
+            "  %(prog)s --url host:8010 mq      # shorthand URL, MQ tools only\n"
+        ),
+    )
+    parser.add_argument(
+        "selectors",
+        nargs="*",
+        metavar="SELECTOR",
+        help="filter calls by category (mq/ace/cert) or tool name; default runs all",
+    )
+    parser.add_argument(
+        "--url", "--endpoint", dest="url", metavar="URL",
+        help="MCP endpoint, e.g. https://host:8010/sse (a bare host:port is completed for you)",
+    )
+    parser.add_argument("--user", "-u", metavar="NAME", help="Basic Auth username")
+    parser.add_argument("--password", "-p", metavar="PASS", help="Basic Auth password")
+    parser.add_argument(
+        "-i", "--ask", action="store_true",
+        help="prompt for endpoint, user and password (the constants above are offered as defaults)",
+    )
+    parser.add_argument(
+        "--no-auth", action="store_true",
+        help="connect anonymously, ignoring MCP_USER / MCP_PASSWORD",
+    )
+    parser.add_argument(
+        "--full", "-f", action="store_true", help="print full output previews",
+    )
+    parser.add_argument(
+        "--lines", type=int, metavar="N", default=12,
+        help="preview N lines per call (default: 12)",
+    )
+    return parser.parse_args(argv)
+
+
+def _ask(label, default=""):
+    shown = f" [{default}]" if default else ""
+    try:
+        answer = input(f"  {label}{shown}: ").strip()
+    except EOFError:
+        return default
+    return answer or default
+
+
+def _ask_secret(label="Password"):
+    """Read a password without echoing it — when there is a terminal to read.
+
+    On Windows getpass() reads the console directly, so it would block forever
+    when stdin is a pipe (CI, `echo ... | script`). Fall back to a plain read
+    in that case; there is no echo to suppress anyway.
+    """
+    if sys.stdin.isatty():
+        try:
+            return getpass(f"  {label}: ")
+        except (EOFError, OSError):
+            return ""
+    try:
+        return input(f"  {label}: ").strip()
+    except EOFError:
+        return ""
+
+
+def resolve_target(args):
+    """Work out (url, user, password) from flags, prompts, then the constants."""
+    url, user, password = args.url, args.user, args.password
+
+    if args.ask:
+        # Prompt for whatever the flags did not already pin down, offering the
+        # constant as the default so Enter just uses what the file says.
+        print("Target MCP server (press Enter to accept the default):")
+        url = url or _ask("Endpoint", MCP_ENDPOINT_URL)
+        if not args.no_auth:
+            user = user or _ask("User", MCP_USER)
+            if user and password is None:
+                # Not echoed, so it is never left in shell history.
+                password = _ask_secret() or MCP_PASSWORD
+
+    url = normalise_url(url or MCP_ENDPOINT_URL)
+
+    if args.no_auth:
+        return url, "", ""
+
+    user = user if user is not None else MCP_USER
+    if password is None:
+        # A user supplied on the command line without a password: ask rather
+        # than silently pairing it with MCP_PASSWORD.
+        password = _ask_secret() if args.user else MCP_PASSWORD
+    return url, user, password
+
+
+def _root_cause(err):
+    """Innermost exception of an anyio ExceptionGroup, else err itself."""
+    for _ in range(5):
+        nested = getattr(err, "exceptions", None)
+        if not nested:
+            break
+        err = nested[0]
+    return err
+
+
+def _explain_connect_failure(err, url, user):
+    """Print a one-line diagnosis for a failure to reach/authenticate."""
+    cause = _root_cause(err)
+    status = getattr(getattr(cause, "response", None), "status_code", None)
+
+    if status in (401, 403):
+        who = f"user={user}" if user else "no credentials sent"
+        print(f"FAIL: {url} rejected the credentials ({status}, {who}).")
+        print("      Check --user/--password, or use --no-auth if the server is open.")
+    elif isinstance(cause, httpx.ConnectError):
+        print(f"FAIL: could not connect to {url} ({type(cause).__name__}).")
+        print("      Check the host/port, that the server is running, and http:// vs https://.")
+    elif isinstance(cause, (httpx.ReadTimeout, httpx.ConnectTimeout)):
+        print(f"FAIL: timed out talking to {url}.")
+    elif isinstance(cause, httpx.RemoteProtocolError) and url.startswith("http://"):
+        # Classic symptom of speaking plaintext to a TLS listener.
+        print(f"FAIL: {url} closed the connection without responding.")
+        print("      That port looks like it wants TLS — try https:// instead.")
+    elif status is not None:
+        print(f"FAIL: {url} returned HTTP {status}.")
+        print("      If this is not the MCP endpoint, include the right path (e.g. /sse).")
+    else:
+        print(f"FAIL: could not start an MCP session with {url}")
+        print(f"      {type(cause).__name__}: {cause}")
 
 
 def heading(text):
@@ -282,7 +436,7 @@ def classify(text, mode):
     return "pass", ""
 
 
-async def main():
+async def main(opts):
     # Tool outputs contain emoji (🔍 ❌ ⚠️). Windows defaults to cp1252 which
     # cannot encode them, so reconfigure stdout to UTF-8 before any print.
     try:
@@ -297,14 +451,22 @@ async def main():
         print("FAIL: mcp SDK not installed in this venv")
         return 1
 
+    url, user, password = resolve_target(opts)
+    if not url:
+        print("FAIL: no MCP endpoint. Pass --url https://host:8010/sse, use -i, "
+              "or set MCP_ENDPOINT_URL at the top of this file.")
+        return 1
+
     auth = None
-    if MCP_AUTH_USER and MCP_AUTH_PASSWORD:
-        auth = httpx.BasicAuth(MCP_AUTH_USER, MCP_AUTH_PASSWORD)
-        print(f"Basic Auth user={MCP_AUTH_USER}")
+    if user and password:
+        auth = httpx.BasicAuth(user, password)
+        print(f"Basic Auth user={user}")
+    elif user:
+        print(f"WARN: user={user} given with no password — connecting anonymously.")
 
-    heading(f"mqacemcpserver AWS smoke ({SSE_URL})")
+    heading(f"mqacemcpserver AWS smoke ({url})")
 
-    parsed = urlparse(SSE_URL)
+    parsed = urlparse(url)
     use_tls = parsed.scheme == "https"
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or (443 if use_tls else 80)
@@ -323,7 +485,21 @@ async def main():
         print(f"  FAIL handshake: {type(e).__name__}: {e}")
         return 1
 
-    async with sse_client(SSE_URL, auth=auth, httpx_client_factory=_make_insecure_httpx_client) as streams:
+    try:
+        return await _smoke(opts, url, auth)
+    except Exception as err:  # noqa: BLE001
+        # Connection/auth problems surface here; per-call failures are caught
+        # inside the loop and reported as test results instead.
+        _explain_connect_failure(err, url, user)
+        return 1
+
+
+async def _smoke(opts, url, auth):
+    """Open the MCP session and run the selected calls. Returns an exit code."""
+    from mcp import ClientSession
+    from mcp.client.sse import sse_client
+
+    async with sse_client(url, auth=auth, httpx_client_factory=_make_insecure_httpx_client) as streams:
         async with ClientSession(streams[0], streams[1]) as session:
             await session.initialize()
             print("  MCP session initialised")
@@ -347,19 +523,10 @@ async def main():
                 return 1
             print("  OK: catalogue == 7 expected tools")
 
-            selectors = [a for a in sys.argv[1:] if not a.startswith("-")]
-            flags = [a for a in sys.argv[1:] if a.startswith("-")]
+            selectors = opts.selectors
             # Preview verbosity: default 12 lines; --full shows everything,
-            # --lines=N shows N lines.
-            preview_limit = 12
-            for f in flags:
-                if f in ("--full", "-f"):
-                    preview_limit = None
-                elif f.startswith("--lines="):
-                    try:
-                        preview_limit = int(f.split("=", 1)[1])
-                    except ValueError:
-                        pass
+            # --lines N shows N lines.
+            preview_limit = None if opts.full else opts.lines
             calls = select_calls(CALLS, selectors)
             if selectors:
                 print(f"\n[Filter: {selectors} -> {len(calls)}/{len(CALLS)} calls]")
@@ -400,4 +567,9 @@ async def main():
 
 if __name__ == "__main__":
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    sys.exit(asyncio.run(main()))
+    try:
+        sys.exit(asyncio.run(main(parse_args())))
+    except KeyboardInterrupt:
+        # Ctrl-C at an interactive prompt should not dump a traceback.
+        print("\nAborted.")
+        sys.exit(130)
