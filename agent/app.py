@@ -114,7 +114,88 @@ async def _activate(
     _state["active_name"] = name or url
     _state["active_prompt"] = prompt_file
     log.info("Activated MCP server %s (%s) with %d tool(s)", name or url, url, len(tools))
+    _state["mcp_error"] = ""
     return tools
+
+
+def _error_label(err: BaseException) -> str:
+    """Class name of the root cause, for operator-facing messages.
+
+    The MCP client runs its transport in an anyio task group, so a plain
+    connection failure surfaces as ``ExceptionGroup`` — useless in a UI.
+    Unwrap to the first leaf so the caller sees ``ConnectError`` instead.
+    """
+    seen = 0
+    while seen < 5:
+        nested = getattr(err, "exceptions", None)
+        if not nested:
+            break
+        err = nested[0]
+        seen += 1
+    return err.__class__.__name__
+
+
+# Backoff schedule for the reconnect supervisor: quick at first, then settle
+# into a 30s poll so a long outage does not flood the log.
+_RECONNECT_MIN_DELAY = 2.0
+_RECONNECT_MAX_DELAY = 30.0
+
+
+def _cancel_reconnect() -> None:
+    """Stop the background reconnect loop, if one is running.
+
+    Called when a server is activated by hand so a late retry can never
+    clobber the operator's choice.
+    """
+    task = _state.pop("reconnect_task", None)
+    if task is not None and not task.done():
+        task.cancel()
+
+
+async def _reconnect_forever(server: dict[str, Any]) -> None:
+    """Retry _activate(server) with capped backoff until it succeeds.
+
+    Runs as a detached task so a down MCP server never blocks startup. Exits
+    on the first success — _activate() has already installed the new agent by
+    then. Cancelled on shutdown or on a manual /api/mcp/connect.
+    """
+    delay = _RECONNECT_MIN_DELAY
+    attempt = 0
+    while True:
+        await asyncio.sleep(delay)
+        attempt += 1
+        try:
+            tools = await _activate(
+                url=server.get("url", ""),
+                name=server.get("name"),
+                prompt_file=server.get("prompt_file"),
+                transport=server.get("transport"),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            _state["mcp_error"] = _error_label(err)
+            # Loud for the first few attempts, then quiet — an MCP server that
+            # is down for an hour should not produce an hour of WARNINGs.
+            level = logging.WARNING if attempt <= 3 else logging.DEBUG
+            log.log(
+                level,
+                "MCP reconnect attempt %d to %s failed (%s); retrying in %.0fs",
+                attempt,
+                server.get("url", ""),
+                _error_label(err),
+                min(delay * 2, _RECONNECT_MAX_DELAY),
+            )
+            delay = min(delay * 2, _RECONNECT_MAX_DELAY)
+            continue
+
+        log.info(
+            "MCP reconnect succeeded after %d attempt(s): %d tool(s) now available.",
+            attempt,
+            len(tools),
+        )
+        _state.pop("reconnect_task", None)
+        return
 
 
 @asynccontextmanager
@@ -140,12 +221,18 @@ async def lifespan(_app: FastAPI):
             active_url=default.get("url", ""),
             active_name=default.get("name") or default.get("url", ""),
             active_prompt=default.get("prompt_file"),
+            mcp_error=_error_label(err),
         )
+        # Keep trying in the background: the usual cause is the MCP server
+        # still binding its port, which resolves on its own within seconds.
+        _state["reconnect_task"] = asyncio.create_task(_reconnect_forever(default))
+        log.info("Reconnect supervisor started for %s", default.get("url"))
     log.info("Backend ready (tools=%d)", len(_state.get("tools") or []))
     try:
         yield
     finally:
         log.info("Shutting down backend.")
+        _cancel_reconnect()
 
 
 app = FastAPI(title="MCP Chatbot Backend", lifespan=lifespan)
@@ -169,9 +256,14 @@ async def health() -> JSONResponse:
     tools = _state.get("tools") or []
     allow, deny = mcp_client.get_tool_filters()
     active_url = _state.get("active_url") or os.getenv("MCP_SSE_URL", "")
+    connected = bool(tools)
     return JSONResponse(
         {
-            "status": "ok",
+            # "degraded" means the service is up but has no MCP tools, so it
+            # cannot actually answer a diagnostic question.
+            "status": "ok" if connected else "degraded",
+            "mcp_connected": connected,
+            "mcp_error": "" if connected else str(_state.get("mcp_error") or ""),
             "mcp_sse_url": active_url,
             "mcp_server_name": _state.get("active_name") or active_url,
             "tool_count": len(tools),
@@ -218,6 +310,10 @@ async def mcp_connect(req: ConnectRequest) -> JSONResponse:
     prompt_file = (known or {}).get("prompt_file") if known else req.prompt_file
     transport = (known or {}).get("transport")  # None → env default (streamable_http)
 
+    # An operator picking a server by hand wins over the background retry loop,
+    # which would otherwise re-activate the startup default underneath them.
+    _cancel_reconnect()
+
     try:
         tools = await _activate(
             url=url,
@@ -229,10 +325,11 @@ async def mcp_connect(req: ConnectRequest) -> JSONResponse:
         )
     except Exception as err:  # noqa: BLE001
         log.exception("Failed to connect to MCP server %s: %s", url, err)
+        _state["mcp_error"] = _error_label(err)
         return JSONResponse(
             {
                 "status": "error",
-                "message": f"Could not connect to {url}: {err.__class__.__name__}",
+                "message": f"Could not connect to {url}: {_error_label(err)}",
                 "active_url": _state.get("active_url", ""),
                 "active_name": _state.get("active_name", ""),
             }
@@ -273,6 +370,15 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     agent = _state.get("agent")
     if agent is None:
         raise HTTPException(503, "Backend not initialised")
+    if not _state.get("tools"):
+        # No tools means the MCP server is unreachable. Running the agent here
+        # would produce the system prompt's out-of-scope refusal, which blames
+        # the user's question for what is actually an outage. Say so instead.
+        return StreamingResponse(
+            _unavailable(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
     return StreamingResponse(
         _run(agent, req),
         media_type="text/event-stream",
@@ -288,6 +394,29 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
 def _sse(event_obj: Any) -> bytes:
     payload = event_obj.model_dump(exclude_none=True) if hasattr(event_obj, "model_dump") else event_obj
     return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
+
+
+async def _unavailable() -> AsyncIterator[bytes]:
+    """Stream a plain 'no tools loaded' error instead of invoking the LLM."""
+    url = _state.get("active_url") or os.getenv("MCP_SSE_URL", "")
+    reason = _state.get("mcp_error") or ""
+    detail = f" ({reason})" if reason else ""
+    retrying = (
+        " Reconnecting in the background."
+        if _state.get("reconnect_task") is not None
+        else ""
+    )
+    log.warning("Chat request refused: no MCP tools loaded (server=%s)", url)
+    yield _sse(
+        ErrorEvent(
+            message=(
+                f"No tools are loaded — the MCP server at {url} could not be "
+                f"reached{detail}.{retrying} Use Reconnect in the sidebar once "
+                "it is back up."
+            )
+        )
+    )
+    yield _sse(DoneEvent())
 
 
 async def _run(agent: Any, req: ChatRequest) -> AsyncIterator[bytes]:

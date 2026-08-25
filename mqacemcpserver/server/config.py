@@ -115,6 +115,47 @@ ACE_NODE_CONFIG_PATH: Path = Path(
 CERT_DUMP_PATH: Path = Path(
     _resolve_under(os.getenv("CERT_DUMP_PATH", str(RESOURCES_DIR / "cert_dump.csv")))
 )
+ACE_AUTH_DUMP_PATH: Path = Path(
+    _resolve_under(
+        os.getenv("ACE_AUTH_DUMP_PATH", str(RESOURCES_DIR / "ace_auth_dump.csv"))
+    )
+)
+
+# Real-time directory lookup for user -> group resolution. LDAPS is required by
+# default; explicitly set DOMAIN_LDAP_ALLOW_INSECURE=true only in a controlled
+# development environment when a plain ldap:// endpoint is unavoidable.
+DOMAIN_LDAP_URI: str = os.getenv("DOMAIN_LDAP_URI", "")
+DOMAIN_LDAP_BIND_DN: str = os.getenv("DOMAIN_LDAP_BIND_DN", "")
+DOMAIN_LDAP_BIND_PASSWORD: str = os.getenv("DOMAIN_LDAP_BIND_PASSWORD", "")
+DOMAIN_LDAP_BASE_DN: str = os.getenv("DOMAIN_LDAP_BASE_DN", "")
+DOMAIN_LDAP_USER_FILTER: str = os.getenv(
+    "DOMAIN_LDAP_USER_FILTER", "(&(objectClass=user)(sAMAccountName={user}))"
+)
+DOMAIN_LDAP_CANONICAL_ATTRIBUTE: str = os.getenv(
+    "DOMAIN_LDAP_CANONICAL_ATTRIBUTE", "userPrincipalName"
+)
+DOMAIN_LDAP_GROUP_ATTRIBUTE: str = os.getenv(
+    "DOMAIN_LDAP_GROUP_ATTRIBUTE", "sAMAccountName"
+)
+DOMAIN_LDAP_GROUP_FILTER: str = os.getenv(
+    "DOMAIN_LDAP_GROUP_FILTER",
+    "(&(objectClass=group)(member:1.2.840.113556.1.4.1941:={user_dn}))",
+)
+DOMAIN_LDAP_CA_CERT_FILE: str = _resolve_under(
+    os.getenv("DOMAIN_LDAP_CA_CERT_FILE", "")
+)
+DOMAIN_LDAP_TIMEOUT_SECONDS: float = float(
+    os.getenv("DOMAIN_LDAP_TIMEOUT_SECONDS", "10")
+)
+DOMAIN_LDAP_ALLOW_INSECURE: bool = os.getenv(
+    "DOMAIN_LDAP_ALLOW_INSECURE", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+# Authorization evidence older than this is reported as UNKNOWN instead of
+# being trusted for an allow/deny decision.
+ACCESS_MAX_SNAPSHOT_AGE_HOURS: float = float(
+    os.getenv("ACCESS_MAX_SNAPSHOT_AGE_HOURS", "48")
+)
 
 
 def mq_configured() -> bool:
