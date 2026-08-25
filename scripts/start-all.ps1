@@ -368,6 +368,52 @@ if ($CheckOnly) {
 # ---------------------------------------------------------------------------
 $pids = @()
 
+# Poll a health endpoint until it answers, instead of guessing with a fixed
+# sleep. A slow TLS bind used to let the next tier start against a dead port.
+# Never fatal: the backend retries its MCP connection on its own, so a timeout
+# here is a warning, not a reason to abort the launch.
+function Wait-HttpReady {
+    param(
+        [string]$Url,
+        [string]$Label,
+        [int]$TimeoutSec = 45
+    )
+    Write-Note "waiting for $Label at $Url"
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    # PowerShell 7 has -SkipCertificateCheck; 5.1 needs the global callback
+    # (the endpoints use a self-signed cert).
+    $ps7 = $PSVersionTable.PSVersion.Major -ge 6
+    $oldCallback = $null
+    if (-not $ps7) {
+        $oldCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    }
+    try {
+        while ((Get-Date) -lt $deadline) {
+            try {
+                if ($ps7) {
+                    $r = Invoke-WebRequest -Uri $Url -TimeoutSec 5 -SkipCertificateCheck -UseBasicParsing
+                } else {
+                    $r = Invoke-WebRequest -Uri $Url -TimeoutSec 5 -UseBasicParsing
+                }
+                if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) {
+                    Write-Ok "$Label is ready"
+                    return $true
+                }
+            } catch {
+                Start-Sleep -Seconds 1
+            }
+        }
+    } finally {
+        if (-not $ps7) {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback
+        }
+    }
+    Write-Bad "$Label did not respond within ${TimeoutSec}s - continuing anyway."
+    Write-Note "check its window for errors; the backend will keep retrying the MCP connection."
+    return $false
+}
+
 function Start-Service-Window {
     param([string]$Title, [string]$WorkingDirectory, [string]$Command)
     Write-Step "Starting $Title"
@@ -390,14 +436,17 @@ if (-not $SkipMcp) {
     $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\mqacemcpserver\.venv\Scripts\python.exe `"$entryRel`""
     $pids += Start-Service-Window -Title "MCP Server (:$McpPort $McpTransport)" `
         -WorkingDirectory $RepoRoot -Command $cmd
-    Start-Sleep -Seconds 3  # let the MCP server bind before the backend connects
+    # Block until the MCP server actually serves /healthz — the backend loads
+    # its tool list once at startup, so connecting too early left it with none.
+    Wait-HttpReady -Url "${McpScheme}://localhost:$McpPort/healthz" -Label "MCP server" | Out-Null
 }
 
 if (-not $SkipBackend) {
     $cmd = ".\.venv\Scripts\python.exe app.py"
     $pids += Start-Service-Window -Title "Agent (FastAPI :$BackendPort)" `
         -WorkingDirectory $BackendDir -Command $cmd
-    Start-Sleep -Seconds 3  # let the backend load tools before the frontend hits it
+    # The frontend reads /api/health on first paint; wait for it to exist.
+    Wait-HttpReady -Url "http://localhost:$BackendPort/api/health" -Label "Agent backend" | Out-Null
 }
 
 if (-not $SkipFrontend) {
