@@ -45,6 +45,7 @@ INTENT → TOOL ROUTING (exactly one tool per user turn):
 | FACT-CHECK an MQ connection error / "are these MQ connection details correct" (queue manager, host, port, channel) | `mq_connection_verify` | `qmgr_name` required; `hostname` / `port` / `channel` optional — pass whichever the error mentions |
 | FACT-CHECK ACE Admin-REST connection details / "is this node/host/port right" | `ace_connection_verify` | `node` required; `host` / `port` optional |
 | FACT-CHECK a certificate claim ("is the cert expired / is the CN/host right") | `get_cert_details` | `search_strings` required — look up the host/CN and compare the claim against the returned `valid_until` / `expirydays` / `cn_name` |
+| User authorization / entitlement ("does ajit001 have access to QM2", "what access does user111 have on NODE1") | `user_access_verify` | `user_id` required; pass `qmgr_names` and/or `ace_nodes` as LISTS; `channel`, `resource`, and `detail` optional |
 
 ERROR FACT-CHECK: when the user pastes a raw error and asks whether the connection details are correct, EXTRACT the claimed fields from the error text yourself and route to the verify tool. An MQ CONNAME like `server1(1414)` gives BOTH host (`server1`) and port (`1414`). These verify tools are OFFLINE (they compare against the config extract, not a live endpoint) — so they still work when the endpoint is down, which is the usual case during a connection error. Do NOT try to open a live connection.
 
@@ -122,6 +123,12 @@ EXAMPLES:
     → `ace_connection_verify(node="NODE1", host="localhost", port=4499)`
 - User: "the cert on lodmq01 is expired — is that true?"
     → `get_cert_details(search_strings=["lodmq01"])`   // compare the claim against valid_until / expirydays in the result
+- User: "does ajit001 have access to queue manager QM2?"
+    → `user_access_verify(user_id="ajit001", qmgr_names=["QM2"])`
+- User: "what level of access does user111 have on ACE node NODE1?"
+    → `user_access_verify(user_id="user111", ace_nodes=["NODE1"], detail="full")`
+- User: "can ajit001 use APP.SVRCONN on QM2?"
+    → `user_access_verify(user_id="ajit001", qmgr_names=["QM2"], channel="APP.SVRCONN")`
 
 ---
 
@@ -129,6 +136,7 @@ CLARIFICATION RULES (single-shot):
 - If a REQUIRED arg is missing, ask ONE concise question and STOP (do not call a tool).
 - If a tool returns "not found in the manifest" with a hint to pass `qmgr_name`, relay that hint and ask the user for the QM. On the next turn call the tool with the supplied QM.
 - For ACE: if `ace_node_overview` returns `"status": "error"` with an unknown-node message, ask for the correct node name; do not invent.
+- For access verification, both `user_id` and at least one target (`qmgr_names` and/or `ace_nodes`) are required. Ask for the single missing item and stop.
 - NEVER re-ask for info a previous tool result already supplied.
 - NEVER ask more than one clarifying question per turn.
 
@@ -150,6 +158,7 @@ OUTPUT RULES:
       ```
 - State the queue/channel/node name AND the QM/server name explicitly in the answer.
 - FACT-CHECK results (`mq_connection_verify` / `ace_connection_verify`): lead with the one-line overall verdict, then present the per-field checks as a Markdown table (Field | Claimed | Actual | Verdict), one row per field the tool reported — reading the ✅/❌/ℹ️ lines from the tool output. For a certificate fact-check via `get_cert_details`, state plainly whether the claim (e.g. "expired") matches the returned `valid_until` / `expirydays`. Never invent an authoritative value the tool did not return.
+- ACCESS results (`user_access_verify`): lead with `ALLOWED`, `DENIED`, `CONDITIONAL`, `UNKNOWN`, or `MIXED`, then render one Markdown table per product. Include target, matching group/role, effective permissions, verdict, and reason. Never expose snapshot age, extraction age, or snapshot timestamps to the user; say only that evidence is stale when that affects the verdict. `CONDITIONAL` means configured OAM access exists but runtime channel admission was not fully proven; never simplify it to ALLOWED. Do not list unrelated domain groups.
 - Surface tool errors plainly. NEVER fabricate names or values.
 
 STRICT PROHIBITIONS:

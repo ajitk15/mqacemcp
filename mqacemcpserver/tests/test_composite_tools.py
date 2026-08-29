@@ -1,7 +1,7 @@
 """Offline coverage for the composite tools.
 
 These tests do NOT make real HTTP calls. They exercise:
-- Tool registration (the catalogue is exactly nine names).
+- Tool registration (the catalogue is exactly ten names).
 - Manifest discovery paths (search_objects_structured against shared CSVs).
 - Read-only enforcement (modification verbs rejected).
 - Hostname allow-list enforcement (out-of-list hosts rejected).
@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pandas as pd
 import pytest
 
 import mqacemcpserver  # noqa: F401  — imports register the tools
@@ -30,7 +31,7 @@ def _tool(name: str):
 # ---------------------------------------------------------------------------
 # Tool catalogue
 # ---------------------------------------------------------------------------
-def test_exactly_nine_tools_registered():
+def test_exactly_ten_tools_registered():
     expected = {
         "mq_queue_inspect",
         "mq_channel_inspect",
@@ -40,6 +41,7 @@ def test_exactly_nine_tools_registered():
         "ace_server_explore",
         "ace_search",
         "ace_connection_verify",
+        "user_access_verify",
         "get_cert_details",
     }
     actual = set(mqacemcpserver.mcp._tool_manager._tools.keys())
@@ -77,6 +79,11 @@ def test_cert_tool_docstring_opens_with_routing_prefix():
     assert doc.lstrip().startswith("Certificate:"), (
         "get_cert_details docstring must open with 'Certificate:' for LLM routing"
     )
+
+
+def test_access_tool_docstring_opens_with_routing_prefix():
+    doc = _tool("user_access_verify").__doc__ or ""
+    assert doc.lstrip().startswith("IBM MQ + IBM ACE:"), doc
 
 
 # ---------------------------------------------------------------------------
@@ -612,3 +619,186 @@ def test_ace_connection_verify_unknown_node_stops_early():
     result = fn(node="NODE.DOES.NOT.EXIST", host="localhost")
     assert "NOT in node_config.csv" in result, result
     assert "✅ Host" not in result and "❌ Host" not in result, result
+
+
+# ---------------------------------------------------------------------------
+# user_access_verify — real-time identity + offline authorization evidence
+# ---------------------------------------------------------------------------
+def _fresh_timestamp():
+    return pd.Timestamp.now(tz="UTC")
+
+
+def _mq_access_frame(*commands: str, chlauth: str = "DISABLED"):
+    rows = [
+        {
+            "extractedat": _fresh_timestamp(),
+            "qmgr": "QM1",
+            "object_type": "QMGR",
+            "mqsc_command": f"ALTER QMGR CHLAUTH({chlauth})",
+        }
+    ]
+    rows.extend(
+        {
+            "extractedat": _fresh_timestamp(),
+            "qmgr": "QM1",
+            "object_type": "AUTHREC",
+            "mqsc_command": command,
+        }
+        for command in commands
+    )
+    return pd.DataFrame(rows)
+
+
+def test_mq_access_group_connect_is_allowed_when_chlauth_disabled():
+    from server.access_helpers import evaluate_mq_access
+
+    df = _mq_access_frame(
+        "SET AUTHREC PROFILE('self') GROUP('MQ_ACCESS_QM1') "
+        "OBJTYPE(QMGR) AUTHADD(CONNECT,INQ,DSP)"
+    )
+    result = evaluate_mq_access(
+        "ajit001", ["MQ_ACCESS_QM1"], ["QM1"], dataframe=df
+    )[0]
+    assert result["verdict"] == "ALLOWED", result
+    assert result["connect"] is True
+    assert "GROUP:MQ_ACCESS_QM1" in result["matched_entities"]
+
+
+def test_mq_access_connect_is_conditional_when_chlauth_enabled():
+    from server.access_helpers import evaluate_mq_access
+
+    df = _mq_access_frame(
+        "SET AUTHREC PROFILE('self') GROUP('MQ_ACCESS_DEV') "
+        "OBJTYPE(QMGR) AUTHADD(CONNECT,INQ)",
+        chlauth="ENABLED",
+    )
+    result = evaluate_mq_access(
+        "ajit001", ["MQ_ACCESS_DEV"], ["QM1"], dataframe=df
+    )[0]
+    assert result["verdict"] == "CONDITIONAL", result
+    assert "CHLAUTH" in result["reason"]
+
+
+def test_mq_access_without_matching_group_is_denied():
+    from server.access_helpers import evaluate_mq_access
+
+    df = _mq_access_frame(
+        "SET AUTHREC PROFILE('self') GROUP('MQ_ACCESS_QM1') "
+        "OBJTYPE(QMGR) AUTHADD(CONNECT)"
+    )
+    result = evaluate_mq_access(
+        "other001", ["SOME_OTHER_GROUP"], ["QM1"], dataframe=df
+    )[0]
+    assert result["verdict"] == "DENIED", result
+    assert result["connect"] is False
+
+
+def test_mq_access_stale_snapshot_is_unknown():
+    from server.access_helpers import evaluate_mq_access
+
+    df = _mq_access_frame(
+        "SET AUTHREC PROFILE('self') GROUP('MQ_ACCESS_QM1') "
+        "OBJTYPE(QMGR) AUTHADD(CONNECT)"
+    )
+    df["extractedat"] = pd.Timestamp("2020-01-01", tz="UTC")
+    result = evaluate_mq_access(
+        "ajit001", ["MQ_ACCESS_QM1"], ["QM1"], dataframe=df
+    )[0]
+    assert result["verdict"] == "UNKNOWN", result
+    assert result["snapshot"]["stale"] is True
+    assert "age_hours" not in result["snapshot"]
+    assert "timestamp" not in result["snapshot"]
+
+
+def test_mq_resource_with_none_authority_is_denied():
+    from server.access_helpers import evaluate_mq_access
+
+    df = _mq_access_frame(
+        "SET AUTHREC PROFILE('self') GROUP('MQ_ACCESS_QM1') "
+        "OBJTYPE(QMGR) AUTHADD(CONNECT)",
+        "SET AUTHREC PROFILE('QL.SECRET') GROUP('MQ_ACCESS_QM1') "
+        "OBJTYPE(QUEUE) AUTHADD(NONE)",
+    )
+    result = evaluate_mq_access(
+        "ajit001",
+        ["MQ_ACCESS_QM1"],
+        ["QM1"],
+        resource="QL.SECRET",
+        dataframe=df,
+    )[0]
+    assert result["verdict"] == "DENIED", result
+    assert result["resource_authorities"] == []
+
+
+def test_ace_access_resolves_group_to_role_permissions():
+    from server.access_helpers import evaluate_ace_access
+
+    df = pd.DataFrame(
+        [
+            {
+                "extractedat": _fresh_timestamp(),
+                "node": "NODE1",
+                "authmode": "ldap",
+                "securityenabled": "true",
+                "subjecttype": "GROUP",
+                "subject": "ACE_ACCESS_DEV",
+                "role": "developerRole",
+                "resource_type": "node",
+                "resource": "",
+                "permissions": "read+:write+:execute-",
+            }
+        ]
+    )
+    result = evaluate_ace_access(
+        "user111", ["ACE_ACCESS_DEV"], ["NODE1"], dataframe=df
+    )[0]
+    assert result["verdict"] == "ALLOWED", result
+    assert result["permissions"] == {
+        "read": True,
+        "write": True,
+        "execute": False,
+    }
+    assert result["matched_roles"][0]["role"] == "developerRole"
+
+
+def test_ace_stale_disabled_security_snapshot_is_unknown():
+    from server.access_helpers import evaluate_ace_access
+
+    df = pd.DataFrame(
+        [
+            {
+                "extractedat": pd.Timestamp("2020-01-01", tz="UTC"),
+                "node": "NODE1",
+                "authmode": "file",
+                "securityenabled": "false",
+                "subjecttype": "USER",
+                "subject": "default",
+                "role": "",
+                "resource_type": "node",
+                "resource": "",
+                "permissions": "all+",
+            }
+        ]
+    )
+    result = evaluate_ace_access(
+        "user111", [], ["NODE1"], dataframe=df
+    )[0]
+    assert result["verdict"] == "UNKNOWN", result
+    assert result["snapshot"] == {"stale": True}
+
+
+def test_user_access_verify_requires_a_target():
+    fn = _tool("user_access_verify")
+    out = json.loads(asyncio.run(fn(user_id="ajit001")))
+    assert out["status"] == "error"
+    assert "qmgr_names" in out["message"]
+
+
+def test_user_access_verify_unconfigured_identity_returns_unknown():
+    fn = _tool("user_access_verify")
+    out = json.loads(
+        asyncio.run(fn(user_id="ajit001", qmgr_names=["DOES.NOT.EXIST"]))
+    )
+    assert out["status"] == "success"
+    assert out["identity"]["status"] in {"unavailable", "error"}
+    assert out["mq"][0]["verdict"] == "UNKNOWN"
