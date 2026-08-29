@@ -1,6 +1,6 @@
 # MQ & ACE Chatbot — 33 Test Questions
 
-Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_dump.csv** (4 ACE integration nodes across `lodace01`/`loqace02`/`lotace03`/`loqace04.example.com`), and **cert_dump.csv** (TLS/SSL certificate inventory).
+Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_dump.csv** (2 ACE integration nodes, `NODE1` and `NODE2`, both on `localhost`), and **cert_dump.csv** (TLS/SSL certificate inventory).
 
 ---
 
@@ -121,119 +121,156 @@ Derived from **qmgr_dump.csv** (Queue Manager `MQQMGR2` on `lopalhost`), **node_
 
 ## IBM ACE Questions (16–30)
 
+Regrounded on the manifests that actually ship — `resources/node_config.csv`
+(NODE1 → localhost:4414, NODE2 → localhost:4415) and `resources/node_dump.csv`
+(extract `2026-06-25 10:30:19`, 4 integration servers and 16 applications per
+node, all running; the single stopped object is the `CreateItem` flow).
+
+These questions are answerable from the offline extract, so they do not need a
+live ACE runtime. `*Expected tools:*` lists `ace_search` alongside the live tool
+the routing table would also accept, so a correct answer is not punished for
+taking either path.
+
 ### Integration Node & Server Status
 
-**Q16 — Integration node overview**
-> "List all integration nodes and their host machines."
+**Q16 — Integration nodes and their endpoints**
+> "Which integration nodes are configured, and on which host and admin REST port does each one run?"
 
-*Expected answer area:* `NODE01` on `lodace01.example.com`, `NODE02` on `loqace02.example.com`, `NODE03` on `lotace03.example.com`, `NODE04` on `loqace04.example.com`.
+*Expected answer area:* `NODE1` on `localhost` port `4414` and `NODE2` on `localhost` port `4415`, from `node_config.csv`.
+
+*Expected tools:* ace_search
+*Must mention:* NODE1, NODE2, localhost, 4414, 4415
 
 ---
 
 **Q17 — Stopped integration servers**
-> "Which integration servers are currently stopped across all nodes?"
+> "In the latest ACE extract, are any integration servers reported as stopped across NODE1 and NODE2?"
 
-*Expected answer area:*
-- `IS003` on `NODE01` (lodace01.example.com) — stopped
-- `IS012` on `NODE02` (loqace02.example.com) — stopped
-- `IS031` on `NODE04` (loqace04.example.com) — stopped
+*Expected answer area:* None. All four integration servers — `ACE_DEMO_CACHE`, `ACE_DEMO_CONNECTORS`, `ACE_DEMO_MESSAGING`, `ACE_DEMO_TRANSFORM` — are reported running (`BIP1286I`) on both nodes. A clean negative result, not an apology for finding nothing.
+
+*Expected tools:* ace_search, ace_node_overview
+*Must mention:* NODE1, NODE2, running
 
 ---
 
 **Q18 — Server status on a specific node**
-> "What is the status of all integration servers on NODE03?"
+> "What is the status of all integration servers on NODE2?"
 
-*Expected answer area:* `IS020` — running, `IS021` — running, `IS022` — running. All three servers on NODE03 are up.
+*Expected answer area:* Four servers, all running: `ACE_DEMO_CACHE`, `ACE_DEMO_CONNECTORS`, `ACE_DEMO_MESSAGING`, `ACE_DEMO_TRANSFORM`.
+
+*Expected tools:* ace_search, ace_node_overview
+*Must mention:* ACE_DEMO_CACHE, ACE_DEMO_CONNECTORS, ACE_DEMO_MESSAGING, ACE_DEMO_TRANSFORM, NODE2
 
 ---
 
 **Q19 — Single server status**
-> "Is integration server IS011 on NODE02 running?"
+> "Is the integration server ACE_DEMO_MESSAGING on NODE2 running, and what is deployed on it?"
 
-*Expected answer area:* Yes — `IS011` on `NODE02` (loqace02.example.com) is running with application `fraud_detection` deployed.
+*Expected answer area:* Yes — running, with five applications: `ACE_message_Grouping`, `ACE_MQ_group_messages`, `ACE_MQ_Syncronus_processing`, `ACE_multi_dest_mq`, `IBMACEJMSInput`, all running.
+
+*Expected tools:* ace_search, ace_node_overview, ace_server_explore
+*Must mention:* ACE_DEMO_MESSAGING, NODE2, ACE_MQ_group_messages, IBMACEJMSInput, ACE_multi_dest_mq
 
 ---
 
 ### Applications & Message Flows
 
 **Q20 — Applications deployed on a server**
-> "What application is deployed on integration server IS020, and what message flows does it contain?"
+> "Search the ACE dump for ACE_DEMO_CACHE and tell me which applications and message flows it reports on NODE1."
 
-*Expected answer area:* Application `shipping_app` is deployed. It has two flows: `ShipmentCreateFlow` (running) and `ShipmentNotifyFlow` (running).
+*Expected answer area:* Two applications, both running — `ACE_flow_Cache` with flow `akp.Flow_Cache`, and `ACE_add_global_Cache` with flow `global_cache`. Both flows running. Flow names live only in the extract (the live `/messageflows` endpoint is not answering), so this has to go through `ace_search`.
+
+*Expected tools:* ace_search
+*Must mention:* ACE_flow_Cache, ACE_add_global_Cache, akp.Flow_Cache, global_cache
 
 ---
 
 **Q21 — Stopped or inactive message flows**
-> "Which message flows are not in a running state? Include their application, server, and node."
+> "Which message flows are not in a running state? Include their application, integration server and node."
 
-*Expected answer area:*
-- `InvoiceFlow` (snaplogic1 / IS001 / NODE01) — stopped
-- `StockUpdateFlow` (warehouse_app / IS021 / NODE03) — stopped
-- `InventoryPushFlow` (inventory_sync / IS022 / NODE03) — inactive
-- `InvoiceFlow` (snaplogic1 / IS0033 / NODE04) — stopped
+*Expected answer area:* Exactly one flow, on both nodes: `CreateItem` in application `AmazonS3` on integration server `ACE_DEMO_CONNECTORS` — stopped on `NODE1` and on `NODE2` (`BIP1278I`). Everything else in the extract is running.
+
+*Expected tools:* ace_search
+*Must mention:* CreateItem, AmazonS3, ACE_DEMO_CONNECTORS, NODE1, NODE2, stopped
 
 ---
 
 **Q22 — Application spanning multiple nodes**
-> "On which nodes and servers is the application 'snaplogic1' deployed?"
+> "On which nodes and integration servers is the application ACE_csv2csv deployed?"
 
-*Expected answer area:*
-- `IS001` on `NODE01` (lodace01.example.com) — OrderFlow running, InvoiceFlow stopped
-- `IS001` on `NODE02` (loqace02.example.com) — main flow running
-- `IS0033` on `NODE04` (loqace04.example.com) — OrderFlow running, InvoiceFlow stopped
+*Expected answer area:* `ACE_csv2csv` runs on integration server `ACE_DEMO_TRANSFORM` on both `NODE1` and `NODE2`, running in both places.
+
+*Expected tools:* ace_search
+*Must mention:* ACE_csv2csv, ACE_DEMO_TRANSFORM, NODE1, NODE2
 
 ---
 
 **Q23 — Specific flow status**
-> "What is the status of the FraudCheckFlow message flow?"
+> "What is the status of the create_group message flow?"
 
-*Expected answer area:* `FraudCheckFlow` in application `fraud_detection` on `IS011` / `NODE02` (loqace02.example.com) is **running**.
+*Expected answer area:* `create_group` belongs to application `ACE_MQ_group_messages` on integration server `ACE_DEMO_MESSAGING`, and is running on both `NODE1` and `NODE2` (`BIP1277I`).
 
----
-
-**Q24 — Notification application flows**
-> "What message flows are deployed under the notification_app application, and are they running?"
-
-*Expected answer area:* `notification_app` is on `IS032` / `NODE04` (loqace04.example.com). Flows: `EmailNotifyFlow` — running, `SMSNotifyFlow` — running. Both are active.
+*Expected tools:* ace_search
+*Must mention:* create_group, ACE_MQ_group_messages, ACE_DEMO_MESSAGING, running
 
 ---
 
-**Q25 — Inactive flow investigation**
-> "The InventoryPushFlow is inactive. Which server and node is it on, and what application does it belong to?"
+**Q24 — Flows under one application**
+> "Find everything in the ACE dump mentioning ACE_MQ_group_messages on NODE1 — which message flows does it report, and are they running?"
 
-*Expected answer area:* `InventoryPushFlow` belongs to `inventory_sync`, deployed on `IS022` which is running on `NODE03` (lotace03.example.com). The flow status is **inactive** — the server is up but the flow itself has been individually deactivated.
+*Expected answer area:* Two flows on `ACE_DEMO_MESSAGING`: `read_group` and `create_group`, both running. The node is named in the question, so no clarifying question is warranted.
+
+*Expected tools:* ace_search
+*Must mention:* read_group, create_group, ACE_MQ_group_messages, running
 
 ---
+
+**Q25 — Stopped-flow investigation**
+> "The CreateItem flow is not running. Which integration server and node is it on, what application does it belong to, and does the dump also show that ACE_DEMO_CONNECTORS server itself as running?"
+
+*Expected answer area:* `CreateItem` belongs to `AmazonS3`, deployed on `ACE_DEMO_CONNECTORS`, on both `NODE1` and `NODE2`. The integration server itself is **running** — it is the flow alone that is stopped, so this is a flow-level stop, not a server outage.
+
+*Expected tools:* ace_search
+*Must mention:* CreateItem, AmazonS3, ACE_DEMO_CONNECTORS, stopped, running
+
+---
+
+### ACE BIP codes & summaries
 
 **Q26 — BIP message code lookup**
-> "What does BIP1288I mean in the context of these ACE logs?"
+> "What do BIP1277I and BIP1278I mean, and which objects in this environment report each one?"
 
-*Expected answer area:* `BIP1288I` indicates the status of a **message flow** — specifically reporting whether a named flow in a given application on a given integration server is running, stopped, or inactive. Example: `BIP1288I: Message flow 'OrderFlow' in application 'snaplogic1' on integration server 'IS001' is running.`
+*Expected answer area:* `BIP1277I` reports a message flow **running**; `BIP1278I` reports a message flow **stopped**. In this extract every flow reports `BIP1277I` except `CreateItem` (application `AmazonS3`, server `ACE_DEMO_CONNECTORS`), which reports `BIP1278I` on both nodes.
 
----
-
-**Q27 — Node-level summary**
-> "Give me a health summary for NODE04."
-
-*Expected answer area:*
-- `IS030` — running; `customer_app` / `CustomerCreateFlow` running
-- `IS031` — **stopped** (no applications reported)
-- `IS032` — running; `notification_app` / `EmailNotifyFlow` running, `SMSNotifyFlow` running
-- `IS0033` — running; `snaplogic1` / `OrderFlow` running, `InvoiceFlow` **stopped**
+*Expected tools:* ace_search
+*Must mention:* BIP1277I, BIP1278I, CreateItem, stopped
 
 ---
 
-**Q28 — Flow count per node**
-> "How many message flows are running on loqace02.example.com?"
+**Q27 — Node-level health summary**
+> "Search the ACE dump for NODE1 and summarise what it reports — integration servers, applications, and any message flow that is not running."
 
-*Expected answer area:* 2 running flows on NODE02 (loqace02.example.com): `main` (snaplogic1 / IS001) and `FraudCheckFlow` (fraud_detection / IS011).
+*Expected answer area:* `NODE1` on `localhost:4414`. Four integration servers, all running. Sixteen applications, all running. Eighteen message flows running and one stopped: `CreateItem` in `AmazonS3` on `ACE_DEMO_CONNECTORS`.
+
+*Expected tools:* ace_search
+*Must mention:* NODE1, ACE_DEMO_CACHE, ACE_DEMO_CONNECTORS, ACE_DEMO_MESSAGING, ACE_DEMO_TRANSFORM, CreateItem
+
+---
+
+**Q28 — Flow count for a node**
+> "Find all BIP1277I and BIP1278I entries in the ACE dump for NODE1 — how many message flows are running and how many are not?"
+
+*Expected answer area:* 18 running flows (`BIP1277I`) and 1 not running (`BIP1278I` — `CreateItem`), for 19 flows total on `NODE1`. `ace_node_overview` carries no flow data, so only the dump can answer this.
+
+*Expected tools:* ace_search
+*Must mention:* NODE1, CreateItem
 
 ---
 
 ### Cross-System (MQ + ACE)
 
 **Q29 — MQ queue used by ACE application**
-> "The billing_app on ACE writes to QL.IN.APP1 on MQQMGR2. Is that queue accepting messages, and are there any depth alerts configured?"
+> "The ACE_multi_dest_mq application on ACE_DEMO_MESSAGING writes to QL.IN.APP1 on MQQMGR2. Is that queue accepting messages, and are there any depth alerts configured?"
 
 *Expected answer area:* `QL.IN.APP1` has `PUT(ENABLED)` and `GET(ENABLED)` — it is open for both put and get operations. `MAXDEPTH(5000)`. Depth alerts: `QDPHIEV(DISABLED)` and `QDPLOEV(DISABLED)`, so no active events fire on depth changes (only max-depth event is enabled).
 
