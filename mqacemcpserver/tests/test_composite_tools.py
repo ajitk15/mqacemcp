@@ -612,3 +612,40 @@ def test_ace_connection_verify_unknown_node_stops_early():
     result = fn(node="NODE.DOES.NOT.EXIST", host="localhost")
     assert "NOT in node_config.csv" in result, result
     assert "✅ Host" not in result and "❌ Host" not in result, result
+
+
+# ---------------------------------------------------------------------------
+# Manifest discovery — prefix inference must not hide mis-prefixed objects
+# ---------------------------------------------------------------------------
+
+
+def test_alias_named_with_qlocal_prefix_is_still_discoverable():
+    """A QALIAS may be named QL.* — the prefix rule must not filter it out.
+
+    `QL.ADMIN.REQUEST.ALIAS` is a QALIAS on MQREPO1, but its `QL.` prefix
+    infers QLOCAL. Before the fallback, that filter emptied the result and the
+    alias reported as "not found in the manifest".
+    """
+    from server.mq_helpers import search_objects_structured
+
+    results = search_objects_structured("QL.ADMIN.REQUEST.ALIAS")
+    assert results, "alias must be discoverable without an explicit qmgr_name"
+    assert {r["object_type"].upper() for r in results} == {"QALIAS"}
+    assert {r["qmgr"] for r in results} == {"MQREPO1"}
+
+
+def test_prefix_inference_still_narrows_when_it_matches():
+    """The widening is a fallback only — a real QL.* local queue stays narrowed."""
+    from server.mq_helpers import search_objects_structured
+
+    results = search_objects_structured("QL.INPUT")
+    assert results
+    assert {r["object_type"].upper() for r in results} == {"QLOCAL"}
+
+
+def test_explicit_object_type_is_authoritative_and_stays_strict():
+    """An object_type supplied by the caller must not be widened away."""
+    from server.mq_helpers import search_objects_structured
+
+    assert search_objects_structured("QL.ADMIN.REQUEST.ALIAS", "QLOCAL") == []
+    assert search_objects_structured("QL.ADMIN.REQUEST.ALIAS", "QALIAS")

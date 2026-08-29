@@ -29,6 +29,11 @@ logger = get_logger("mqacemcpserver.mq")
 
 CSRF_TOKEN = "token"
 
+# Every manifest object_type that represents a queue, used both for an explicit
+# object_type="QUEUES" search and as the fallback when a prefix-inferred type
+# matches nothing.
+_QUEUE_TYPES = ["QLOCAL", "QREMOTE", "QMODEL", "QALIAS"]
+
 _HTTP_CLIENT: httpx.AsyncClient | None = None
 
 
@@ -213,6 +218,7 @@ def search_objects_structured(
         return []
 
     inf_type = object_type
+    inferred = False
     if not inf_type:
         s_upper = search_string.upper()
         if s_upper.startswith("QL."):
@@ -221,14 +227,23 @@ def search_objects_structured(
             inf_type = "QALIAS"
         elif s_upper.startswith("QR."):
             inf_type = "QREMOTE"
+        inferred = inf_type is not None
 
     if inf_type:
         inf_upper = inf_type.upper()
+        types = matches["object_type"].str.upper()
         if inf_upper == "QUEUES":
-            queue_types = ["QLOCAL", "QREMOTE", "QMODEL", "QALIAS"]
-            matches = matches[matches["object_type"].str.upper().isin(queue_types)]
+            narrowed = matches[types.isin(_QUEUE_TYPES)]
         else:
-            matches = matches[matches["object_type"].str.upper() == inf_upper]
+            narrowed = matches[types == inf_upper]
+        # The name prefix is a naming convention, not a guarantee: an alias is
+        # free to be called QL.* (e.g. QL.ADMIN.REQUEST.ALIAS is a QALIAS). When
+        # an INFERRED type filters everything out, widen to every queue type
+        # rather than reporting the object as missing. An object_type supplied
+        # by the caller is authoritative and stays strict.
+        if narrowed.empty and inferred:
+            narrowed = matches[types.isin(_QUEUE_TYPES)]
+        matches = narrowed
 
     if matches.empty:
         return []

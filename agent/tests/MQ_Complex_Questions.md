@@ -116,11 +116,9 @@ letter queue anywhere), `CHLAUTH(ENABLED)` and
 ### Queues, aliases and discovery
 
 **MQ8 — Alias resolution to its target**
-> "On MQREPO1, what does QL.ADMIN.REQUEST.ALIAS resolve to, and what is the current depth of the queue it points at?"
+> "What does QL.ADMIN.REQUEST.ALIAS resolve to, and what is the current depth of the queue it points at?"
 
-*Expected answer area:* The alias is defined on `MQREPO1` with `TARGET(QL.ADMIN.REQUEST)`. The answer must name the target queue and report the target's current depth, not the alias's.
-
-The queue manager is named deliberately: manifest discovery cannot currently find this alias without one (see "Known server defect" below).
+*Expected answer area:* No queue manager is named, so discovery has to locate the alias itself: it is defined on `MQREPO1` with `TARGET(QL.ADMIN.REQUEST)`. The answer must name the hosting queue manager and the target queue, and report the target's current depth, not the alias's.
 
 *Expected tools:* mq_queue_inspect
 *Must mention:* QL.ADMIN.REQUEST, MQREPO1
@@ -170,29 +168,22 @@ The queue manager is named deliberately: manifest discovery cannot currently fin
 
 ---
 
-## Known server defect (found by MQ8)
+## Server defect found by MQ8 (now fixed)
 
-`mqacemcpserver/server/mq_helpers.py` infers an object type from the queue-name
-prefix before filtering the manifest:
-
-```python
-if s_upper.startswith("QL."):    inf_type = "QLOCAL"
-elif s_upper.startswith("QA."):  inf_type = "QALIAS"
-elif s_upper.startswith("QR."):  inf_type = "QREMOTE"
-```
-
-An alias is free to be named anything, and in this estate both are named
-`QL.*` — `QL.ADMIN.REQUEST.ALIAS` and `QL.REPO.BACKUP.ALIAS`. Their manifest rows
-have `object_type` `QALIAS`, but the `QL.` prefix forces `inf_type="QLOCAL"`, the
-filter matches nothing, and discovery returns
-`❌ '<name>' not found in the manifest`. **Both aliases in the estate are
-undiscoverable without an explicit `qmgr_name`**, even though they are present in
+`search_objects_structured` in `mqacemcpserver/server/mq_helpers.py` infers an
+object type from the queue-name prefix — `QL.` implies `QLOCAL`. An alias is
+free to be named anything, and both aliases in this estate are `QL.*`:
+`QL.ADMIN.REQUEST.ALIAS` and `QL.REPO.BACKUP.ALIAS`. Their manifest rows carry
+`object_type` `QALIAS`, so the inferred `QLOCAL` filter emptied the result and
+discovery reported `not found in the manifest` — **both aliases were
+undiscoverable without an explicit `qmgr_name`**, despite being in
 `qmgr_dump.csv`.
 
-Suggested fix: when the prefix-inferred type yields zero matches, fall back to
-the full queue-type set rather than returning empty — the prefix is a heuristic,
-not a guarantee. MQ8 names the queue manager to work around this; once the server
-is fixed, drop `On MQREPO1,` from the question so it tests discovery again.
+Fixed by widening to every queue type when an *inferred* type matches nothing;
+an `object_type` passed by the caller stays authoritative and strict. Covered by
+`mqacemcpserver/tests/test_composite_tools.py`
+(`test_alias_named_with_qlocal_prefix_is_still_discoverable` and its two
+siblings). MQ8 no longer names the queue manager, so it exercises discovery.
 
 ## Question category summary
 
