@@ -54,10 +54,6 @@
 .PARAMETER CheckOnly
     Run all pre-flight checks (and -Setup if given) and exit without starting.
 
-.PARAMETER Yes
-    Accept setup confirmation prompts. Intended for CI and other
-    non-interactive runs; existing .env files are still never overwritten.
-
 .PARAMETER Port
     Streamlit port (default 8003).
 
@@ -80,7 +76,6 @@ param(
     [switch]$SkipFrontend,
     [switch]$SkipDashboard,
     [switch]$CheckOnly,
-    [switch]$Yes,
     [int]$Port = 8003
 )
 
@@ -216,7 +211,7 @@ function Get-AgentReqFiles {
 # is safe and never clobbers real credentials). $Modules is an array of
 # @{ Label=..; Dir=.. } hashtables.
 function Initialize-EnvFiles {
-    param([hashtable[]]$Modules, [switch]$AssumeYes)
+    param([hashtable[]]$Modules)
     $toCreate = @()
     foreach ($m in $Modules) {
         $envFile = Join-Path $m.Dir ".env"
@@ -228,11 +223,7 @@ function Initialize-EnvFiles {
     if ($toCreate.Count -eq 0) { Write-Ok "All module .env files already present (nothing to copy)."; return }
     Write-Step "These modules have no .env and will be created from .env.example:"
     $toCreate | ForEach-Object { Write-Host "    - $($_.Label)  ($($_.Dir)\.env)" -ForegroundColor Gray }
-    $ans = ""
-    if (-not $AssumeYes) {
-        $answer = Read-Host "Create these .env files now? [Y/n]"
-        $ans = if ($null -eq $answer) { "" } else { $answer.Trim().ToLower() }
-    }
+    $ans = (Read-Host "Create these .env files now? [Y/n]").Trim().ToLower()
     if ($ans -in @("n", "no")) {
         Write-Note "Skipped .env creation. Copy each module's .env.example to .env before running."
         return
@@ -270,7 +261,7 @@ if ($Setup) {
     if (-not $SkipBackend)   { $envModules += @{ Label = "agent";     Dir = $BackendDir } }
     if (-not $SkipFrontend)  { $envModules += @{ Label = "frontend";  Dir = $FrontendDir } }
     if (-not $SkipDashboard) { $envModules += @{ Label = "dashboard"; Dir = $DashboardDir } }
-    Initialize-EnvFiles -Modules $envModules -AssumeYes:$Yes
+    Initialize-EnvFiles -Modules $envModules
     Write-Host ""
 
     Write-Step "Setup: installing per-component requirements"
@@ -368,52 +359,6 @@ if ($CheckOnly) {
 # ---------------------------------------------------------------------------
 $pids = @()
 
-# Poll a health endpoint until it answers, instead of guessing with a fixed
-# sleep. A slow TLS bind used to let the next tier start against a dead port.
-# Never fatal: the backend retries its MCP connection on its own, so a timeout
-# here is a warning, not a reason to abort the launch.
-function Wait-HttpReady {
-    param(
-        [string]$Url,
-        [string]$Label,
-        [int]$TimeoutSec = 45
-    )
-    Write-Note "waiting for $Label at $Url"
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    # PowerShell 7 has -SkipCertificateCheck; 5.1 needs the global callback
-    # (the endpoints use a self-signed cert).
-    $ps7 = $PSVersionTable.PSVersion.Major -ge 6
-    $oldCallback = $null
-    if (-not $ps7) {
-        $oldCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
-        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    }
-    try {
-        while ((Get-Date) -lt $deadline) {
-            try {
-                if ($ps7) {
-                    $r = Invoke-WebRequest -Uri $Url -TimeoutSec 5 -SkipCertificateCheck -UseBasicParsing
-                } else {
-                    $r = Invoke-WebRequest -Uri $Url -TimeoutSec 5 -UseBasicParsing
-                }
-                if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) {
-                    Write-Ok "$Label is ready"
-                    return $true
-                }
-            } catch {
-                Start-Sleep -Seconds 1
-            }
-        }
-    } finally {
-        if (-not $ps7) {
-            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback
-        }
-    }
-    Write-Bad "$Label did not respond within ${TimeoutSec}s - continuing anyway."
-    Write-Note "check its window for errors; the backend will keep retrying the MCP connection."
-    return $false
-}
-
 function Start-Service-Window {
     param([string]$Title, [string]$WorkingDirectory, [string]$Command)
     Write-Step "Starting $Title"
@@ -436,17 +381,14 @@ if (-not $SkipMcp) {
     $cmd = "`$env:MCP_TRANSPORT='$McpTransport'; .\mqacemcpserver\.venv\Scripts\python.exe `"$entryRel`""
     $pids += Start-Service-Window -Title "MCP Server (:$McpPort $McpTransport)" `
         -WorkingDirectory $RepoRoot -Command $cmd
-    # Block until the MCP server actually serves /healthz — the backend loads
-    # its tool list once at startup, so connecting too early left it with none.
-    Wait-HttpReady -Url "${McpScheme}://localhost:$McpPort/healthz" -Label "MCP server" | Out-Null
+    Start-Sleep -Seconds 3  # let the MCP server bind before the backend connects
 }
 
 if (-not $SkipBackend) {
     $cmd = ".\.venv\Scripts\python.exe app.py"
     $pids += Start-Service-Window -Title "Agent (FastAPI :$BackendPort)" `
         -WorkingDirectory $BackendDir -Command $cmd
-    # The frontend reads /api/health on first paint; wait for it to exist.
-    Wait-HttpReady -Url "http://localhost:$BackendPort/api/health" -Label "Agent backend" | Out-Null
+    Start-Sleep -Seconds 3  # let the backend load tools before the frontend hits it
 }
 
 if (-not $SkipFrontend) {

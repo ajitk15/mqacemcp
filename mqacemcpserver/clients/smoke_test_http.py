@@ -10,57 +10,51 @@ two clients are kept independent on purpose; if you change the test data
 (`CALLS`) or the result rules (`classify`) here, mirror the change in
 `smoke_test.py` if you want both transports tested the same way.
 
-WHICH SERVER IT TALKS TO: the three constants MCP_ENDPOINT_URL, MCP_USER and
-MCP_PASSWORD below. Nothing is read from the environment or from a .env file —
-edit those three and run. For a one-off run against a different server, pass
---url / --user / --password, or -i to be prompted.
-
-Usage (from the build folder, using this build's venv):
-    .venv\\Scripts\\python.exe clients\\smoke_test_http.py            # all calls
-    .venv\\Scripts\\python.exe clients\\smoke_test_http.py mq         # filter by category
-    .venv\\Scripts\\python.exe clients\\smoke_test_http.py --full     # full output previews
-
-    python clients\\smoke_test_http.py --url https://host:8010/mcp --user u --password p
-    python clients\\smoke_test_http.py -i     # prompt for endpoint/user/password
+Usage (from the build folder, with the shared repo-root venv):
+    ..\\.venv\\Scripts\\python.exe clients\\smoke_test_http.py            # all calls
+    ..\\.venv\\Scripts\\python.exe clients\\smoke_test_http.py mq         # filter by category
+    ..\\.venv\\Scripts\\python.exe clients\\smoke_test_http.py --full     # full output previews
 
 Each call also prints the backend MQ/ACE endpoint(s) the server hit, read back
 from its JSONL query log (same-host only). Pass --no-endpoints to suppress, or
-edit QUERY_LOG_DIR if the server's logs/ live elsewhere.
+set MCP_QUERY_LOG_DIR if the server's logs/ live elsewhere.
 """
 from __future__ import annotations
 
-import argparse
 import asyncio
 import glob
 import json
 import os
 import sys
 import time
-from getpass import getpass
 from pathlib import Path
-from urllib.parse import urlparse
 
 import httpx
 import urllib3
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
-# ===========================================================================
-#  EDIT THESE THREE — the server this client talks to.
-#  Nothing is read from the environment or from .env; what is written here is
-#  what runs. Override for a single run with --url / --user / --password, or
-#  pass -i to be prompted (these values are then offered as the defaults).
-# ===========================================================================
-MCP_ENDPOINT_URL = "https://localhost:8010/mcp"
-MCP_USER = "mcpadmin"
-MCP_PASSWORD = ""          # blank on purpose - fill in, or pass --password / -i
-# ===========================================================================
+MCP_AUTH_USER = os.getenv("MCP_AUTH_USER", "")
+MCP_AUTH_PASSWORD = os.getenv("MCP_AUTH_PASSWORD", "")
+MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+MCP_PORT = os.getenv("MCP_PORT", "8010")
+MCP_TLS_CERT = os.getenv("MCP_TLS_CERT", "")
+MCP_TLS_KEY = os.getenv("MCP_TLS_KEY", "")
+
+if MCP_HOST in ("", "0.0.0.0"):
+    MCP_HOST = "127.0.0.1"
+
+_scheme = "https" if (MCP_TLS_CERT and MCP_TLS_KEY) else "http"
+# Honour an explicit override (e.g. behind a proxy); otherwise target /mcp.
+MCP_URL = os.getenv("MCP_REMOTE_SERVER_URL", f"{_scheme}://{MCP_HOST}:{MCP_PORT}/mcp")
 
 # The server records the backend endpoint(s) it hit for each call in its JSONL
 # query log. When the client runs on the same host as the server we can read
 # that log back and show, per call, exactly which MQ/ACE URL(s) were called.
-# Point this at the server's logs/ if they do not live beside this build.
-QUERY_LOG_DIR = str(PROJECT_ROOT / "logs")
+# Defaults to this build's logs/; override with MCP_QUERY_LOG_DIR.
+QUERY_LOG_DIR = os.getenv("MCP_QUERY_LOG_DIR", str(PROJECT_ROOT / "logs"))
 
 
 def _newest_query_log():
@@ -115,135 +109,6 @@ def _make_insecure_httpx_client(headers=None, timeout=None, auth=None):
     return httpx.AsyncClient(**kwargs)
 
 
-def normalise_url(raw):
-    """Accept the shorthand people actually type and return a full /mcp URL.
-
-    "host:8010" -> "https://host:8010/mcp";  "https://host:8010" -> ".../mcp".
-    A scheme-less value assumes https because the server ships with TLS
-    configured; give an explicit http:// URL for a plaintext endpoint. An
-    existing path (e.g. a proxy route) is left alone.
-    """
-    url = (raw or "").strip()
-    if not url:
-        return ""
-    if "://" not in url:
-        url = f"https://{url}"
-    parsed = urlparse(url)
-    if parsed.path in ("", "/"):
-        url = f"{url.rstrip('/')}/mcp"
-    return url
-
-
-def parse_args(argv=None):
-    parser = argparse.ArgumentParser(
-        prog="smoke_test_http.py",
-        description=(
-            "Streamable-HTTP smoke test for mqacemcpserver. With no options it "
-            "uses the MCP_ENDPOINT_URL / MCP_USER / MCP_PASSWORD constants set "
-            "at the top of this file; --url/--user/--password override them for "
-            "one run, and -i prompts for them."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "examples:\n"
-            "  %(prog)s --url https://host:8010/mcp --user mcpadmin --password s3cr3t\n"
-            "  %(prog)s -i                      # prompt for endpoint + credentials\n"
-            "  %(prog)s --url host:8010 mq      # shorthand URL, MQ tools only\n"
-        ),
-    )
-    parser.add_argument(
-        "selectors",
-        nargs="*",
-        metavar="SELECTOR",
-        help="filter calls by category (mq/ace/cert) or tool name; default runs all",
-    )
-    parser.add_argument(
-        "--url", "--endpoint", dest="url", metavar="URL",
-        help="MCP endpoint, e.g. https://host:8010/mcp (a bare host:port is completed for you)",
-    )
-    parser.add_argument("--user", "-u", metavar="NAME", help="Basic Auth username")
-    parser.add_argument("--password", "-p", metavar="PASS", help="Basic Auth password")
-    parser.add_argument(
-        "-i", "--ask", action="store_true",
-        help="prompt for endpoint, user and password (the constants above are offered as defaults)",
-    )
-    parser.add_argument(
-        "--no-auth", action="store_true",
-        help="connect anonymously, ignoring MCP_USER / MCP_PASSWORD",
-    )
-    parser.add_argument(
-        "--full", "-f", action="store_true", help="print full output previews",
-    )
-    parser.add_argument(
-        "--lines", type=int, metavar="N", default=12,
-        help="preview N lines per call (default: 12)",
-    )
-    parser.add_argument(
-        "--no-endpoints", dest="show_endpoints", action="store_false",
-        help="do not read back backend endpoints from the server's query log",
-    )
-    return parser.parse_args(argv)
-
-
-def _ask(label, default=""):
-    shown = f" [{default}]" if default else ""
-    try:
-        answer = input(f"  {label}{shown}: ").strip()
-    except EOFError:
-        return default
-    return answer or default
-
-
-def _ask_secret(label="Password"):
-    """Read a password without echoing it — when there is a terminal to read.
-
-    On Windows getpass() reads the console directly, so it would block forever
-    when stdin is a pipe (CI, `echo ... | script`). Fall back to a plain read
-    in that case; there is no echo to suppress anyway.
-    """
-    if sys.stdin.isatty():
-        try:
-            return getpass(f"  {label}: ")
-        except (EOFError, OSError):
-            return ""
-    try:
-        return input(f"  {label}: ").strip()
-    except EOFError:
-        return ""
-
-
-def resolve_target(args):
-    """Work out (url, user, password) from flags, prompts, then the constants.
-
-    Returns the URL empty only when there is nothing to fall back on and we
-    cannot prompt; the caller turns that into a clean error.
-    """
-    url, user, password = args.url, args.user, args.password
-
-    if args.ask:
-        # Prompt for whatever the flags did not already pin down, offering the
-        # constant as the default so Enter just uses what the file says.
-        print("Target MCP server (press Enter to accept the default):")
-        url = url or _ask("Endpoint", MCP_ENDPOINT_URL)
-        if not args.no_auth:
-            user = user or _ask("User", MCP_USER)
-            if user and password is None:
-                # Not echoed, so it is never left in shell history.
-                password = _ask_secret() or MCP_PASSWORD
-
-    url = normalise_url(url or MCP_ENDPOINT_URL)
-
-    if args.no_auth:
-        return url, "", ""
-
-    user = user if user is not None else MCP_USER
-    if password is None:
-        # A user supplied on the command line without a password: ask rather
-        # than silently pairing it with MCP_PASSWORD.
-        password = _ask_secret() if args.user else MCP_PASSWORD
-    return url, user, password
-
-
 def heading(text):
     bar = "=" * 64
     print(f"\n{bar}\n  {text}\n{bar}")
@@ -260,9 +125,9 @@ def preview(text, limit=12):
 
 
 EXPECTED_TOOLS = {
-    "mq_queue_inspect", "mq_channel_inspect", "mq_connection_verify", "mq_host_overview",
-    "ace_node_overview", "ace_connection_verify", "ace_server_explore", "ace_search",
-    "get_cert_details", "user_access_verify",
+    "mq_queue_inspect", "mq_channel_inspect", "mq_host_overview",
+    "ace_node_overview", "ace_server_explore", "ace_search",
+    "get_cert_details",
 }
 
 # Object names below are drawn from the current offline manifests under
@@ -330,9 +195,6 @@ CALLS = [
     ("get_cert_details", {"search_strings": ["mqweb-https"]}, "offline"),                            # match by alias
     ("get_cert_details", {"search_strings": ["ace-admin-tls", "ace-rest-api-tls"]}, "offline"),      # MULTI-TARGET: two queries merged, one call
     ("get_cert_details", {"search_strings": ["no-such-cert-anywhere"]}, "offline"),                  # success, empty results
-
-    # --- user_access_verify (1) ----------------------------------------------
-    ("user_access_verify", {"user_id": "ajit001", "qmgr_names": ["MQREPO1"]}, "offline"),
 ]
 
 
@@ -433,48 +295,7 @@ def classify(text, mode):
     return "pass", ""
 
 
-def _root_cause(err):
-    """Innermost exception of an anyio ExceptionGroup, else err itself.
-
-    The MCP client runs its transport in a task group, so a 401 or a refused
-    connection arrives wrapped in an ExceptionGroup whose traceback buries the
-    one line that matters.
-    """
-    for _ in range(5):
-        nested = getattr(err, "exceptions", None)
-        if not nested:
-            break
-        err = nested[0]
-    return err
-
-
-def _explain_connect_failure(err, url, user):
-    """Print a one-line diagnosis for a failure to reach/authenticate."""
-    cause = _root_cause(err)
-    status = getattr(getattr(cause, "response", None), "status_code", None)
-
-    if status in (401, 403):
-        who = f"user={user}" if user else "no credentials sent"
-        print(f"FAIL: {url} rejected the credentials ({status}, {who}).")
-        print("      Check --user/--password, or use --no-auth if the server is open.")
-    elif isinstance(cause, httpx.ConnectError):
-        print(f"FAIL: could not connect to {url} ({type(cause).__name__}).")
-        print("      Check the host/port, that the server is running, and http:// vs https://.")
-    elif isinstance(cause, (httpx.ReadTimeout, httpx.ConnectTimeout)):
-        print(f"FAIL: timed out talking to {url}.")
-    elif isinstance(cause, httpx.RemoteProtocolError) and url.startswith("http://"):
-        # Classic symptom of speaking plaintext to a TLS listener.
-        print(f"FAIL: {url} closed the connection without responding.")
-        print("      That port looks like it wants TLS — try https:// instead.")
-    elif status is not None:
-        print(f"FAIL: {url} returned HTTP {status}.")
-        print("      If this is not the MCP endpoint, include the right path (e.g. /mcp).")
-    else:
-        print(f"FAIL: could not start an MCP session with {url}")
-        print(f"      {type(cause).__name__}: {cause}")
-
-
-async def main(opts):
+async def main():
     # Tool outputs contain emoji (🔍 ❌ ⚠️). Windows defaults to cp1252 which
     # cannot encode them, so reconfigure stdout to UTF-8 before any print.
     try:
@@ -483,43 +304,21 @@ async def main(opts):
         pass
 
     try:
-        from mcp import ClientSession  # noqa: F401
-        from mcp.client.streamable_http import streamablehttp_client  # noqa: F401
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
     except ImportError:
         print("FAIL: mcp SDK not installed in this venv")
         return 1
 
-    url, user, password = resolve_target(opts)
-    if not url:
-        print("FAIL: no MCP endpoint. Pass --url https://host:8010/mcp, use -i, "
-              "or set MCP_ENDPOINT_URL at the top of this file.")
-        return 1
-
     auth = None
-    if user and password:
-        auth = httpx.BasicAuth(user, password)
-        print(f"Basic Auth user={user}")
-    elif user:
-        print(f"WARN: user={user} given with no password — connecting anonymously.")
+    if MCP_AUTH_USER and MCP_AUTH_PASSWORD:
+        auth = httpx.BasicAuth(MCP_AUTH_USER, MCP_AUTH_PASSWORD)
+        print(f"Basic Auth user={MCP_AUTH_USER}")
 
-    heading(f"mqacemcpserver smoke ({url})")
-
-    try:
-        return await _smoke(opts, url, auth)
-    except Exception as err:  # noqa: BLE001
-        # Connection/auth problems surface here; per-call failures are caught
-        # inside the loop and reported as test results instead.
-        _explain_connect_failure(err, url, user)
-        return 1
-
-
-async def _smoke(opts, url, auth):
-    """Open the MCP session and run the selected calls. Returns an exit code."""
-    from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    heading(f"mqacemcpserver smoke ({MCP_URL})")
 
     async with streamablehttp_client(
-        url, auth=auth, httpx_client_factory=_make_insecure_httpx_client
+        MCP_URL, auth=auth, httpx_client_factory=_make_insecure_httpx_client
     ) as (read, write, _get_session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -544,13 +343,22 @@ async def _smoke(opts, url, auth):
                 return 1
             print(f"  OK: catalogue == {len(EXPECTED_TOOLS)} expected tools")
 
-            selectors = opts.selectors
+            selectors = [a for a in sys.argv[1:] if not a.startswith("-")]
+            flags = [a for a in sys.argv[1:] if a.startswith("-")]
             # Preview verbosity: default 12 lines; --full shows everything,
-            # --lines N shows N lines.
-            preview_limit = None if opts.full else opts.lines
+            # --lines=N shows N lines.
+            preview_limit = 12
             # Per-call backend endpoint display (read back from the server's
             # query log) is on by default; pass --no-endpoints to suppress it.
-            show_endpoints = opts.show_endpoints
+            show_endpoints = "--no-endpoints" not in flags
+            for f in flags:
+                if f in ("--full", "-f"):
+                    preview_limit = None
+                elif f.startswith("--lines="):
+                    try:
+                        preview_limit = int(f.split("=", 1)[1])
+                    except ValueError:
+                        pass
 
             # Seed the seen-ids set with the log's current last request_id so the
             # first call doesn't pick up a stale line written before this run.
@@ -615,9 +423,4 @@ async def _smoke(opts, url, auth):
 
 if __name__ == "__main__":
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    try:
-        sys.exit(asyncio.run(main(parse_args())))
-    except KeyboardInterrupt:
-        # Ctrl-C at an interactive prompt should not dump a traceback.
-        print("\nAborted.")
-        sys.exit(130)
+    sys.exit(asyncio.run(main()))

@@ -14,7 +14,7 @@ consumes it. Each top-level folder is its own deliverable — own entry point, o
 | **[`frontend/`](frontend/README.md)** | Chatbot UI — Streamlit (`:8003`), MCP-server-agnostic. | [`frontend/README.md`](frontend/README.md) |
 | **[`dashboard/`](dashboard/README.md)** | Log analytics dashboard (`:8004`) — one tab per MCP server. | [`dashboard/README.md`](dashboard/README.md) |
 | `scripts/` | PowerShell launchers (`start-all.ps1`, `start-streamlit.ps1`, `stop-all.ps1`) and ops tooling. Each `-Skip*` switch isolates a tier; no switches brings up the whole stack. | — |
-| `resources/` | Shared CSV manifests (`qmgr_dump`, `node_config`, `node_dump`, `ace_auth_dump`, `cert_dump`) consumed by the MCP server. Replaced by scheduled extract jobs. | — |
+| `resources/` | Shared CSV manifests (`qmgr_dump`, `node_config`, `node_dump`, `cert_dump`) consumed by the MCP server. Replaced by a daily extract job. | — |
 
 ## Shared vs. isolated
 

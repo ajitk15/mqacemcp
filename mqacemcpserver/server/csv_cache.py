@@ -1,7 +1,7 @@
 """mtime-based auto-reloading cache for the offline CSV manifests.
 
 The CSV manifests (`qmgr_dump.csv`, `node_dump.csv`, `node_config.csv`,
-`ace_auth_dump.csv`, `cert_dump.csv`) are replaced by external extract jobs. The
+`cert_dump.csv`) are replaced once a day by an external extract job. The
 loaders used to cache load-once-forever, so the server had to be restarted to
 see new data. `CsvCache` instead checks the file's `(mtime, size)` on each
 access and reloads only when it changed — so the daily swap is picked up on the
