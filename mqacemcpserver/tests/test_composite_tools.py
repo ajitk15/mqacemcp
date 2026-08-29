@@ -490,11 +490,16 @@ def test_ace_node_overview_multi_target_wraps_results():
     assert {n["node"] for n in out["nodes"]} == {"GHOST.A", "GHOST.B"}, out
 
 
-def test_ace_node_overview_empty_list_is_handled():
+def test_ace_node_overview_empty_list_discovers_every_node():
+    """An empty list means "the whole estate", not an error.
+
+    The hosting client gets one tool call per question, so it cannot be asked
+    which node to look at — an omitted target is resolved from node_config.csv.
+    """
     fn = _tool("ace_node_overview")
     out = json.loads(asyncio.run(fn(nodes=[])))
-    assert out["status"] == "error"
-    assert "No node supplied" in out["message"], out
+    assert out["status"] == "success", out
+    assert out["discovered_targets"] == ["NODE1", "NODE2"], out
 
 
 def test_ace_server_explore_multi_target_wraps_results():
@@ -649,3 +654,71 @@ def test_explicit_object_type_is_authoritative_and_stays_strict():
 
     assert search_objects_structured("QL.ADMIN.REQUEST.ALIAS", "QLOCAL") == []
     assert search_objects_structured("QL.ADMIN.REQUEST.ALIAS", "QALIAS")
+
+
+# ---------------------------------------------------------------------------
+# Target discovery — the client makes ONE call, so an omitted target must be
+# resolved from the manifests rather than asked back.
+# ---------------------------------------------------------------------------
+
+
+def test_discovery_helpers_read_the_manifests():
+    from server.composite_tools import (
+        _all_configured_nodes,
+        _all_manifest_qmgrs,
+        _nodes_hosting,
+    )
+
+    assert _all_configured_nodes() == ["NODE1", "NODE2"]
+    # An EG name alone must resolve to every node that hosts it.
+    assert _nodes_hosting(["ACE_DEMO_MESSAGING"]) == ["NODE1", "NODE2"]
+    # So must an application name.
+    assert _nodes_hosting(["ACE_Salesforce_Leads"]) == ["NODE1", "NODE2"]
+    assert set(_all_manifest_qmgrs()) == {
+        "MQREPO1",
+        "MQREPO2",
+        "MQQM1",
+        "MQNODE1",
+        "MQNODE2",
+    }
+
+
+def test_ace_node_overview_with_no_nodes_covers_every_configured_node():
+    """Omitting `nodes` must overview the whole estate, not error."""
+    fn = _tool("ace_node_overview")
+    out = json.loads(asyncio.run(fn()))
+    assert out.get("discovered_targets") == ["NODE1", "NODE2"]
+    assert {n["node"] for n in out["nodes"]} == {"NODE1", "NODE2"}
+
+
+def test_ace_server_explore_without_node_resolves_hosting_nodes():
+    """An EG named with no node must fan out to every node hosting it."""
+    fn = _tool("ace_server_explore")
+    out = json.loads(asyncio.run(fn(servers=["ACE_DEMO_MESSAGING"])))
+    assert out["discovered_nodes"] == ["NODE1", "NODE2"]
+    assert out["count"] == 2
+    assert {s["node"] for s in out["servers"]} == {"NODE1", "NODE2"}
+
+
+def test_ace_server_explore_unknown_server_says_so_without_asking():
+    fn = _tool("ace_server_explore")
+    out = json.loads(asyncio.run(fn(servers=["NO.SUCH.EG"])))
+    assert out["status"] == "error"
+    assert "NO.SUCH.EG" in out["message"]
+
+
+def test_ace_server_explore_with_explicit_node_is_unchanged():
+    """The existing single-server-on-a-named-node shape must not move."""
+    fn = _tool("ace_server_explore")
+    out = json.loads(asyncio.run(fn(servers=["X"], node="GHOST")))
+    assert out["node"] == "GHOST"
+    assert out["server"] == "X"
+
+
+def test_mq_host_overview_fans_mqsc_across_every_queue_manager():
+    """An MQSC with no named QM must reach the whole estate, not be dropped."""
+    fn = _tool("mq_host_overview")
+    out = asyncio.run(fn(mqsc_command="DISPLAY QMGR DEADQ"))
+    assert "every queue manager in the manifest was discovered" in out
+    for qm in ("MQREPO1", "MQREPO2", "MQQM1", "MQNODE1", "MQNODE2"):
+        assert qm in out

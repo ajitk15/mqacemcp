@@ -192,9 +192,11 @@ means zero tool calls, which these score as FAIL.
 **CX13 — Applications under an EG, node not stated**
 > "list all the applications under EG ACE_DEMO_MESSAGING"
 
-*Expected answer area:* No node is given, so the assistant must discover from the extract that `ACE_DEMO_MESSAGING` exists on **both** `NODE1` and `NODE2`, and list the five applications it hosts — `ACE_message_Grouping`, `ACE_MQ_group_messages`, `ACE_MQ_Syncronus_processing`, `ACE_multi_dest_mq`, `IBMACEJMSInput` — all running. It must NOT ask which node.
+*Expected answer area:* No node is given, so the hosting nodes must be discovered: `ACE_DEMO_MESSAGING` runs on **both** `NODE1` and `NODE2`, hosting five applications — `ACE_message_Grouping`, `ACE_MQ_group_messages`, `ACE_MQ_Syncronus_processing`, `ACE_multi_dest_mq`, `IBMACEJMSInput` — all running. It must NOT ask which node.
 
-*Expected tools:* ace_search
+`ace_server_explore` is now the better route: with `node` omitted it resolves the hosting nodes itself and returns live application state. `ace_search` remains acceptable — it answers from the cached extract — but it was originally the only option because the tool could not self-discover.
+
+*Expected tools:* ace_server_explore, ace_search
 *Must mention:* ACE_DEMO_MESSAGING, NODE1, NODE2, ACE_message_Grouping, ACE_MQ_group_messages, ACE_MQ_Syncronus_processing, ACE_multi_dest_mq, IBMACEJMSInput
 
 ---

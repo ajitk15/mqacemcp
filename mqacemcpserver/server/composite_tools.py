@@ -95,6 +95,43 @@ def _as_str_list(value) -> list[str]:
     return list(dict.fromkeys(cleaned))
 
 
+# --- Target discovery -------------------------------------------------------
+# The hosting client makes exactly ONE tool call per user question, so a tool
+# can never answer "tell me which node/queue manager you meant". When a target
+# is omitted, the tool resolves it from the offline manifests itself. See
+# CLAUDE.md on composite discovery-plus-execution tools.
+
+
+def _all_configured_nodes() -> list[str]:
+    """Every integration node in the offline node config, in file order."""
+    df = load_node_config()
+    if df.empty or "node" not in df.columns:
+        return []
+    return _as_str_list(df["node"].tolist())
+
+
+def _nodes_hosting(names: list[str]) -> list[str]:
+    """Integration nodes whose dump mentions any of `names` (server or app).
+
+    Used when the caller names an execution group or application but no node.
+    """
+    found: list[str] = []
+    for name in names:
+        for row in search_node_dump(name):
+            node = str(row.get("node", "")).strip()
+            if node and node not in found:
+                found.append(node)
+    return found
+
+
+def _all_manifest_qmgrs() -> list[str]:
+    """Every distinct queue manager in the MQ manifest, in file order."""
+    df = load_csv()
+    if df.empty or "qmgr" not in df.columns:
+        return []
+    return _as_str_list(df["qmgr"].tolist())
+
+
 def _parse_attr(text: str, attr: str) -> str | None:
     """Extract ATTR(value) from MQSC output. Returns None for missing/blank."""
     m = re.search(rf"\b{attr}\(([^)]*)\)", text, re.IGNORECASE)
@@ -872,15 +909,33 @@ def register(mcp: FastMCP) -> None:
         (run the MQSC on that QM via that explicit host). `mqsc_command` is
         applied to every queue-manager target.
 
+        For an ESTATE-WIDE question — "does every queue manager have a dead
+        letter queue", "what listener port is each one on" — supply only
+        `mqsc_command` and leave `qmgr_names` empty. Every queue manager in the
+        manifest is then discovered and the command runs against each of them.
+        Never ask the user to list the queue managers; look them up.
+
         Args:
-            qmgr_names: Optional list of queue manager names to target.
+            qmgr_names: Optional list of queue manager names to target. Omit,
+                together with `hostnames`, to run `mqsc_command` against every
+                queue manager in the manifest.
             hostnames: Optional list of explicit hosts. An explicit host is
                 used directly (skips manifest lookup).
-            mqsc_command: Optional read-only MQSC DISPLAY command. Requires a
-                queue-manager target. Modification verbs are blocked.
+            mqsc_command: Optional read-only MQSC DISPLAY command. Modification
+                verbs are blocked. Keep the attribute list conservative — one
+                unsupported attribute fails the whole command (AMQ8405I).
         """
         qms = _as_str_list(qmgr_names)
         hosts = _as_str_list(hostnames)
+
+        # An MQSC command needs a queue-manager target. With none supplied the
+        # question is estate-wide ("does every QM have a DLQ"), and the client
+        # gets only one call — so discover every QM from the manifest rather
+        # than silently dropping the command.
+        discovered_qmgrs: list[str] = []
+        if mqsc_command and not qms and not hosts:
+            discovered_qmgrs = _all_manifest_qmgrs()
+            qms = list(discovered_qmgrs)
 
         # A single QM + single host is the existing "paired" target (run the
         # MQSC on that QM, reached via that explicit host).
@@ -895,7 +950,13 @@ def register(mcp: FastMCP) -> None:
             q, h = targets[0]
             return await _host_overview_one(q, h, mqsc_command)
 
-        sections = [f"🔍 Inspecting {len(targets)} hosts/queue managers.\n"]
+        header = f"🔍 Inspecting {len(targets)} hosts/queue managers."
+        if discovered_qmgrs:
+            header += (
+                "\nNo queue manager was named, so every queue manager in the "
+                f"manifest was discovered: {', '.join(discovered_qmgrs)}."
+            )
+        sections = [header + "\n"]
         for q, h in targets:
             label = q or h or "default MQ_URL_BASE"
             sections.append(f"════════ {label} ════════")
@@ -907,7 +968,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     @logged_tool
-    async def ace_node_overview(nodes: list[str]) -> str:
+    async def ace_node_overview(nodes: list[str] | None = None) -> str:
         """IBM ACE: Node-level overview — node status + every integration server in one call.
 
         For each node it issues the node-status and `/servers?depth=2` calls
@@ -919,27 +980,45 @@ def register(mcp: FastMCP) -> None:
         that envelope directly; multiple nodes return
         `{status, count, nodes: [<envelope>, ...]}`.
 
+        OMIT `nodes` ENTIRELY for an estate-wide question — "are any traces
+        enabled anywhere", "which integration servers are stopped across all
+        nodes". Every configured node is then discovered from the offline node
+        config and overviewed, and the envelope carries `discovered_targets`.
+        There is no need to ask the user which node to look at.
+
         Args:
-            nodes: One or more integration node names, as a list — e.g.
-                ["NODE1"] or ["NODE1","NODE2"].
+            nodes: Optional list of integration node names — e.g. ["NODE1"] or
+                ["NODE1","NODE2"]. Omit or pass an empty list to cover every
+                configured node.
         """
         names = _as_str_list(nodes)
+        discovered = False
         if not names:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": "No node supplied. Pass nodes=[\"NODE1\", ...].",
-                },
-                indent=2,
-            )
-        if len(names) == 1:
+            names = _all_configured_nodes()
+            discovered = True
+            if not names:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": (
+                            "No integration nodes are configured "
+                            "(resources/node_config.csv is empty or missing)."
+                        ),
+                    },
+                    indent=2,
+                )
+        if len(names) == 1 and not discovered:
             return json.dumps(await _node_overview_one(names[0]), indent=2)
 
         results = await asyncio.gather(*[_node_overview_one(n) for n in names])
-        return json.dumps(
-            {"status": "success", "count": len(results), "nodes": list(results)},
-            indent=2,
-        )
+        envelope: dict = {
+            "status": "success",
+            "count": len(results),
+            "nodes": list(results),
+        }
+        if discovered:
+            envelope["discovered_targets"] = names
+        return json.dumps(envelope, indent=2)
 
     @mcp.tool()
     @logged_tool
@@ -1083,7 +1162,9 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     @logged_tool
     async def ace_server_explore(
-        node: str, servers: list[str], application: str | None = None
+        servers: list[str],
+        node: str | None = None,
+        application: str | None = None,
     ) -> str:
         """IBM ACE: Explore one or more integration servers — applications + message flows.
 
@@ -1093,15 +1174,21 @@ def register(mcp: FastMCP) -> None:
         returned alongside the application list.
 
         Pass MULTIPLE servers to explore them all in one call — e.g. "apps on
-        IS001 and IS002 on NODE2" → `node="NODE2", servers=["IS001","IS002"]`.
-        All servers must live on the same `node`. A single server returns its
-        envelope directly; multiple return `{status, node, count, servers:
-        [<envelope>, ...]}`.
+        IS001 and IS002 on NODE2" → `servers=["IS001","IS002"], node="NODE2"`.
+        A single server on a known node returns its envelope directly; anything
+        else returns `{status, node(s), count, servers: [<envelope>, ...]}`.
+
+        OMIT `node` when the user names only an execution group or application
+        — "list the applications under EG ACE_DEMO_MESSAGING". The hosting
+        node(s) are then discovered from the offline dump and EVERY node that
+        hosts the server is explored, with `discovered_nodes` in the envelope.
+        Never ask the user which node a server is on; look it up.
 
         Args:
-            node: The integration node name (shared by all servers).
-            servers: One or more integration server names on that node, as a
-                list — e.g. ["IS001"] or ["IS001","IS002"].
+            servers: One or more integration server names, as a list — e.g.
+                ["IS001"] or ["IS001","IS002"].
+            node: Optional integration node name shared by all servers. Omit to
+                discover the hosting node(s) automatically.
             application: Optional application to scope message flows to
                 (applied to every server).
         """
@@ -1114,20 +1201,47 @@ def register(mcp: FastMCP) -> None:
                 },
                 indent=2,
             )
-        if len(names) == 1:
-            return json.dumps(
-                await _server_explore_one(node, names[0], application), indent=2
-            )
+
+        target_node = (node or "").strip()
+        discovered_nodes: list[str] = []
+        if not target_node:
+            discovered_nodes = _nodes_hosting(names + ([application] if application else []))
+            if not discovered_nodes:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"Could not find {', '.join(names)} on any configured "
+                            "integration node in the offline dump. Pass node= to "
+                            "query a node directly."
+                        ),
+                        "servers": names,
+                    },
+                    indent=2,
+                )
+
+        if target_node:
+            if len(names) == 1:
+                return json.dumps(
+                    await _server_explore_one(target_node, names[0], application),
+                    indent=2,
+                )
+            pairs = [(target_node, s) for s in names]
+        else:
+            pairs = [(n, s) for n in discovered_nodes for s in names]
 
         results = await asyncio.gather(
-            *[_server_explore_one(node, s, application) for s in names]
+            *[_server_explore_one(n, s, application) for n, s in pairs]
         )
         envelope: dict = {
             "status": "success",
-            "node": node,
             "count": len(results),
             "servers": list(results),
         }
+        if target_node:
+            envelope["node"] = target_node
+        else:
+            envelope["discovered_nodes"] = discovered_nodes
         if application:
             envelope["application"] = application
         return json.dumps(envelope, indent=2)
