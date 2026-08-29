@@ -237,7 +237,7 @@ def preview(text, limit=12):
 EXPECTED_TOOLS = {
     "mq_queue_inspect", "mq_channel_inspect", "mq_connection_verify", "mq_host_overview",
     "ace_node_overview", "ace_connection_verify", "ace_server_explore", "ace_search",
-    "get_cert_details", "user_access_verify",
+    "get_cert_details",
 }
 
 # Non-SYSTEM application queues that exist identically on MQNODE1 and MQNODE2.
@@ -345,9 +345,6 @@ CALLS = [
     ("get_cert_details", {"search_strings": ["MQNODE1"]}, "offline"),
     ("get_cert_details", {"search_strings": ["ip-10-0-1-130"]}, "offline"),
     ("get_cert_details", {"search_strings": ["no-such-cert-anywhere"]}, "offline"),
-
-    # user_access_verify — live identity plus offline authorization evidence
-    ("user_access_verify", {"user_id": "ajit001", "qmgr_names": ["MQREPO1"]}, "offline"),
 ]
 
 

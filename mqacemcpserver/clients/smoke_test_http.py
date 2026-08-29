@@ -262,7 +262,7 @@ def preview(text, limit=12):
 EXPECTED_TOOLS = {
     "mq_queue_inspect", "mq_channel_inspect", "mq_connection_verify", "mq_host_overview",
     "ace_node_overview", "ace_connection_verify", "ace_server_explore", "ace_search",
-    "get_cert_details", "user_access_verify",
+    "get_cert_details",
 }
 
 # Object names below are drawn from the current offline manifests under
@@ -288,7 +288,7 @@ CALLS = [
     ("mq_channel_inspect", {"channel_names": ["DEV.APP.SVRCONN"], "qmgr_name": "MQQM1"}, "live"),         # SVRCONN channel
     ("mq_channel_inspect", {"channel_names": ["CH.UNKNOWN.XYZ"], "qmgr_name": "MQNODE1"}, "expect_not_found"),
 
-    # --- mq_host_overview (13) ------------------------------------------------
+    # --- mq_host_overview (18) ------------------------------------------------
     ("mq_host_overview", {}, "live"),                                                              # default MQ_URL_BASE
     ("mq_host_overview", {"qmgr_names": ["MQNODE1"]}, "live"),                                     # resolved via manifest
     ("mq_host_overview", {"qmgr_names": ["MQNODE1", "MQREPO1"]}, "live"),                          # MULTI-TARGET: two QMs, one call
@@ -300,8 +300,25 @@ CALLS = [
     ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY QLOCAL(QL.*) CURDEPTH MAXDEPTH"}, "live"),                             # wildcard queue scan
     ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY CHANNEL(MQNODE1.CLUSRCVR) ALL"}, "live"),                              # channel properties
     ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY CHSTATUS(MQNODE1.CLUSRCVR)"}, "live"),                                 # channel status
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY QMSTATUS ALL"}, "live"),                                                # QM run-state / restart time (STATUS, STARTDA+STARTTI)
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1", "MQREPO1"], "mqsc_command": "DISPLAY QMSTATUS ALL"}, "live"),                                     # MULTI-TARGET: QMSTATUS per QM in one call
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY LSSTATUS(*) ALL"}, "live"),                                             # listeners
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY TOPIC(*) TOPICSTR DESCR DEFPRTY"}, "live"),                             # topics
+    ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DISPLAY SUB(*) SUBID DEST TOPICSTR"}, "live"),                                  # subscriptions
     ("mq_host_overview", {"qmgr_names": ["MQNODE1"], "mqsc_command": "DEFINE QLOCAL(SMOKE.BLOCK.TEST)"}, "expect_blocked"),
     ("mq_host_overview", {"hostnames": ["loq-mq01"], "mqsc_command": "DISPLAY QMGR"}, "expect_warn_no_qmgr"),
+
+    # --- mq_connection_verify (5) ---------------------------------------------
+    # OFFLINE fact-check of a pasted MQ connection error. Values come from
+    # qmgr_dump.csv: MQREPO1 listens on 1414 and MQREPO1.CLUSRCVR has
+    # CONNAME('server1(1414)'); MQNODE1 listens on 1420.
+    ("mq_connection_verify", {"qmgr_name": "MQREPO1", "hostname": "server1", "port": 1414,
+                              "channel": "MQREPO1.CLUSRCVR"}, "expect_verify_ok"),                     # every field correct — the AMQ9213 example
+    ("mq_connection_verify", {"qmgr_name": "MQREPO1", "port": 1420}, "expect_verify_mismatch"),        # 1420 is MQNODE1's port, MQREPO1 listens on 1414
+    ("mq_connection_verify", {"qmgr_name": "MQREPO1", "hostname": "wrong-host", "port": 1414,
+                              "channel": "MQREPO1.CLUSRCVR"}, "expect_verify_mismatch"),               # partial: port/channel right, host wrong -> ⚠️
+    ("mq_connection_verify", {"qmgr_name": "MQNODE1", "channel": "CH.NOT.DEFINED"}, "expect_verify_mismatch"),  # channel not defined on that QM
+    ("mq_connection_verify", {"qmgr_name": "GHOST.QM"}, "expect_verify_mismatch"),                     # QM absent from the manifest — reported, not an error
 
     # --- ace_node_overview (5) ------------------------------------------------
     ("ace_node_overview", {"nodes": ["NODE1"]}, "live"),                               # configured node (resources/node_config.csv)
@@ -309,6 +326,14 @@ CALLS = [
     ("ace_node_overview", {"nodes": ["NODE2"]}, "live"),
     ("ace_node_overview", {"nodes": ["NODE3"]}, "expect_error_envelope"),              # not configured
     ("ace_node_overview", {"nodes": ["GHOST.NODE"]}, "expect_error_envelope"),
+
+    # --- ace_connection_verify (4) --------------------------------------------
+    # OFFLINE fact-check against node_config.csv: NODE1 -> localhost:4414,
+    # NODE2 -> localhost:4415.
+    ("ace_connection_verify", {"node": "NODE1", "host": "localhost", "port": 4414}, "expect_verify_ok"),        # every field correct
+    ("ace_connection_verify", {"node": "NODE1", "host": "localhost", "port": 4499}, "expect_verify_mismatch"),   # wrong port — the BIP1809 example
+    ("ace_connection_verify", {"node": "NODE2"}, "offline"),                                                     # node only — nothing to compare, reports host:port
+    ("ace_connection_verify", {"node": "NODE3"}, "expect_verify_mismatch"),                                      # not in node_config.csv — reported, not an error
 
     # --- ace_server_explore (6) -----------------------------------------------
     ("ace_server_explore", {"node": "NODE1", "servers": ["ACE_DEMO_CACHE"]}, "live"),
@@ -330,9 +355,6 @@ CALLS = [
     ("get_cert_details", {"search_strings": ["mqweb-https"]}, "offline"),                            # match by alias
     ("get_cert_details", {"search_strings": ["ace-admin-tls", "ace-rest-api-tls"]}, "offline"),      # MULTI-TARGET: two queries merged, one call
     ("get_cert_details", {"search_strings": ["no-such-cert-anywhere"]}, "offline"),                  # success, empty results
-
-    # --- user_access_verify (1) ----------------------------------------------
-    ("user_access_verify", {"user_id": "ajit001", "qmgr_names": ["MQREPO1"]}, "offline"),
 ]
 
 
@@ -394,6 +416,22 @@ def classify(text, mode):
         if "Modification requests are not permitted" in s:
             return "pass", ""
         return "fail", "expected MODIFY_BLOCKED_MSG banner"
+
+    # The two fact-check tools (mq_connection_verify / ace_connection_verify)
+    # always SUCCEED — the verdict lives in their "Overall:" line. A wrong
+    # verdict is a real regression, so assert the verdict itself rather than
+    # merely "no error envelope".
+    if mode == "expect_verify_ok":
+        if "Overall: ✅" in s:
+            return "pass", ""
+        return "fail", "expected 'Overall: ✅ all supplied details check out.'"
+
+    if mode == "expect_verify_mismatch":
+        # ❌ = nothing supplied matched (or the QM/node itself is unknown);
+        # ⚠️ = some fields matched and some did not. Both are negative verdicts.
+        if "Overall: ❌" in s or "Overall: ⚠️" in s:
+            return "pass", ""
+        return "fail", "expected a negative 'Overall: ❌/⚠️' verdict"
 
     if mode == "expect_warn_no_qmgr":
         if "without `qmgr_name`" in s:
