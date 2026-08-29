@@ -2,7 +2,7 @@
 
 The unified MQ + ACE MCP server, built for environments where the
 orchestrator/frontend can only invoke **one tool per user turn** — no parallel
-tool calls, no sequential ReAct-style chaining. Each of the ten tools below is
+tool calls, no sequential ReAct-style chaining. Each of the nine tools below is
 self-sufficient: it performs the full discovery-plus-execution workflow
 internally and returns one consolidated answer.
 
@@ -27,7 +27,6 @@ Each composite tool consolidates several granular diagnostic steps into one call
 | `ace_server_explore` | `list_ace_applications` + `list_ace_message_flows` | "what's deployed on server X on N1" |
 | `ace_search` | `list_ace_nodes` (listing) + `search_ace_local_dump` | "find any ACE thing matching X (nodes / BIP log)" |
 | `ace_connection_verify` | OFFLINE `node_config.csv` fact-check (node / host / Admin REST port) | "is this ACE node / host / port from an error correct" |
-| `user_access_verify` | Real-time LDAPS groups + offline MQ/ACE authorization snapshots | "does user X have access to QM2 / NODE1" |
 | `get_cert_details` | certificate expiry lookup | "when does the cert on host / alias / CN X expire" |
 
 Each tool enforces the same safety contract:
@@ -40,28 +39,6 @@ Each tool enforces the same safety contract:
 ---
 
 ## Tool reference
-
-### `user_access_verify`
-
-Resolves a supplied domain user to direct and nested groups through read-only
-LDAPS, then evaluates configured access without impersonating the user. MQ
-evidence is read from the existing `AUTHREC`, `QMGR`, and `CHLAUTH` rows in
-`qmgr_dump.csv`. ACE evidence is read from `ace_auth_dump.csv`.
-
-| Argument | Type | Required | Meaning |
-| --- | --- | --- | --- |
-| `user_id` | `str` | yes | Domain user, UPN, or `DOMAIN\\user` |
-| `qmgr_names` | `list[str]` | one target required | Queue managers to evaluate |
-| `ace_nodes` | `list[str]` | one target required | ACE nodes to evaluate |
-| `channel` | `str` | no | MQ channel context; CHLAUTH remains conditional without runtime RUNCHECK evidence |
-| `resource` | `str` | no | MQ object profile or ACE resource filter |
-| `detail` | `str` | no | `summary` (default) or `full` |
-
-Verdicts are intentionally evidence-safe: `ALLOWED`, `DENIED`, `CONDITIONAL`,
-or `UNKNOWN` (and `MIXED` for multiple targets). Stale snapshots and failed
-directory resolution never become guessed allow/deny decisions.
-
----
 
 ### 1. `mq_queue_inspect`
 

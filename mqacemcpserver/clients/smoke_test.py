@@ -276,7 +276,7 @@ def preview(text, limit=12):
 EXPECTED_TOOLS = {
     "mq_queue_inspect", "mq_channel_inspect", "mq_connection_verify", "mq_host_overview",
     "ace_node_overview", "ace_connection_verify", "ace_server_explore", "ace_search",
-    "get_cert_details", "user_access_verify",
+    "get_cert_details",
 }
 
 # Object names below are drawn from the current offline manifests under
@@ -344,9 +344,6 @@ CALLS = [
     ("get_cert_details", {"search_strings": ["mqweb-https"]}, "offline"),                            # match by alias
     ("get_cert_details", {"search_strings": ["ace-admin-tls", "ace-rest-api-tls"]}, "offline"),      # MULTI-TARGET: two queries merged, one call
     ("get_cert_details", {"search_strings": ["no-such-cert-anywhere"]}, "offline"),                  # success, empty results
-
-    # --- user_access_verify (1) ----------------------------------------------
-    ("user_access_verify", {"user_id": "ajit001", "qmgr_names": ["MQREPO1"]}, "offline"),
 ]
 
 

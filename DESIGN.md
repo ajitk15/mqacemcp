@@ -54,12 +54,12 @@ This layer is optional for development — the MCP tools also answer from the
 offline CSV manifests in `resources/`.
 
 ### MCP server — `mqacemcpserver/` (Streamable HTTP `:8010` `/mcp`)
-A read-only Model Context Protocol server exposing **10 composite "single-call"
+A read-only Model Context Protocol server exposing **9 composite "single-call"
 tools**: `mq_queue_inspect`, `mq_channel_inspect`, `mq_host_overview`,
 `ace_node_overview`, `ace_server_explore`, `ace_search`, `get_cert_details`.
 - Talks to **MQ** over its REST API (`MQ_URL_BASE`) and to **ACE** via `fetch_ace`.
 - Reads **offline manifests** in `resources/` (`qmgr_dump`, `node_dump`,
-  `node_config`, `ace_auth_dump`, `cert_dump`) for discovery / offline lookups.
+  `node_config`, `cert_dump`) for discovery / offline lookups.
 - Enforces safety in-process: hostname allow-list, read-only MQSC, sanitised errors.
 - Writes one JSONL line per tool call to `LOG_DIR` (`queries-*.jsonl`) — the
   dashboard's data source.
