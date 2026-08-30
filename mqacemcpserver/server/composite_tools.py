@@ -26,11 +26,17 @@ import re
 from mcp.server.fastmcp import FastMCP
 
 from server.ace_helpers import (
+    dump_rows,
     fetch_ace,
     load_node_config,
     load_node_dump,
+    nodes_hosting_application,
+    nodes_hosting_server,
     nodes_on_host,
+    resolve_server_name,
     search_node_dump,
+    server_inventory,
+    suggest_servers,
 )
 from server.cert_helpers import load_cert_dump, search_certs
 from server.config import MQ_URL_BASE
@@ -111,14 +117,16 @@ def _all_configured_nodes() -> list[str]:
 
 
 def _nodes_hosting(names: list[str]) -> list[str]:
-    """Integration nodes whose dump mentions any of `names` (server or app).
+    """Integration nodes that actually HOST any of `names` (server or app).
 
     Used when the caller names an execution group or application but no node.
+    Matches the parsed `eg`/`application` columns EXACTLY — a node whose dump
+    merely mentions the string (e.g. a file or policy named after it) is not a
+    host and is not returned.
     """
     found: list[str] = []
     for name in names:
-        for row in search_node_dump(name):
-            node = str(row.get("node", "")).strip()
+        for node in nodes_hosting_server(name) + nodes_hosting_application(name):
             if node and node not in found:
                 found.append(node)
     return found
@@ -534,45 +542,67 @@ async def _node_overview_one(node: str) -> dict:
     return {k: v for k, v in envelope.items() if v is not None}
 
 
+def _as_doc(raw: str) -> dict:
+    """Parse a fetch_ace envelope, degrading a non-JSON body to an error dict."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"status": "error", "message": raw}
+
+
+def _flow_path(server: str, application: str) -> str:
+    """Message flows live ONLY under an application — never under the server."""
+    return f"/servers/{server}/applications/{application}/messageflows?depth=2"
+
+
+def _flow_entries(flows_doc: dict) -> list[dict]:
+    """Message-flow children reduced to name + run state."""
+    children = (flows_doc.get("raw_response") or {}).get("children") or []
+    entries = []
+    for c in children:
+        if not isinstance(c, dict):
+            continue
+        active = c.get("active") or {}
+        entries.append(
+            {
+                "name": c.get("name"),
+                "running": active.get("isRunning"),
+                "state": active.get("state"),
+            }
+        )
+    return entries
+
+
 async def _server_explore_one(
     node: str, server: str, application: str | None
 ) -> dict:
-    """Single integration-server exploration envelope (apps + message flows)."""
-    apps_task = fetch_ace(
+    """Single integration-server exploration envelope (apps + message flows).
+
+    An integration server has NO `messageflows` collection of its own in the
+    ACE Admin REST API — its children are applications, restApis, services,
+    sharedLibraries, policies and friends. Asking for
+    `/servers/<s>/messageflows` therefore 404s every time, which used to
+    surface as a spurious "Endpoint not found" note on an otherwise complete
+    answer. Flows are fetched per application instead, concurrently, once the
+    application list is known.
+    """
+    apps_raw = await fetch_ace(
         node,
         f"/servers/{server}/applications?depth=2",
         "app",
         node=node,
         server=server,
     )
-    if application:
-        flow_path = (
-            f"/servers/{server}/applications/{application}/messageflows?depth=2"
-        )
-        flows_task = fetch_ace(
-            node, flow_path, "flow",
-            node=node, server=server, application=application,
-        )
-    else:
-        flow_path = f"/servers/{server}/messageflows?depth=2"
-        flows_task = fetch_ace(
-            node, flow_path, "flow", node=node, server=server
-        )
-
-    apps_raw, flows_raw = await asyncio.gather(apps_task, flows_task)
 
     envelope: dict = {"node": node, "server": server}
     if application:
         envelope["application"] = application
 
-    try:
-        apps_doc = json.loads(apps_raw)
-    except json.JSONDecodeError:
-        apps_doc = {"status": "error", "message": apps_raw}
-
+    apps_doc = _as_doc(apps_raw)
+    applications: list[dict] = []
     if apps_doc.get("status") == "success":
         children = (apps_doc.get("raw_response") or {}).get("children", [])
-        envelope["applications"] = [
+        applications = [
             {
                 "name": c.get("name"),
                 "active": c.get("active"),
@@ -581,20 +611,54 @@ async def _server_explore_one(
             }
             for c in children
         ]
+        envelope["applications"] = applications
     else:
         envelope["applications_error"] = apps_doc.get("message")
 
-    try:
-        flows_doc = json.loads(flows_raw)
-    except json.JSONDecodeError:
-        flows_doc = {"status": "error", "message": flows_raw}
+    if application:
+        # Caller named an application: one scoped call, top-level shape kept.
+        flows_doc = _as_doc(
+            await fetch_ace(
+                node,
+                _flow_path(server, application),
+                "flow",
+                node=node,
+                server=server,
+                application=application,
+            )
+        )
+        if flows_doc.get("status") == "success":
+            envelope["message_flows"] = _flow_entries(flows_doc)
+        else:
+            envelope["message_flows_error"] = flows_doc.get("message")
+        return envelope
 
-    if flows_doc.get("status") == "success":
-        envelope["message_flows"] = (
-            flows_doc.get("raw_response") or {}
-        ).get("children", [])
-    else:
-        envelope["message_flows_error"] = flows_doc.get("message")
+    named = [a["name"] for a in applications if a.get("name")]
+    if named:
+        raws = await asyncio.gather(
+            *[
+                fetch_ace(
+                    node,
+                    _flow_path(server, app),
+                    "flow",
+                    node=node,
+                    server=server,
+                    application=app,
+                )
+                for app in named
+            ]
+        )
+        by_name = {a.get("name"): a for a in applications}
+        errors: dict = {}
+        for app, raw in zip(named, raws):
+            doc = _as_doc(raw)
+            if doc.get("status") == "success":
+                by_name[app]["message_flows"] = _flow_entries(doc)
+            else:
+                errors[app] = doc.get("message")
+        # Every remaining failure is real now, so never swallow it.
+        if errors:
+            envelope["message_flows_errors"] = errors
 
     return envelope
 
@@ -1205,7 +1269,14 @@ def register(mcp: FastMCP) -> None:
         target_node = (node or "").strip()
         discovered_nodes: list[str] = []
         if not target_node:
-            discovered_nodes = _nodes_hosting(names + ([application] if application else []))
+            discovered_nodes = _nodes_hosting(names)
+            if application:
+                # INTERSECT, never union: an application that lives on a
+                # different execution group must not drag its node in here.
+                app_nodes = _nodes_hosting([application])
+                narrowed = [n for n in discovered_nodes if n in app_nodes]
+                if narrowed:
+                    discovered_nodes = narrowed
             if not discovered_nodes:
                 return json.dumps(
                     {
@@ -1248,26 +1319,49 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     @logged_tool
-    def ace_search(search_strings: list[str], scope: str | None = None) -> str:
+    def ace_search(
+        search_strings: list[str],
+        scope: str | None = None,
+        server: str | None = None,
+        application: str | None = None,
+    ) -> str:
         """IBM ACE: Combined OFFLINE search across configured nodes and the BIP-message dump.
 
         Searches `resources/node_config.csv` (configured nodes) and/or
         `resources/node_dump.csv` (cached BIP messages from the periodic
         extract job) in a single call.
 
-        Pass MULTIPLE search strings to match any of them in one call — e.g.
-        "find anything about OrderFlow or PaymentFlow" →
+        EXECUTION GROUPS ARE MATCHED EXACTLY. When a search string (or the
+        `server` argument) names a known integration server, the dump result
+        is scoped to rows that genuinely belong to that EG: a structured
+        inventory comes back in `servers` and `dump_matches` holds only that
+        EG's rows. This is the right call for "what applications run under EG
+        X". Any other term falls back to an unanchored substring sweep,
+        reported as `match_kind: "substring"`.
+
+        A `server` that does not exist returns `status: "not_found"` with a
+        `did_you_mean` list, never another execution group's rows.
+
+        Pass MULTIPLE search strings to match any of them in one call - e.g.
+        "find anything about OrderFlow or PaymentFlow" ->
         `search_strings=["OrderFlow","PaymentFlow"]`. A row matches if it
         matches ANY supplied string; matches are merged and de-duplicated.
+        When one term names an EG, that scoping wins and the remaining loose
+        terms are dropped from the dump sweep (echoed in
+        `ignored_search_strings`) so they cannot pull in other EGs' rows.
 
         Args:
-            search_strings: One or more substrings to match (case-insensitive),
-                as a list. Pass `[""]` (or an empty list) with `scope="nodes"`
-                to list every configured node.
+            search_strings: One or more terms, as a list. A term that exactly
+                names an integration server is EG-scoped; anything else is a
+                case-insensitive substring. Pass `[""]` (or an empty list)
+                with `scope="nodes"` to list every configured node.
             scope: One of `"nodes"`, `"dump"`, or `"all"` (default `"all"`).
                 - `"nodes"` searches only `node_config.csv`.
                 - `"dump"` searches only `node_dump.csv`.
                 - `"all"` or `None` searches both.
+            server: Optional integration server (execution group), matched
+                EXACTLY. Use when the EG is already known.
+            application: Optional application name, matched EXACTLY.
         """
         s = (scope or "all").lower()
         if s not in {"all", "nodes", "dump"}:
@@ -1290,8 +1384,59 @@ def register(mcp: FastMCP) -> None:
             queries = [""]
         match_all = "" in queries
 
+        named_server = (server or "").strip()
+        named_app = (application or "").strip()
+
+        # An explicitly named EG must exist. Never fall through to a substring
+        # sweep here: that is how rows from other EGs used to leak in.
+        if named_server:
+            canonical = resolve_server_name(named_server)
+            if canonical is None:
+                return json.dumps(
+                    {
+                        "status": "not_found",
+                        "message": (
+                            f"No execution group named '{named_server}' exists "
+                            "in the offline ACE dump."
+                        ),
+                        "server": named_server,
+                        "did_you_mean": suggest_servers(named_server),
+                    },
+                    indent=2,
+                )
+            named_server = canonical
+
+        # Auto-scope: a search string that IS a known EG name is an exact EG
+        # lookup, not a substring, even when the caller did not use `server=`.
+        eg_queries: list[str] = []
+        text_queries: list[str] = []
+        for q in queries:
+            resolved = resolve_server_name(q) if q else None
+            if resolved:
+                if resolved not in eg_queries:
+                    eg_queries.append(resolved)
+            else:
+                text_queries.append(q)
+        if named_server and named_server not in eg_queries:
+            eg_queries.append(named_server)
+
+        ignored: list[str] = []
+        if eg_queries or named_app:
+            ignored = [q for q in text_queries if q]
+            text_queries = []
+
         envelope: dict = {"status": "success", "search_strings": queries,
                           "scope": s}
+        if named_server:
+            envelope["server"] = named_server
+        if named_app:
+            envelope["application"] = named_app
+        if ignored:
+            envelope["ignored_search_strings"] = ignored
+            envelope["ignored_reason"] = (
+                "An execution group was named, so these loose terms were "
+                "dropped rather than widened to other execution groups."
+            )
 
         if s in {"all", "nodes"}:
             df = load_node_config()
@@ -1326,12 +1471,50 @@ def register(mcp: FastMCP) -> None:
             else:
                 seen: set[str] = set()
                 merged: list[dict] = []
-                for q in queries:
-                    for row in search_node_dump(q):
+
+                def _add(rows: list[dict]) -> None:
+                    for row in rows:
                         key = json.dumps(row, sort_keys=True, default=str)
                         if key not in seen:
                             seen.add(key)
                             merged.append(row)
+
+                if eg_queries:
+                    inventories = []
+                    for eg in eg_queries:
+                        inv = server_inventory(eg)
+                        if inv:
+                            if named_app:
+                                inv = dict(inv)
+                                inv["applications"] = [
+                                    a
+                                    for a in inv["applications"]
+                                    if a["name"].lower() == named_app.lower()
+                                ]
+                                inv["application_count"] = len(inv["applications"])
+                            inventories.append(inv)
+                        _add(dump_rows(server=eg, application=named_app or None))
+                    envelope["servers"] = inventories
+                    envelope["match_kind"] = "exact-eg"
+                elif named_app:
+                    _add(dump_rows(application=named_app))
+                    envelope["match_kind"] = "exact-application"
+                else:
+                    for q in text_queries:
+                        _add(search_node_dump(q))
+                    envelope["match_kind"] = "substring"
+                    # A near-miss on an EG name is the classic cause of a
+                    # confusingly wide result; surface the correction.
+                    near = {}
+                    for q in text_queries:
+                        if not q:
+                            continue
+                        hits = suggest_servers(q)
+                        if hits and q not in hits:
+                            near[q] = hits
+                    if near:
+                        envelope["did_you_mean"] = near
+
                 envelope["dump_matches"] = merged
 
         return json.dumps(envelope, indent=2)

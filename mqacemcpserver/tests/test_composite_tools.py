@@ -722,3 +722,164 @@ def test_mq_host_overview_fans_mqsc_across_every_queue_manager():
     assert "every queue manager in the manifest was discovered" in out
     for qm in ("MQREPO1", "MQREPO2", "MQQM1", "MQNODE1", "MQNODE2"):
         assert qm in out
+
+
+# ---------------------------------------------------------------------------
+# ace_server_explore — message flows live under an APPLICATION, never under the
+# integration server. `/servers/<s>/messageflows` does not exist in the ACE
+# Admin REST API (the server's children are applications, restApis, services,
+# sharedLibraries, policies, ...), so asking for it 404'd on every EG-level
+# question and surfaced a spurious "Endpoint not found" note on an otherwise
+# complete answer.
+# ---------------------------------------------------------------------------
+def _ace_apps_payload(names: list[str]) -> str:
+    return json.dumps(
+        {
+            "status": "success",
+            "raw_response": {
+                "children": [
+                    {"name": n, "active": {"isRunning": True, "state": "started"}}
+                    for n in names
+                ]
+            },
+        }
+    )
+
+
+def _ace_flows_payload(entries: list[tuple]) -> str:
+    return json.dumps(
+        {
+            "status": "success",
+            "raw_response": {
+                "children": [
+                    {"name": n, "active": {"isRunning": r, "state": s}}
+                    for n, r, s in entries
+                ]
+            },
+        }
+    )
+
+
+def _stub_fetch_ace(monkeypatch, handler):
+    """Record every requested path; answer each from `handler(path)`."""
+    from server import composite_tools
+
+    paths: list[str] = []
+
+    # Signature must mirror fetch_ace's own (`target_node`, not `node`) — the
+    # call sites also pass node=... as a kwarg for the log record.
+    async def fake_fetch_ace(target_node, path, component, **kwargs):
+        paths.append(path)
+        return handler(path)
+
+    monkeypatch.setattr(composite_tools, "fetch_ace", fake_fetch_ace)
+    return paths
+
+
+def _apps_then_flows(app_names, flows_by_app=None, errors=None):
+    flows_by_app = flows_by_app or {}
+    errors = errors or {}
+
+    def handler(path: str) -> str:
+        if path.endswith("/applications?depth=2"):
+            return _ace_apps_payload(app_names)
+        for app in app_names:
+            if f"/applications/{app}/messageflows" in path:
+                if app in errors:
+                    return json.dumps({"status": "error", "message": errors[app]})
+                return _ace_flows_payload(
+                    flows_by_app.get(app, [("flow_" + app, True, "started")])
+                )
+        return json.dumps({"status": "error", "message": "unexpected path"})
+
+    return handler
+
+
+def test_server_explore_never_requests_server_level_messageflows(monkeypatch):
+    """Regression guard for the spurious 'Endpoint not found' note."""
+    from server.composite_tools import _server_explore_one
+
+    paths = _stub_fetch_ace(monkeypatch, _apps_then_flows(["AppA", "AppB"]))
+    env = asyncio.run(_server_explore_one("NODE1", "EG1", None))
+
+    assert "/servers/EG1/messageflows?depth=2" not in paths, paths
+    assert not any(
+        p.startswith("/servers/EG1/messageflows") for p in paths
+    ), paths
+    assert "message_flows_error" not in env
+    assert "message_flows_errors" not in env
+
+
+def test_server_explore_fetches_flows_once_per_application(monkeypatch):
+    from server.composite_tools import _server_explore_one
+
+    paths = _stub_fetch_ace(monkeypatch, _apps_then_flows(["AppA", "AppB"]))
+    asyncio.run(_server_explore_one("NODE1", "EG1", None))
+
+    assert paths == [
+        "/servers/EG1/applications?depth=2",
+        "/servers/EG1/applications/AppA/messageflows?depth=2",
+        "/servers/EG1/applications/AppB/messageflows?depth=2",
+    ]
+
+
+def test_server_explore_nests_flows_with_run_state(monkeypatch):
+    """The live path must report run state, like the offline dump path does."""
+    from server.composite_tools import _server_explore_one
+
+    handler = _apps_then_flows(
+        ["AmazonS3", "HTTP_Multiple_Requests"],
+        {
+            "AmazonS3": [("CreateItem", False, "failed")],
+            "HTTP_Multiple_Requests": [("main", True, "started")],
+        },
+    )
+    _stub_fetch_ace(monkeypatch, handler)
+    env = asyncio.run(_server_explore_one("NODE1", "EG1", None))
+
+    by_name = {a["name"]: a for a in env["applications"]}
+    assert by_name["AmazonS3"]["message_flows"] == [
+        {"name": "CreateItem", "running": False, "state": "failed"}
+    ]
+    assert by_name["HTTP_Multiple_Requests"]["message_flows"] == [
+        {"name": "main", "running": True, "state": "started"}
+    ]
+
+
+def test_server_explore_reports_a_genuine_per_app_flow_failure(monkeypatch):
+    """Real failures must still surface — only the phantom endpoint is gone."""
+    from server.composite_tools import _server_explore_one
+
+    handler = _apps_then_flows(
+        ["Good", "Bad"], errors={"Bad": "Node unreachable"}
+    )
+    _stub_fetch_ace(monkeypatch, handler)
+    env = asyncio.run(_server_explore_one("NODE1", "EG1", None))
+
+    assert env["message_flows_errors"] == {"Bad": "Node unreachable"}
+    # A flow failure must not cost us the application listing.
+    assert [a["name"] for a in env["applications"]] == ["Good", "Bad"]
+    by_name = {a["name"]: a for a in env["applications"]}
+    assert by_name["Good"]["message_flows"]
+    assert "message_flows" not in by_name["Bad"]
+
+
+def test_server_explore_explicit_application_keeps_top_level_flows(monkeypatch):
+    """Naming an application still issues exactly two calls, flows at top level."""
+    from server.composite_tools import _server_explore_one
+
+    handler = _apps_then_flows(
+        ["AmazonS3", "Other"],
+        {"AmazonS3": [("CreateItem", False, "failed")]},
+    )
+    paths = _stub_fetch_ace(monkeypatch, handler)
+    env = asyncio.run(_server_explore_one("NODE1", "EG1", "AmazonS3"))
+
+    assert paths == [
+        "/servers/EG1/applications?depth=2",
+        "/servers/EG1/applications/AmazonS3/messageflows?depth=2",
+    ]
+    assert env["application"] == "AmazonS3"
+    assert env["message_flows"] == [
+        {"name": "CreateItem", "running": False, "state": "failed"}
+    ]
