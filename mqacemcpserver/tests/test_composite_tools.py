@@ -30,7 +30,7 @@ def _tool(name: str):
 # ---------------------------------------------------------------------------
 # Tool catalogue
 # ---------------------------------------------------------------------------
-def test_exactly_nine_tools_registered():
+def test_exactly_ten_tools_registered():
     expected = {
         "mq_queue_inspect",
         "mq_channel_inspect",
@@ -38,6 +38,7 @@ def test_exactly_nine_tools_registered():
         "mq_connection_verify",
         "ace_node_overview",
         "ace_server_explore",
+        "ace_resource_inspect",
         "ace_search",
         "ace_connection_verify",
         "get_cert_details",
@@ -63,6 +64,7 @@ def test_ace_tool_docstrings_open_with_routing_prefix():
     for name in (
         "ace_node_overview",
         "ace_server_explore",
+        "ace_resource_inspect",
         "ace_search",
         "ace_connection_verify",
     ):
@@ -883,3 +885,197 @@ def test_server_explore_explicit_application_keeps_top_level_flows(monkeypatch):
     assert env["message_flows"] == [
         {"name": "CreateItem", "running": False, "state": "failed"}
     ]
+
+
+# ---------------------------------------------------------------------------
+# ace_resource_inspect — the resource-manager subtree (cache, JVM, connectors)
+#
+# The gap these lock down: "is cache enabled for EG X" used to be
+# unanswerable, because no tool reached
+# /apiv2/servers/<eg>/resource-managers. `cacheOn` lives ONLY there.
+# ---------------------------------------------------------------------------
+_RM_AVAILABLE = [
+    "activity-log-manager",
+    "database-connection-manager",
+    "esql-manager",
+    "global-cache",
+    "http-connector",
+    "https-connector",
+    "jvm-manager",
+    "kafka-manager",
+    "mq-connection-manager",
+    "nodejs",
+    "odm",
+    "opentelemetry-manager",
+    "redis-connection-manager",
+    "xpath-cache",
+]
+
+
+def _resolve(requested):
+    from server.composite_tools import _resolve_rm_names
+
+    return _resolve_rm_names(requested, _RM_AVAILABLE)
+
+
+def test_resolve_rm_cache_returns_both_caches():
+    """"cache" is ambiguous on an integration server — answer both, not one."""
+    resolved, unknown = _resolve(["cache"])
+    assert resolved == ["global-cache", "xpath-cache"], resolved
+    assert unknown == {}
+
+
+def test_resolve_rm_accepts_spacing_and_underscore_spellings():
+    for term in ("Global Cache", "global_cache", "GLOBAL-CACHE"):
+        resolved, unknown = _resolve([term])
+        assert resolved == ["global-cache"], (term, resolved)
+        assert unknown == {}
+
+
+def test_resolve_rm_aliases_and_suffix_completion():
+    resolved, _ = _resolve(["jvm", "kafka", "mq", "https"])
+    assert resolved == [
+        "jvm-manager",
+        "kafka-manager",
+        "mq-connection-manager",
+        "https-connector",
+    ], resolved
+
+
+def test_resolve_rm_dedups_overlapping_terms():
+    resolved, _ = _resolve(["cache", "global-cache", "xpath"])
+    assert resolved == ["global-cache", "xpath-cache"], resolved
+
+
+def test_resolve_rm_unknown_term_suggests_never_errors():
+    resolved, unknown = _resolve(["kafk4"])
+    assert resolved == ["kafka-manager"], resolved  # single close match resolves
+
+    resolved, unknown = _resolve(["totally-bogus-thing"])
+    assert resolved == []
+    assert "totally-bogus-thing" in unknown
+
+
+def _rm_payload(entries):
+    """A fetch_ace success envelope shaped like /resource-managers?depth=2."""
+    children = []
+    for name, props, active in entries:
+        children.append(
+            {
+                "name": name,
+                "type": "resourceManager",
+                "properties": props,
+                "active": active,
+                "descriptiveProperties": {
+                    "className": "ComIbmCacheManager",
+                    "isDynamic": "false",
+                },
+            }
+        )
+    return json.dumps(
+        {"status": "success", "raw_response": {"children": children}}
+    )
+
+
+_CACHE_ENTRIES = [
+    ("global-cache", {"identifier": "GlobalCache", "cacheOn": False}, {"cacheOn": False, "status": True}),
+    ("xpath-cache", {"identifier": "ComIbmXPathCache", "mode": True}, {"mode": True}),
+    ("jvm-manager", {"identifier": "JVMManager"}, {}),
+    ("kafka-manager", {"identifier": "KafkaManager"}, {}),
+]
+
+
+def test_resource_inspect_uses_the_hyphenated_uri(monkeypatch):
+    """`/resourceManagers` (the children KEY) 404s — the URI form is required."""
+    from server.composite_tools import _resource_inspect_one
+
+    paths = _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    asyncio.run(_resource_inspect_one("NODE1", "EG1", ["cache"]))
+
+    assert paths == ["/servers/EG1/resource-managers?depth=2"], paths
+
+
+def test_resource_inspect_reports_cache_on(monkeypatch):
+    from server.composite_tools import _resource_inspect_one
+
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", ["cache"]))
+
+    names = [r["name"] for r in env["resource_managers"]]
+    assert names == ["global-cache", "xpath-cache"], names
+    gc = env["resource_managers"][0]
+    assert gc["configured"]["cacheOn"] is False
+    assert gc["active"]["cacheOn"] is False
+    assert gc["identifier"] == "GlobalCache"
+    assert env["selected_by"] == "requested"
+    # Every name ships regardless, so a follow-up needs no discovery call.
+    assert "kafka-manager" in env["available_resource_managers"]
+
+
+def test_resource_inspect_default_selection_is_curated(monkeypatch):
+    """No named manager ⇒ a short curated set, never the full ~30KB payload."""
+    from server.composite_tools import _resource_inspect_one
+
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", []))
+
+    names = [r["name"] for r in env["resource_managers"]]
+    assert env["selected_by"] == "default"
+    assert names == ["global-cache", "jvm-manager", "kafka-manager"], names
+    assert "xpath-cache" not in names
+    assert len(env["available_resource_managers"]) == 4
+
+
+def test_resource_inspect_surfaces_upstream_error(monkeypatch):
+    from server.composite_tools import _resource_inspect_one
+
+    _stub_fetch_ace(
+        monkeypatch,
+        lambda p: json.dumps({"status": "error", "message": "⚠️ nope (ref abc)"}),
+    )
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", ["cache"]))
+
+    assert env["resource_managers_error"] == "⚠️ nope (ref abc)"
+    assert "resource_managers" not in env
+
+
+def test_ace_resource_inspect_requires_servers():
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(asyncio.run(fn(servers=[])))
+    assert out["status"] == "error"
+    assert "No server supplied" in out["message"]
+
+
+def test_ace_resource_inspect_unknown_node():
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(fn(node="NODE.DOES.NOT.EXIST", servers=["X"]))
+    )
+    assert out["node"] == "NODE.DOES.NOT.EXIST"
+    assert out["server"] == "X"
+
+
+def test_ace_resource_inspect_multi_target_wraps_results():
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(fn(node="NODE.DOES.NOT.EXIST", servers=["X", "Y"]))
+    )
+    assert out["status"] == "success"
+    assert out["node"] == "NODE.DOES.NOT.EXIST"
+    assert out["count"] == 2, out
+    assert {s["server"] for s in out["servers"]} == {"X", "Y"}, out
+
+
+def test_ace_resource_inspect_discovers_hosting_nodes(monkeypatch):
+    """An EG named with no node resolves to every node hosting it."""
+    from server.composite_tools import _resource_inspect_one  # noqa: F401
+
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(fn(servers=["ACE_DEMO_CONNECTORS"], resource_managers=["cache"]))
+    )
+
+    assert out["discovered_nodes"] == ["NODE1", "NODE2"], out
+    assert out["requested_resource_managers"] == ["cache"]
+    assert out["count"] == 2

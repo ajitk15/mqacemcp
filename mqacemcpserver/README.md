@@ -2,16 +2,17 @@
 
 The unified MQ + ACE MCP server, built for environments where the
 orchestrator/frontend can only invoke **one tool per user turn** — no parallel
-tool calls, no sequential ReAct-style chaining. Each of the nine tools below is
+tool calls, no sequential ReAct-style chaining. Each of the ten tools below is
 self-sufficient: it performs the full discovery-plus-execution workflow
 internally and returns one consolidated answer.
 
 To cover "X **and** Y" questions without chaining, every tool takes a **list**
 for its primary target(s), so several objects of the same kind can be handled
 in a single call (e.g. `queue_names=["QL.IN.APP1","QL.IN.APP2"]`,
-`nodes=["NODE1","NODE2"]`, `qmgr_names=["QM1","QM2"]`). For `ace_server_explore`
-the servers list shares one `node`; for `mq_host_overview` the `mqsc_command`
-applies to every queue manager listed.
+`nodes=["NODE1","NODE2"]`, `qmgr_names=["QM1","QM2"]`,
+`servers=["EG1","EG2"]`). For `ace_server_explore` and `ace_resource_inspect`
+the servers list shares one `node` (which may be omitted and discovered); for
+`mq_host_overview` the `mqsc_command` applies to every queue manager listed.
 
 ## Tool catalogue at a glance
 
@@ -25,6 +26,7 @@ Each composite tool consolidates several granular diagnostic steps into one call
 | `mq_connection_verify` | OFFLINE manifest fact-check (QM / listener PORT / channel CONNAME) | "are these MQ connection details from an error correct" |
 | `ace_node_overview` | `list_ace_nodes` + `get_ace_node_status` + `list_ace_servers` | "what's on node N1" |
 | `ace_server_explore` | `list_ace_applications` + `list_ace_message_flows` | "what's deployed on server X on N1" |
+| `ace_resource_inspect` | `/servers/<eg>/resource-managers?depth=2` (~35 managers, configured + active) | "is the global cache on for EG X / what JVM, Kafka, MQ, connector settings does it run" |
 | `ace_search` | `list_ace_nodes` (listing) + `search_ace_local_dump` | "find any ACE thing matching X (nodes / BIP log)" |
 | `ace_connection_verify` | OFFLINE `node_config.csv` fact-check (node / host / Admin REST port) | "is this ACE node / host / port from an error correct" |
 | `get_cert_details` | certificate expiry lookup | "when does the cert on host / alias / CN X expire" |
@@ -189,7 +191,43 @@ flows in one call.
 
 ---
 
-### 6. `ace_search`
+### 6. `ace_resource_inspect`
+
+**IBM ACE.** Inspect an integration server's RESOURCE MANAGERS — the only
+source for global-cache, JVM, Kafka, MQ-connection and connector settings.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `servers` | `list[str]` | yes | One or more integration server (execution group) names — e.g. `["ACE_DEMO_CONNECTORS"]`. |
+| `resource_managers` | `list[str]` | no | Managers to report. Matched loosely — `"cache"`, `"global cache"`, `"jvm"`, `"heap"`, `"kafka"`, `"mq"`, `"https"` all resolve. Omit for a curated default set. |
+| `node` | `str` | no | Integration node shared by all servers. Omit to discover the hosting node(s) from the offline dump. |
+
+**What it does internally**
+- One `fetch_ace` call per server: `path="/servers/{server}/resource-managers?depth=2"`.
+  Note the hyphenated URI — the server document's `children` **key** is
+  `resourceManagers`, but that spelling 404s.
+- Every manager (~35 on a stock node) comes back with `properties` and `active`
+  in that single response; the selection is applied in-process, so an unknown
+  name yields a suggestion rather than an upstream 404.
+- Each entry is `{name, identifier, className, isDynamic, configured, active}` —
+  `configured` is the `server.conf.yaml` value, `active` is what the running
+  server is using, so a pending restart shows as a difference between the two.
+- Single server + explicit `node` returns one envelope; anything else returns
+  `{status, count, servers:[…], node | discovered_nodes}`.
+- `available_resource_managers` always lists every name, so a follow-up needs
+  no discovery call. `"cache"` is ambiguous and deliberately returns BOTH
+  `global-cache` and `xpath-cache`.
+
+**Sample user questions it answers in one call**
+- "Is cache enabled for EG ACE_DEMO_CONNECTORS on NODE1?" → `global-cache.configured.cacheOn`
+- "Does ACE_DEMO_CACHE have the global cache switched on?" (no node named — discovered)
+- "What JVM heap and Kafka settings does ACE_DEMO_MESSAGING run with?"
+- "Show me the MQ connection manager config for EG X"
+- "How is EG X configured?" (no manager named — curated default set)
+
+---
+
+### 7. `ace_search`
 
 **IBM ACE.** Combined OFFLINE search across configured nodes and the BIP
 message dump, in one call.
@@ -215,7 +253,7 @@ message dump, in one call.
 
 ---
 
-### 7. `get_cert_details`
+### 8. `get_cert_details`
 
 **Certificates.** OFFLINE lookup of TLS/SSL certificate details from
 `resources/cert_dump.csv`, in one call.
@@ -320,19 +358,27 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
    - call A — `path="/servers/{server}/applications?depth=2"` → apps with `name`, `active`, `properties`, `descriptiveProperties`
    - call B — either `path="/servers/{server}/applications/{app}/messageflows?depth=2"` (when `application` arg supplied) or `path="/servers/{server}/messageflows?depth=2"` (server-direct flows)
 
-### 6. `ace_search` : combined OFFLINE search across configured nodes + BIP dump (no upstream HTTP)
+### 6. `ace_resource_inspect` : integration-server resource managers (cache / JVM / Kafka / connectors)
 
-  6.1 `load_node_config` : cached read of `resources/node_config.csv` (loads on first call, then returns the cached DataFrame) | in: none | out: pandas DataFrame with columns `node, host, nodeport`
+  6.1 `_nodes_hosting` (only when `node` is omitted) : exact `eg`/`application` lookup in `node_dump.csv` | in: `servers` | out: hosting node names
 
-  6.2 `load_node_dump` : cached read of `resources/node_dump.csv` (used here as an "empty / missing" check before searching) | in: none | out: pandas DataFrame
+  6.2 `fetch_ace` : `path="/servers/{server}/resource-managers?depth=2"` → all ~35 managers with `properties` + `active` + `descriptiveProperties` in one response
 
-  6.3 `search_node_dump` : case-insensitive substring search across all string columns of `node_dump.csv` | in: `search_string` | out: `list[{timestamp, host, node, status}]`
+  6.3 `_resolve_rm_names` : maps caller terms onto real manager names (exact → alias map → `-manager`/`-connector` suffix → fuzzy against name and stem) | in: `requested`, `available` | out: `(resolved, {unresolved: suggestions})`
 
-### 7. `get_cert_details` : OFFLINE certificate inventory lookup (no upstream HTTP)
+### 7. `ace_search` : combined OFFLINE search across configured nodes + BIP dump (no upstream HTTP)
 
-  7.1 `load_cert_dump` : cached read of `resources/cert_dump.csv` (used as an "empty / missing" check before searching) | in: none | out: pandas DataFrame with columns `hostname, alias, cn_name, valid_from, valid_until, expirydays`
+  7.1 `load_node_config` : cached read of `resources/node_config.csv` (loads on first call, then returns the cached DataFrame) | in: none | out: pandas DataFrame with columns `node, host, nodeport`
 
-  7.2 `search_certs` : case-insensitive substring search across all columns of `cert_dump.csv`; recomputes `expirydays` live from `valid_until` | in: `search_string` | out: `list[{hostname, alias, cn_name, valid_from, valid_until, expirydays}]`
+  7.2 `load_node_dump` : cached read of `resources/node_dump.csv` (used here as an "empty / missing" check before searching) | in: none | out: pandas DataFrame
+
+  7.3 `search_node_dump` : case-insensitive substring search across all string columns of `node_dump.csv` | in: `search_string` | out: `list[{timestamp, host, node, status}]`
+
+### 8. `get_cert_details` : OFFLINE certificate inventory lookup (no upstream HTTP)
+
+  8.1 `load_cert_dump` : cached read of `resources/cert_dump.csv` (used as an "empty / missing" check before searching) | in: none | out: pandas DataFrame with columns `hostname, alias, cn_name, valid_from, valid_until, expirydays`
+
+  8.2 `search_certs` : case-insensitive substring search across all columns of `cert_dump.csv`; recomputes `expirydays` live from `valid_until` | in: `search_string` | out: `list[{hostname, alias, cn_name, valid_from, valid_until, expirydays}]`
 
   7.3 `nodes_on_host` (from `ace_helpers`) : distinct ACE node names on a hostname (exact match against `node_dump.csv`), used to add `ace_nodes` to each cert result | in: `hostname` | out: `list[str]`
 
@@ -489,6 +535,15 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver
 | 23 | get_cert_details | `test_get_cert_details_exposes_expirydays` | every match carries an integer-parseable `expirydays` (computed live) |
 | 24 | get_cert_details | `test_get_cert_details_includes_ace_nodes` | result includes `ace_nodes` — `["NODE01"]` for an ACE host, `[]` for a pure-MQ host |
 | 25 | mq_queue_inspect | `test_mq_queue_inspect_local_queue_displays_all_attributes` | a local-queue inspect issues `DISPLAY QLOCAL(<Q>) ALL` (full attribute set, not the old fixed subset) |
+| 26 | ace_resource_inspect | `test_resolve_rm_cache_returns_both_caches` | ambiguous `"cache"` resolves to BOTH `global-cache` and `xpath-cache` |
+| 27 | ace_resource_inspect | `test_resolve_rm_accepts_spacing_and_underscore_spellings` | `"Global Cache"` / `"global_cache"` / `"GLOBAL-CACHE"` all reach `global-cache` |
+| 28 | ace_resource_inspect | `test_resolve_rm_aliases_and_suffix_completion` | `"jvm"`/`"kafka"`/`"mq"`/`"https"` complete to their `-manager`/`-connector` names |
+| 29 | ace_resource_inspect | `test_resolve_rm_unknown_term_suggests_never_errors` | a typo resolves via the stem; a nonsense term returns suggestions, not an error |
+| 30 | ace_resource_inspect | `test_resource_inspect_uses_the_hyphenated_uri` | exactly one call, to `/servers/<eg>/resource-managers?depth=2` (never `resourceManagers`) |
+| 31 | ace_resource_inspect | `test_resource_inspect_reports_cache_on` | `global-cache` entry exposes `configured.cacheOn` and `active.cacheOn` |
+| 32 | ace_resource_inspect | `test_resource_inspect_default_selection_is_curated` | no manager named ⇒ curated subset only, with every name still in `available_resource_managers` |
+| 33 | ace_resource_inspect | `test_resource_inspect_surfaces_upstream_error` | upstream failure ⇒ `resource_managers_error`, no partial `resource_managers` |
+| 34 | ace_resource_inspect | `test_ace_resource_inspect_discovers_hosting_nodes` | EG named with no node ⇒ `discovered_nodes == ["NODE1","NODE2"]` |
 
 ### Test conventions
 

@@ -101,6 +101,133 @@ def _as_str_list(value) -> list[str]:
     return list(dict.fromkeys(cleaned))
 
 
+# --- ACE resource managers ---------------------------------------------------
+# An integration server exposes ~35 resource managers under
+# /apiv2/servers/<eg>/resource-managers (global-cache, jvm-manager,
+# kafka-manager, mq-connection-manager, http-connector, odm, ...). Note the
+# hyphenated URI: the server document's `children` KEY is `resourceManagers`,
+# but that spelling 404s — always use the `uri` form.
+#
+# Callers ask in plain words ("is cache enabled?"), so requested names are
+# resolved against the live listing through an alias map rather than pasted
+# into the URL. Fetching `?depth=2` once per server gives every manager's
+# properties AND active state in one round-trip, plus the full name list used
+# for resolution and "did you mean" — so an unknown name never becomes a 404.
+
+_RM_ALIASES: dict[str, tuple[str, ...]] = {
+    # "cache" is genuinely ambiguous on an integration server, so answer both.
+    "cache": ("global-cache", "xpath-cache"),
+    "caching": ("global-cache", "xpath-cache"),
+    "globalcache": ("global-cache",),
+    "global": ("global-cache",),
+    "xpath": ("xpath-cache",),
+    "jvm": ("jvm-manager",),
+    "java": ("jvm-manager",),
+    "heap": ("jvm-manager",),
+    "memory": ("jvm-manager",),
+    "kafka": ("kafka-manager",),
+    "mq": ("mq-connection-manager",),
+    "mq-connection": ("mq-connection-manager",),
+    "queue-manager": ("mq-connection-manager",),
+    "http": ("http-connector",),
+    "https": ("https-connector",),
+    "database": ("database-connection-manager",),
+    "db": ("database-connection-manager",),
+    "jdbc": ("database-connection-manager",),
+    "redis": ("redis-connection-manager",),
+    "odm": ("odm",),
+    "decision-server": ("odm",),
+    "otel": ("opentelemetry-manager",),
+    "opentelemetry": ("opentelemetry-manager",),
+    "tracing": ("opentelemetry-manager",),
+    "activity-log": ("activity-log-manager",),
+    "esql": ("esql-manager",),
+    "nodejs": ("nodejs",),
+    "node-js": ("nodejs",),
+    "socket": ("socket-connection-manager",),
+    "webhook": ("webhook-listener",),
+    "soap": ("soap-pipeline-manager",),
+    "callable-flow": ("callable-flow-manager",),
+    "parser": ("parser-manager",),
+}
+
+# What a caller who names no resource manager gets. Deliberately short: the
+# full depth=2 payload is ~30KB per integration server, which would swamp the
+# orchestrator's context on a multi-server question. Every available name still
+# ships in the envelope so a follow-up can narrow without a discovery call.
+_RM_DEFAULT = (
+    "global-cache",
+    "jvm-manager",
+    "mq-connection-manager",
+    "http-connector",
+    "https-connector",
+    "kafka-manager",
+)
+
+
+def _normalise_rm(name: str) -> str:
+    """Fold a human-typed resource-manager name to its hyphenated URI form."""
+    return re.sub(r"[\s_]+", "-", str(name).strip().lower()).strip("-")
+
+
+def _resolve_rm_names(
+    requested: list[str], available: list[str]
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Map caller-supplied terms onto real resource-manager names.
+
+    Tried in order: exact name, alias map, the `-manager`/`-connector` suffix
+    the ACE naming convention adds, then a fuzzy match. Returns the resolved
+    names (de-duplicated, caller order preserved) plus, for every term that
+    resolved to nothing, its closest suggestions — so an unknown name comes
+    back as a "did you mean" rather than an upstream 404.
+    """
+    by_norm = {_normalise_rm(a): a for a in available}
+    # Callers type the stem ("kafka", "jvm"), not the full ACE name, so the
+    # fuzzy pass matches against stems too — otherwise a one-character typo in
+    # "kafka" scores badly against "kafka-manager" and resolves to nothing.
+    by_stem: dict[str, str] = {}
+    for norm, real in by_norm.items():
+        for suffix in ("-manager", "-connector"):
+            if norm.endswith(suffix):
+                by_stem.setdefault(norm[: -len(suffix)], real)
+    resolved: list[str] = []
+    unknown: dict[str, list[str]] = {}
+
+    for term in requested:
+        norm = _normalise_rm(term)
+        if not norm:
+            continue
+
+        hits: list[str] = []
+        if norm in by_norm:
+            hits = [by_norm[norm]]
+        elif norm in _RM_ALIASES:
+            hits = [by_norm[n] for n in _RM_ALIASES[norm] if n in by_norm]
+        if not hits:
+            for suffix in ("-manager", "-connector"):
+                if norm + suffix in by_norm:
+                    hits = [by_norm[norm + suffix]]
+                    break
+        if not hits:
+            haystack = {**by_stem, **by_norm}
+            close = difflib.get_close_matches(norm, list(haystack), n=3, cutoff=0.6)
+            suggestions: list[str] = []
+            for c in close:
+                real = haystack[c]
+                if real not in suggestions:
+                    suggestions.append(real)
+            if len(suggestions) == 1:
+                hits = suggestions
+            else:
+                unknown[term] = suggestions
+
+        for h in hits:
+            if h not in resolved:
+                resolved.append(h)
+
+    return resolved, unknown
+
+
 # --- Target discovery -------------------------------------------------------
 # The hosting client makes exactly ONE tool call per user question, so a tool
 # can never answer "tell me which node/queue manager you meant". When a target
@@ -660,6 +787,73 @@ async def _server_explore_one(
         if errors:
             envelope["message_flows_errors"] = errors
 
+    return envelope
+
+
+async def _resource_inspect_one(
+    node: str, server: str, requested: list[str]
+) -> dict:
+    """Single integration-server resource-manager envelope.
+
+    One `?depth=2` call returns every manager with its configured
+    `properties` and its running `active` state; the selection is applied
+    in-process. That keeps the answer to one HTTP round-trip while still
+    reporting the full name list, so a caller who guessed wrong gets a
+    suggestion instead of an upstream 404.
+    """
+    raw = await fetch_ace(
+        node,
+        f"/servers/{server}/resource-managers?depth=2",
+        "resource-manager",
+        node=node,
+        server=server,
+    )
+
+    envelope: dict = {"node": node, "server": server}
+    doc = _as_doc(raw)
+    if doc.get("status") != "success":
+        envelope["resource_managers_error"] = doc.get("message")
+        return envelope
+
+    children = (doc.get("raw_response") or {}).get("children") or []
+    by_name = {
+        str(c.get("name")): c
+        for c in children
+        if isinstance(c, dict) and c.get("name")
+    }
+    available = sorted(by_name)
+    envelope["available_resource_managers"] = available
+
+    if requested:
+        selected, unknown = _resolve_rm_names(requested, available)
+        envelope["selected_by"] = "requested"
+        if unknown:
+            envelope["unknown_resource_managers"] = unknown
+    else:
+        selected = [n for n in _RM_DEFAULT if n in by_name]
+        envelope["selected_by"] = "default"
+        envelope["selection_note"] = (
+            "No resource manager was named, so a curated default set was "
+            "returned. Every available name is listed in "
+            "`available_resource_managers`."
+        )
+
+    entries: list[dict] = []
+    for name in selected:
+        child = by_name[name]
+        desc = child.get("descriptiveProperties") or {}
+        props = child.get("properties") or {}
+        entries.append(
+            {
+                "name": name,
+                "identifier": props.get("identifier"),
+                "className": desc.get("className"),
+                "isDynamic": desc.get("isDynamic"),
+                "configured": props,
+                "active": child.get("active") or {},
+            }
+        )
+    envelope["resource_managers"] = entries
     return envelope
 
 
@@ -1315,6 +1509,115 @@ def register(mcp: FastMCP) -> None:
             envelope["discovered_nodes"] = discovered_nodes
         if application:
             envelope["application"] = application
+        return json.dumps(envelope, indent=2)
+
+    @mcp.tool()
+    @logged_tool
+    async def ace_resource_inspect(
+        servers: list[str],
+        resource_managers: list[str] | None = None,
+        node: str | None = None,
+    ) -> str:
+        """IBM ACE: Inspect an integration server's RESOURCE MANAGERS — cache, JVM, Kafka, connectors.
+
+        This is the ONLY tool that can answer whether the GLOBAL CACHE is
+        enabled (`cacheOn`) on an execution group, and the only source for
+        every other resource-manager setting. `ace_node_overview` returns node
+        and EG properties but NOT resource managers, so it can never answer
+        these — do not use it for a cache question.
+
+        Covers roughly 35 managers per integration server, including:
+        `global-cache` (cacheOn, cache type, catalog/container service,
+        listener host/port, map read/write statistics), `xpath-cache`,
+        `jvm-manager`, `kafka-manager`, `mq-connection-manager`,
+        `http-connector` / `https-connector`, `database-connection-manager`,
+        `redis-connection-manager`, `odm`, `opentelemetry-manager`,
+        `activity-log-manager`, `esql-manager`, `nodejs`.
+
+        Each manager comes back with `configured` (the server.conf.yaml values)
+        AND `active` (what the running server is actually using), so a pending
+        restart shows up as a difference between the two.
+
+        Names are matched loosely — "cache", "global cache", "jvm", "heap",
+        "kafka", "mq" all resolve. Ambiguous "cache" returns BOTH the global
+        cache and the XPath cache. An unrecognised name comes back in
+        `unknown_resource_managers` with suggestions, never as an error.
+
+        OMIT `resource_managers` for a general "how is this EG configured"
+        question: a curated default set is returned plus every available name
+        in `available_resource_managers`.
+
+        OMIT `node` when the user names only an execution group — the hosting
+        node(s) are discovered from the offline dump and every one is
+        inspected, with `discovered_nodes` in the envelope. Never ask the user
+        which node an EG is on.
+
+        Pass MULTIPLE servers to inspect them all in one call — e.g. "is cache
+        on for ACE_DEMO_CACHE and ACE_DEMO_CONNECTORS?" →
+        `servers=["ACE_DEMO_CACHE","ACE_DEMO_CONNECTORS"],
+        resource_managers=["cache"]`.
+
+        Args:
+            servers: One or more integration server (execution group) names,
+                as a list — e.g. ["ACE_DEMO_CONNECTORS"].
+            resource_managers: Optional list of resource managers to report —
+                e.g. ["cache"] or ["jvm","kafka"]. Omit for the default set.
+            node: Optional integration node name shared by all servers. Omit to
+                discover the hosting node(s) automatically.
+        """
+        names = _as_str_list(servers)
+        if not names:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": "No server supplied. Pass servers=[\"IS001\", ...].",
+                },
+                indent=2,
+            )
+
+        requested = _as_str_list(resource_managers)
+        target_node = (node or "").strip()
+        discovered_nodes: list[str] = []
+        if not target_node:
+            discovered_nodes = _nodes_hosting(names)
+            if not discovered_nodes:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"Could not find {', '.join(names)} on any configured "
+                            "integration node in the offline dump. Pass node= to "
+                            "query a node directly."
+                        ),
+                        "servers": names,
+                    },
+                    indent=2,
+                )
+
+        if target_node:
+            if len(names) == 1:
+                return json.dumps(
+                    await _resource_inspect_one(target_node, names[0], requested),
+                    indent=2,
+                )
+            pairs = [(target_node, s) for s in names]
+        else:
+            pairs = [(n, s) for n in discovered_nodes for s in names]
+
+        results = await asyncio.gather(
+            *[_resource_inspect_one(n, s, requested) for n, s in pairs]
+        )
+        envelope: dict = {
+            "status": "success",
+            "count": len(results),
+            "servers": list(results),
+        }
+        if target_node:
+            envelope["node"] = target_node
+        else:
+            envelope["discovered_nodes"] = discovered_nodes
+        if requested:
+            envelope["requested_resource_managers"] = requested
         return json.dumps(envelope, indent=2)
 
     @mcp.tool()
