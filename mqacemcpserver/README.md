@@ -239,6 +239,16 @@ above still uses it.
 - Each entry is `{name, identifier, className, isDynamic, configured, active}` —
   `configured` is the `server.conf.yaml` value, `active` is what the running
   server is using, so a pending restart shows as a difference between the two.
+- **Presence is not configuration.** Every ACE integration server carries all
+  ~35 managers pre-populated with stock defaults, and several ship
+  `enabled: true` out of the box (`kafka-manager`, `nodejs`,
+  `activity-log-manager`). No property-name heuristic can decide whether a
+  feature is actually set up, so this tool derives exactly one signal:
+  `activity` (plus `activity_counters`), read only from `active.statistics` —
+  counters the node itself recorded. Managers without statistics get no
+  activity field at all. Every result also carries a `presence_note` spelling
+  this out, because "the manager is in the list" previously became "Kafka is
+  configured on all 9 EGs".
 - An empty `resource_managers` always carries a `selection_note` saying WHY.
   On its own the empty list reads as "this server has no resource managers",
   which would be flatly wrong — the note names the terms that missed and
@@ -611,6 +621,13 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver
 | 57 | ace_resource_inspect | `test_resource_inspect_empty_result_explains_itself` | empty `resource_managers` carries a note naming the missed terms and the real manager count |
 | 58 | ace_resource_inspect | `test_resource_inspect_partial_match_keeps_no_stale_note` | a partial match is unambiguous, so it gets NO empty-result note |
 | 59 | ace_resource_inspect | `test_resource_inspect_default_set_absent_says_so` | a server with none of the curated defaults is not described as having had them returned |
+| 60 | ace_resource_inspect | `test_rm_activity_reports_nothing_without_statistics` | a manager with only an `enabled` flag and no counters yields NO activity claim |
+| 61 | ace_resource_inspect | `test_rm_activity_all_zero_counters_is_no_activity` | all-zero counters ⇒ `no-recorded-activity` |
+| 62 | ace_resource_inspect | `test_rm_activity_non_zero_counter_is_activity` | a non-zero counter ⇒ `has-activity` plus the counters |
+| 63 | ace_resource_inspect | `test_rm_activity_ignores_booleans_as_counters` | `True` is an `int` in Python and must not count as a non-zero counter |
+| 64 | ace_resource_inspect | `test_resource_inspect_never_infers_configured_from_enabled_flag` | `kafka-manager`'s stock `enabled: true` produces no activity claim, but is still reported verbatim |
+| 65 | ace_resource_inspect | `test_resource_inspect_emits_presence_note` | every non-empty result carries the presence-is-not-configuration note |
+| 66 | ace_resource_inspect | `test_resource_inspect_surfaces_real_counters` | a manager with real counters reports `has-activity` and the non-zero values |
 
 ### Test conventions
 

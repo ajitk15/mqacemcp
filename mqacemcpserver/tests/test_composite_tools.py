@@ -1506,3 +1506,94 @@ def test_resource_inspect_default_set_absent_says_so(monkeypatch):
     assert env["resource_managers"] == []
     assert "carries none of the curated default set" in env["selection_note"], env
     assert "xpath-cache" in env["available_resource_managers"]
+
+
+# ---------------------------------------------------------------------------
+# Presence is not configuration
+#
+# The false answer this locks down: asked "which EGs have Kafka configured",
+# the model saw `kafka-manager` present with `enabled: true` and reported
+# Kafka configured on all 9 EGs. Every ACE server ships all ~35 managers with
+# stock defaults, and several default to `enabled: true`, so no property-name
+# heuristic can decide "configured" - only an explicit feature switch or
+# recorded counters can.
+# ---------------------------------------------------------------------------
+def test_rm_activity_reports_nothing_without_statistics():
+    from server.composite_tools import _rm_activity
+
+    # kafka-manager's real shape: an `enabled` flag and NO statistics.
+    assert _rm_activity({"enabled": True}) == (None, {})
+    assert _rm_activity({}) == (None, {})
+
+
+def test_rm_activity_all_zero_counters_is_no_activity():
+    from server.composite_tools import _rm_activity
+
+    verdict, counters = _rm_activity(
+        {"statistics": {"summary": {"MapReads": 0, "MapWrites": 0}}}
+    )
+    assert verdict == "no-recorded-activity"
+    assert counters == {}
+
+
+def test_rm_activity_non_zero_counter_is_activity():
+    from server.composite_tools import _rm_activity
+
+    verdict, counters = _rm_activity(
+        {"statistics": {"summary": {"MapReads": 12, "MapWrites": 0}}}
+    )
+    assert verdict == "has-activity"
+    assert counters == {"MapReads": 12}
+
+
+def test_rm_activity_ignores_booleans_as_counters():
+    """`True` is an int in Python; it must not count as a non-zero counter."""
+    from server.composite_tools import _rm_activity
+
+    verdict, counters = _rm_activity({"statistics": {"summary": {"enabled": True}}})
+    assert verdict == "no-recorded-activity", (verdict, counters)
+    assert counters == {}
+
+
+def test_resource_inspect_never_infers_configured_from_enabled_flag(monkeypatch):
+    """A manager with `enabled: true` and no counters gets NO activity claim."""
+    from server.composite_tools import _resource_inspect_one
+
+    entries = [("kafka-manager", {"identifier": "KafkaManager"}, {"enabled": True})]
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(entries))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", ["kafka"]))
+
+    rm = env["resource_managers"][0]
+    assert rm["name"] == "kafka-manager"
+    assert "activity" not in rm, rm
+    assert "activity_counters" not in rm, rm
+    # The flag is still reported verbatim - we hide nothing, we just do not
+    # dress it up as evidence of configuration.
+    assert rm["active"]["enabled"] is True
+
+
+def test_resource_inspect_emits_presence_note(monkeypatch):
+    from server.composite_tools import _resource_inspect_one
+
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", ["cache"]))
+
+    note = env["presence_note"]
+    assert "NOT evidence" in note, note
+    assert "cacheOn" in note, note
+
+
+def test_resource_inspect_surfaces_real_counters(monkeypatch):
+    from server.composite_tools import _resource_inspect_one
+
+    entries = [(
+        "global-cache",
+        {"identifier": "GlobalCache", "cacheOn": True},
+        {"cacheOn": True, "statistics": {"summary": {"MapReads": 7, "Connects": 0}}},
+    )]
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(entries))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", ["cache"]))
+
+    rm = env["resource_managers"][0]
+    assert rm["activity"] == "has-activity"
+    assert rm["activity_counters"] == {"MapReads": 7}

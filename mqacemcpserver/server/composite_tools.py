@@ -802,6 +802,33 @@ async def _server_explore_one(
     return envelope
 
 
+def _rm_activity(active: dict) -> tuple[str | None, dict]:
+    """Distil `active.statistics` into a factual activity verdict.
+
+    Deliberately the ONLY signal this tool derives. It is tempting to read a
+    boolean like `enabled` as "the feature is configured", but that inference
+    is wrong on a stock ACE server: `kafka-manager` ships `enabled: true`,
+    `nodejs` ships `nodejsEnabled: true` and `activity-log-manager` ships
+    `activityLogEnabled: true` on a server where nobody has configured any of
+    them. Every non-empty string property is a stock default too. Statistics
+    are different - a non-zero counter is evidence the node itself recorded,
+    not a guess about what a property name means.
+
+    Returns `(verdict, non_zero_counters)`; verdict is None when the manager
+    publishes no statistics at all, which is most of them.
+    """
+    stats = (active or {}).get("statistics")
+    if not isinstance(stats, dict) or not stats:
+        return None, {}
+    summary = stats.get("summary") if isinstance(stats.get("summary"), dict) else stats
+    non_zero = {
+        k: v
+        for k, v in summary.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v
+    }
+    return ("has-activity" if non_zero else "no-recorded-activity"), non_zero
+
+
 async def _live_servers_on(node: str) -> tuple[list[str], str | None]:
     """Integration server names read from the LIVE node, not the offline dump.
 
@@ -1013,17 +1040,37 @@ async def _resource_inspect_one(
         child = by_name[name]
         desc = child.get("descriptiveProperties") or {}
         props = child.get("properties") or {}
-        entries.append(
-            {
-                "name": name,
-                "identifier": props.get("identifier"),
-                "className": desc.get("className"),
-                "isDynamic": desc.get("isDynamic"),
-                "configured": props,
-                "active": child.get("active") or {},
-            }
-        )
+        active = child.get("active") or {}
+        entry = {
+            "name": name,
+            "identifier": props.get("identifier"),
+            "className": desc.get("className"),
+            "isDynamic": desc.get("isDynamic"),
+            "configured": props,
+            "active": active,
+        }
+        verdict, non_zero = _rm_activity(active)
+        if verdict:
+            entry["activity"] = verdict
+            if non_zero:
+                entry["activity_counters"] = non_zero
+        entries.append(entry)
     envelope["resource_managers"] = entries
+    if entries:
+        # The false answer this prevents: asked "which EGs have Kafka
+        # configured", the model saw `kafka-manager` in the list with
+        # `enabled: true` and reported Kafka configured on every server. Every
+        # ACE integration server carries the full set of managers with stock
+        # values, so presence proves nothing on its own.
+        envelope["presence_note"] = (
+            f"All {len(available)} resource managers exist on every ACE "
+            "integration server, pre-populated with stock defaults. Presence "
+            "in this list is NOT evidence that a feature is configured or in "
+            "use. Judge that only from an explicit setting (e.g. "
+            "`global-cache.cacheOn`) or from `activity`/`activity_counters`, "
+            "which come from counters the node recorded. A manager with "
+            "neither cannot be called configured from this data."
+        )
     return envelope
 
 
