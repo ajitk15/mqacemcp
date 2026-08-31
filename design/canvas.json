@@ -1,0 +1,25 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1280, "h": 720, "title": "Pitch slide — light", "print": "fixed" },
+    { "file": "Dark.dc.html", "x": 0, "y": 840, "w": 1280, "h": 720, "title": "Pitch slide — dark variant", "print": "fixed" },
+    { "file": "DirectionB.dc.html", "x": 1400, "y": 0, "w": 640, "h": 360, "title": "Direction B — Light editorial", "print": "fixed" },
+    { "file": "DirectionC.dc.html", "x": 1400, "y": 480, "w": 640, "h": 360, "title": "Direction C — Architecture hero", "print": "fixed" }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -150,
+      "w": 620,
+      "text": "One pitch slide for new deals and existing engagements.\nLight palette lifted from the app's own purple theme (#A100FF, #6b21a8, #F1E9FB, #E6D9F5) — the accent chip above the slide flips it to the green theme, text and tints included.\nType: one grotesque family in four weights (Hanken Grotesk), a stand-in for the licensed corporate face, which cannot be loaded here. Swap in the real webfont as an @font-face data URI if you have the files.\nThe dark version is kept below."
+    },
+    {
+      "id": "alternates",
+      "x": 1400,
+      "y": -150,
+      "w": 640,
+      "text": "Two alternate directions, sketched. Say the word and I'll build either one out at full fidelity in place of the current slide."
+    }
+  ],
+  "launch": { "view": "focused", "file": "Main.dc.html" }
+}
