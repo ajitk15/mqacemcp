@@ -1039,31 +1039,55 @@ def test_resource_inspect_surfaces_upstream_error(monkeypatch):
     assert "resource_managers" not in env
 
 
-def test_ace_resource_inspect_requires_servers():
+def test_ace_resource_inspect_empty_servers_triggers_discovery(monkeypatch):
+    """`servers=[]` sweeps the estate; it used to be a hard error.
+
+    This is the exact call the orchestrator made for "list all global cache
+    enabled EGs from NODE1" (`_as_str_list` strips the blank in `[""]` to
+    `[]`), so it stays pinned.
+    """
+    _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": ["EG_A"], "NODE2": ["EG_B"]}))
     fn = _tool("ace_resource_inspect")
     out = json.loads(asyncio.run(fn(servers=[])))
-    assert out["status"] == "error"
-    assert "No server supplied" in out["message"]
+
+    assert out["status"] == "success", out
+    assert out["discovered_targets"] == ["NODE1", "NODE2"], out
+    assert {s["server"] for s in out["servers"]} == {"EG_A", "EG_B"}, out
 
 
 def test_ace_resource_inspect_unknown_node():
+    """Unknown node + unresolvable server ⇒ a named error, not a blind 404."""
     fn = _tool("ace_resource_inspect")
     out = json.loads(
         asyncio.run(fn(node="NODE.DOES.NOT.EXIST", servers=["X"]))
     )
-    assert out["node"] == "NODE.DOES.NOT.EXIST"
-    assert out["server"] == "X"
+    assert out["status"] == "error", out
+    assert out["servers"] == ["X"]
+    assert out["unknown_servers"] == ["X"], out
+    assert "NODE.DOES.NOT.EXIST" in out["message"]
+    # The node could not be listed either; that must stay visible.
+    assert out["node_errors"][0]["node"] == "NODE.DOES.NOT.EXIST", out
 
 
-def test_ace_resource_inspect_multi_target_wraps_results():
+def test_ace_resource_inspect_multi_target_wraps_results(monkeypatch):
+    """Two resolvable servers on one node wrap into the list envelope."""
+    _stub_fetch_ace(
+        monkeypatch,
+        _sweep_handler({"NODE1": ["ACE_DEMO_CACHE", "ACE_DEMO_CONNECTORS"]}),
+    )
     fn = _tool("ace_resource_inspect")
     out = json.loads(
-        asyncio.run(fn(node="NODE.DOES.NOT.EXIST", servers=["X", "Y"]))
+        asyncio.run(
+            fn(node="NODE1", servers=["ACE_DEMO_CACHE", "ACE_DEMO_CONNECTORS"])
+        )
     )
     assert out["status"] == "success"
-    assert out["node"] == "NODE.DOES.NOT.EXIST"
+    assert out["node"] == "NODE1"
     assert out["count"] == 2, out
-    assert {s["server"] for s in out["servers"]} == {"X", "Y"}, out
+    assert {s["server"] for s in out["servers"]} == {
+        "ACE_DEMO_CACHE",
+        "ACE_DEMO_CONNECTORS",
+    }, out
 
 
 def test_ace_resource_inspect_discovers_hosting_nodes(monkeypatch):
@@ -1079,3 +1103,298 @@ def test_ace_resource_inspect_discovers_hosting_nodes(monkeypatch):
     assert out["discovered_nodes"] == ["NODE1", "NODE2"], out
     assert out["requested_resource_managers"] == ["cache"]
     assert out["count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# ace_resource_inspect sweeps — `servers` omitted
+#
+# The gap these lock down: "list all global cache enabled EGs from NODE1" used
+# to fail with "No server supplied", because `servers` was required while
+# `node` was optional — the opposite of what a node-scoped question needs.
+# ---------------------------------------------------------------------------
+def _sweep_handler(servers_by_node, node_errors=()):
+    """Serve both /servers?depth=1 (discovery) and /resource-managers?depth=2.
+
+    The stub's fetch_ace signature drops `target_node`, so the node is
+    recovered from the ordering of the discovery calls instead: each
+    /servers?depth=1 call is answered from `order` in turn.
+    """
+    order = list(servers_by_node)
+    seen = {"i": 0}
+
+    def handler(path: str) -> str:
+        if path == "/servers?depth=1":
+            node = order[seen["i"]]
+            seen["i"] += 1
+            if node in node_errors:
+                return json.dumps({"status": "error", "message": f"{node} unreachable"})
+            return json.dumps(
+                {
+                    "status": "success",
+                    "raw_response": {
+                        "children": [{"name": n} for n in servers_by_node[node]]
+                    },
+                }
+            )
+        return _rm_payload(_CACHE_ENTRIES)
+
+    return handler
+
+
+def test_resource_inspect_sweeps_live_servers_on_a_node(monkeypatch):
+    paths = _stub_fetch_ace(
+        monkeypatch, _sweep_handler({"NODE1": ["EG_A", "EG_B", "EG_C"]})
+    )
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(asyncio.run(fn(node="NODE1", resource_managers=["cache"])))
+
+    assert paths[0] == "/servers?depth=1", paths
+    assert paths[1:] == [
+        "/servers/EG_A/resource-managers?depth=2",
+        "/servers/EG_B/resource-managers?depth=2",
+        "/servers/EG_C/resource-managers?depth=2",
+    ], paths
+    assert out["node"] == "NODE1"
+    assert out["discovered_servers"] == {"NODE1": ["EG_A", "EG_B", "EG_C"]}, out
+    assert out["count"] == 3
+    assert out["requested_resource_managers"] == ["cache"]
+
+
+def test_resource_inspect_sweep_uses_live_not_dump(monkeypatch):
+    """The sweep must read the LIVE node, never `node_dump.csv`.
+
+    `ACE_DEMO_RESTAPI` runs on NODE1 but is absent from the shipped dump. If
+    discovery went through `known_servers()`/`_nodes_hosting()` it would be
+    dropped, and "list all EGs" would quietly return an incomplete answer —
+    worse than an error.
+    """
+    from server.ace_helpers import known_servers
+
+    assert "ACE_DEMO_RESTAPI" not in known_servers("NODE1"), (
+        "fixture assumption broken: the dump now lists ACE_DEMO_RESTAPI"
+    )
+
+    live = ["ACE_DEMO_CACHE", "ACE_DEMO_RESTAPI"]
+    _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": live}))
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(asyncio.run(fn(node="NODE1", resource_managers=["cache"])))
+
+    assert {s["server"] for s in out["servers"]} == set(live), out
+
+
+def test_resource_inspect_sweep_discovers_nodes_when_both_omitted(monkeypatch):
+    _stub_fetch_ace(
+        monkeypatch, _sweep_handler({"NODE1": ["EG_A"], "NODE2": ["EG_B", "EG_C"]})
+    )
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(asyncio.run(fn(resource_managers=["cache"])))
+
+    assert out["discovered_targets"] == ["NODE1", "NODE2"], out
+    assert out["discovered_servers"] == {"NODE1": ["EG_A"], "NODE2": ["EG_B", "EG_C"]}
+    assert out["count"] == 3
+    assert {(s["node"], s["server"]) for s in out["servers"]} == {
+        ("NODE1", "EG_A"),
+        ("NODE2", "EG_B"),
+        ("NODE2", "EG_C"),
+    }, out
+
+
+def test_resource_inspect_sweep_reports_discovery_failure(monkeypatch):
+    """One unreachable node must not make a partial sweep look complete."""
+    _stub_fetch_ace(
+        monkeypatch,
+        _sweep_handler({"NODE1": ["EG_A"], "NODE2": ["EG_B"]}, node_errors={"NODE2"}),
+    )
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(asyncio.run(fn(resource_managers=["cache"])))
+
+    assert out["status"] == "success"
+    assert out["discovered_servers"] == {"NODE1": ["EG_A"]}, out
+    assert out["node_errors"] == [
+        {"node": "NODE2", "servers_discovery_error": "NODE2 unreachable"}
+    ], out
+    assert {s["server"] for s in out["servers"]} == {"EG_A"}
+
+
+def test_resource_inspect_sweep_all_nodes_failing_is_an_error(monkeypatch):
+    _stub_fetch_ace(
+        monkeypatch,
+        _sweep_handler({"NODE1": ["EG_A"]}, node_errors={"NODE1"}),
+    )
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(asyncio.run(fn(node="NODE1")))
+
+    assert out["status"] == "error", out
+    assert "No integration servers could be listed" in out["message"]
+    assert out["node_errors"][0]["node"] == "NODE1"
+
+
+def test_resource_inspect_named_server_still_skips_discovery(monkeypatch):
+    """A dump-known server costs exactly ONE call - no discovery, no sweep.
+
+    Uses a real EG from `node_dump.csv` deliberately: name resolution answers
+    from the dump with no HTTP, so this pins the hot path. A name the dump
+    does NOT know is *expected* to fall through to live discovery - that is
+    `..._live_only_server_falls_back_to_discovery` below.
+    """
+    paths = _stub_fetch_ace(
+        monkeypatch, _sweep_handler({"NODE1": ["ACE_DEMO_CONNECTORS"]})
+    )
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(
+            fn(
+                servers=["ACE_DEMO_CONNECTORS"],
+                node="NODE1",
+                resource_managers=["cache"],
+            )
+        )
+    )
+
+    assert paths == [
+        "/servers/ACE_DEMO_CONNECTORS/resource-managers?depth=2"
+    ], paths
+    assert out["server"] == "ACE_DEMO_CONNECTORS"
+    assert "discovered_servers" not in out
+
+
+# ---------------------------------------------------------------------------
+# ace_resource_inspect — named-server resolution (live fallback + case/typos)
+#
+# Two defects found by probing the live nodes, both invisible to the tests
+# above because those only ever used dump-known or wholly synthetic names:
+#   1. An EG that is running but not yet in node_dump.csv (ACE_DEMO_RESTAPI)
+#      was rejected as "not found on any configured integration node".
+#   2. The ACE REST API is case-sensitive, so "ace_demo_cache" 404'd into a
+#      bare "Endpoint not found".
+# ---------------------------------------------------------------------------
+LIVE_ONLY_EG = "ACE_DEMO_RESTAPI"
+
+
+def test_fixture_live_only_eg_is_really_absent_from_the_dump():
+    """Guards the premise of the tests below."""
+    from server.ace_helpers import known_servers, resolve_server_name
+
+    assert LIVE_ONLY_EG not in known_servers(), (
+        "node_dump.csv now lists ACE_DEMO_RESTAPI - pick another live-only EG"
+    )
+    assert resolve_server_name(LIVE_ONLY_EG) is None
+
+
+def test_resource_inspect_live_only_server_falls_back_to_discovery(monkeypatch):
+    """A running EG missing from the dump resolves via the live node."""
+    paths = _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": [LIVE_ONLY_EG]}))
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(fn(servers=[LIVE_ONLY_EG], node="NODE1",
+                       resource_managers=["cache"]))
+    )
+
+    assert paths == [
+        "/servers?depth=1",
+        f"/servers/{LIVE_ONLY_EG}/resource-managers?depth=2",
+    ], paths
+    assert out["server"] == LIVE_ONLY_EG
+
+
+def test_resource_inspect_live_only_server_without_a_node(monkeypatch):
+    """The same EG with NO node scans the estate and finds its host."""
+    _stub_fetch_ace(
+        monkeypatch, _sweep_handler({"NODE1": [LIVE_ONLY_EG], "NODE2": ["OTHER"]})
+    )
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(fn(servers=[LIVE_ONLY_EG], resource_managers=["cache"]))
+    )
+
+    assert out["status"] == "success", out
+    assert out["discovered_nodes"] == ["NODE1"], out
+    assert out["servers_resolved"] == [LIVE_ONLY_EG]
+    assert out["count"] == 1
+
+
+def test_resource_inspect_canonicalises_case_from_the_dump(monkeypatch):
+    """Lowercase dump-known EG is corrected with NO discovery call."""
+    paths = _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": []}))
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(fn(servers=["ace_demo_cache"], node="NODE1",
+                       resource_managers=["cache"]))
+    )
+
+    assert paths == [
+        "/servers/ACE_DEMO_CACHE/resource-managers?depth=2"
+    ], paths
+    assert out["server"] == "ACE_DEMO_CACHE"
+
+
+def test_resource_inspect_canonicalises_case_from_the_live_node(monkeypatch):
+    """Lowercase LIVE-ONLY EG is corrected against the live listing."""
+    _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": [LIVE_ONLY_EG]}))
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(fn(servers=[LIVE_ONLY_EG.lower()], node="NODE1",
+                       resource_managers=["cache"]))
+    )
+
+    assert out["server"] == LIVE_ONLY_EG, out
+
+
+def test_resource_inspect_typo_returns_did_you_mean(monkeypatch):
+    """An unresolvable EG suggests, and never fires a doomed REST call."""
+    paths = _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": []}))
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(fn(servers=["ACE_DEMO_CONNECTOR"], node="NODE1"))
+    )
+
+    assert paths == ["/servers?depth=1"], paths  # no resource-managers call
+    assert out["status"] == "error"
+    assert out["unknown_servers"] == ["ACE_DEMO_CONNECTOR"]
+    assert "ACE_DEMO_CONNECTORS" in out["did_you_mean"]["ACE_DEMO_CONNECTOR"]
+
+
+def test_resource_inspect_nonsense_name_omits_empty_suggestions(monkeypatch):
+    """No close match ⇒ `did_you_mean` absent, never an empty list."""
+    _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": []}))
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(asyncio.run(fn(servers=["ZZZZZZZZ"], node="NODE1")))
+
+    assert out["unknown_servers"] == ["ZZZZZZZZ"]
+    assert "did_you_mean" not in out, out
+
+
+def test_resource_inspect_partial_resolution_reports_both(monkeypatch):
+    """One good EG + one bad name: inspect the good one, REPORT the bad one.
+
+    Regression: the single-pair fast path returns the bare per-server
+    envelope, which has nowhere to carry `unknown_servers` - so a mixed call
+    used to answer for the good EG and silently drop the bad name.
+    """
+    _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": []}))
+    fn = _tool("ace_resource_inspect")
+    out = json.loads(
+        asyncio.run(
+            fn(servers=["ACE_DEMO_CACHE", "ZZZZZZZZ"], node="NODE1",
+               resource_managers=["cache"])
+        )
+    )
+
+    assert out["status"] == "success", out
+    assert out["unknown_servers"] == ["ZZZZZZZZ"], out
+    assert out["servers_resolved"] == ["ACE_DEMO_CACHE"], out
+    assert [x["server"] for x in out["servers"]] == ["ACE_DEMO_CACHE"], out
+
+
+def test_resource_inspect_dedups_two_spellings_of_one_server(monkeypatch):
+    """"ACE_DEMO_CACHE" and "ace_demo_cache" must be inspected once."""
+    paths = _stub_fetch_ace(monkeypatch, _sweep_handler({"NODE1": []}))
+    fn = _tool("ace_resource_inspect")
+    asyncio.run(
+        fn(servers=["ACE_DEMO_CACHE", "ace_demo_cache"], node="NODE1",
+           resource_managers=["cache"])
+    )
+
+    assert paths == [
+        "/servers/ACE_DEMO_CACHE/resource-managers?depth=2"
+    ], paths

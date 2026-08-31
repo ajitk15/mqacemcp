@@ -28,6 +28,7 @@ from mcp.server.fastmcp import FastMCP
 from server.ace_helpers import (
     dump_rows,
     fetch_ace,
+    known_servers,
     load_node_config,
     load_node_dump,
     nodes_hosting_application,
@@ -790,6 +791,136 @@ async def _server_explore_one(
     return envelope
 
 
+async def _live_servers_on(node: str) -> tuple[list[str], str | None]:
+    """Integration server names read from the LIVE node, not the offline dump.
+
+    Deliberately NOT `known_servers()` / `_nodes_hosting()`: those read
+    `node_dump.csv`, which is a periodic extract and can lag the node. On the
+    shipped estate the dump lists four servers for NODE1 while the node
+    actually runs five — discovering from it would silently drop an EG from a
+    "list every EG" answer, which is worse than returning an error.
+
+    `depth=1` because only the names are needed here; `_node_overview_one`
+    uses `depth=2` when it also wants each server's properties.
+
+    Returns `(names, error)` — exactly one of the two is populated.
+    """
+    doc = _as_doc(await fetch_ace(node, "/servers?depth=1", "server", node=node))
+    if doc.get("status") != "success":
+        return [], doc.get("message")
+    children = (doc.get("raw_response") or {}).get("children") or []
+    names = {
+        str(c["name"]).strip()
+        for c in children
+        if isinstance(c, dict) and str(c.get("name") or "").strip()
+    }
+    return sorted(names), None
+
+
+async def _resolve_named_servers(
+    names: list[str], target_node: str
+) -> tuple[list[tuple[str, str]], dict]:
+    """Canonicalise EG names and pair each with the node(s) hosting it.
+
+    Two failures this exists to prevent, both found by probing the live nodes:
+
+    1. The ACE REST API is case-sensitive, so `servers=["ace_demo_cache"]`
+       used to 404 into a bare "Endpoint not found".
+    2. `_nodes_hosting` reads the offline dump, which can lag the node. An EG
+       that is running but not yet in the extract (ACE_DEMO_RESTAPI on the
+       shipped estate) used to be rejected as "not found on any configured
+       integration node" even with the node sitting right there.
+
+    Resolution order is chosen to keep the hot path free: the dump resolves
+    names with NO HTTP at all, and only names it does not know trigger one
+    live listing per candidate node. A name that resolves nowhere comes back
+    in `unknown_servers` with suggestions instead of a 404.
+
+    Returns `(pairs, extra)` where `pairs` is [(node, canonical_server)] and
+    `extra` carries the envelope fields describing what happened.
+    """
+    extra: dict = {}
+    canonical: dict[str, str] = {}       # requested -> canonical EG name
+    live_nodes: dict[str, list[str]] = {}  # canonical EG -> nodes hosting it
+    unresolved: list[str] = []
+
+    for name in names:
+        hit = resolve_server_name(name)  # offline dump, case-insensitive, free
+        if hit:
+            canonical[name] = hit
+        else:
+            unresolved.append(name)
+
+    live_names: set[str] = set()
+    if unresolved:
+        # Only now is HTTP worth it. Scan the named node, or the whole estate
+        # when the caller did not name one.
+        scan = [target_node] if target_node else _all_configured_nodes()
+        found = await asyncio.gather(*[_live_servers_on(n) for n in scan])
+
+        index: dict[str, tuple[str, list[str]]] = {}
+        node_errors: list[dict] = []
+        for node_name, (server_names, err) in zip(scan, found):
+            if err:
+                node_errors.append(
+                    {"node": node_name, "servers_discovery_error": err}
+                )
+                continue
+            for server in server_names:
+                live_names.add(server)
+                entry = index.setdefault(server.lower(), (server, []))
+                entry[1].append(node_name)
+
+        still_unknown: list[str] = []
+        for name in unresolved:
+            hit = index.get(name.strip().lower())
+            if hit:
+                canonical[name] = hit[0]
+                live_nodes[hit[0]] = hit[1]
+            else:
+                still_unknown.append(name)
+
+        if node_errors:
+            extra["node_errors"] = node_errors
+        if still_unknown:
+            extra["unknown_servers"] = still_unknown
+            # Suggest from the dump AND the live listing, so a live-only EG
+            # can be offered as a correction too. Same `did_you_mean` shape
+            # ace_search already returns for an unknown EG. Names with no
+            # close match are simply absent - never an empty list, which
+            # reads as a bug.
+            pool = sorted(set(known_servers()) | live_names)
+            hints = {
+                name: close
+                for name in still_unknown
+                if (close := difflib.get_close_matches(name, pool, n=3, cutoff=0.5))
+            }
+            if hints:
+                extra["did_you_mean"] = hints
+
+    if not canonical:
+        return [], extra
+
+    resolved = [canonical[n] for n in names if n in canonical]
+    # De-duplicate: two spellings of one EG must not be inspected twice.
+    resolved = list(dict.fromkeys(resolved))
+    extra["servers_resolved"] = resolved
+
+    if target_node:
+        return [(target_node, s) for s in resolved], extra
+
+    pairs: list[tuple[str, str]] = []
+    hosting: list[str] = []
+    for server in resolved:
+        nodes = live_nodes.get(server) or nodes_hosting_server(server)
+        for n in nodes:
+            if n not in hosting:
+                hosting.append(n)
+            pairs.append((n, server))
+    extra["discovered_nodes"] = hosting
+    return pairs, extra
+
+
 async def _resource_inspect_one(
     node: str, server: str, requested: list[str]
 ) -> dict:
@@ -1514,7 +1645,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     @logged_tool
     async def ace_resource_inspect(
-        servers: list[str],
+        servers: list[str] | None = None,
         resource_managers: list[str] | None = None,
         node: str | None = None,
     ) -> str:
@@ -1547,6 +1678,18 @@ def register(mcp: FastMCP) -> None:
         question: a curated default set is returned plus every available name
         in `available_resource_managers`.
 
+        OMIT `servers` ENTIRELY for a "WHICH / ALL EGs" question — "list all
+        global cache enabled EGs on NODE1", "which execution groups have Kafka
+        configured". Every integration server on the target node is then
+        discovered FROM THE LIVE NODE and inspected, and the envelope carries
+        `discovered_servers`. Do NOT pass `servers=[""]` or a placeholder —
+        just leave the argument out. With `node` omitted too, the sweep covers
+        every configured node.
+
+        BUT when the user NAMES an execution group, PASS IT. Omitting `servers`
+        on a targeted question turns a one-server lookup into a whole-node
+        sweep for no benefit.
+
         OMIT `node` when the user names only an execution group — the hosting
         node(s) are discovered from the offline dump and every one is
         inspected, with `discovered_nodes` in the envelope. Never ask the user
@@ -1558,64 +1701,110 @@ def register(mcp: FastMCP) -> None:
         resource_managers=["cache"]`.
 
         Args:
-            servers: One or more integration server (execution group) names,
-                as a list — e.g. ["ACE_DEMO_CONNECTORS"].
+            servers: Optional list of integration server (execution group)
+                names — e.g. ["ACE_DEMO_CONNECTORS"]. Omit to sweep every
+                server on the target node(s), discovered live.
             resource_managers: Optional list of resource managers to report —
                 e.g. ["cache"] or ["jvm","kafka"]. Omit for the default set.
             node: Optional integration node name shared by all servers. Omit to
                 discover the hosting node(s) automatically.
         """
         names = _as_str_list(servers)
-        if not names:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": "No server supplied. Pass servers=[\"IS001\", ...].",
-                },
-                indent=2,
-            )
-
         requested = _as_str_list(resource_managers)
         target_node = (node or "").strip()
-        discovered_nodes: list[str] = []
-        if not target_node:
-            discovered_nodes = _nodes_hosting(names)
-            if not discovered_nodes:
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "message": (
-                            f"Could not find {', '.join(names)} on any configured "
-                            "integration node in the offline dump. Pass node= to "
-                            "query a node directly."
-                        ),
-                        "servers": names,
-                    },
-                    indent=2,
-                )
 
-        if target_node:
-            if len(names) == 1:
-                return json.dumps(
-                    await _resource_inspect_one(target_node, names[0], requested),
-                    indent=2,
-                )
-            pairs = [(target_node, s) for s in names]
+        envelope: dict = {"status": "success"}
+        discovery_errors: list[dict] = []
+        pairs: list[tuple[str, str]] = []
+
+        if names:
+            # Caller named the servers: canonicalise them and find their
+            # host(s). See _resolve_named_servers for why this is not a plain
+            # dump lookup any more.
+            pairs, extra = await _resolve_named_servers(names, target_node)
+            if not pairs:
+                error: dict = {
+                    "status": "error",
+                    "message": (
+                        f"Could not find {', '.join(names)} on "
+                        + (
+                            f"integration node {target_node}."
+                            if target_node
+                            else "any configured integration node."
+                        )
+                    ),
+                    "servers": names,
+                }
+                error.update(extra)
+                return json.dumps(error, indent=2)
+
+            envelope.update(extra)
+            if target_node:
+                envelope["node"] = target_node
+                # Preserved fast path: one server on a known node answers with
+                # the bare per-server envelope, no wrapper. Skipped when a
+                # name failed to resolve - the bare envelope has nowhere to
+                # carry `unknown_servers`, and silently dropping a name the
+                # caller asked about is worse than the extra nesting.
+                if len(pairs) == 1 and not extra.get("unknown_servers"):
+                    return json.dumps(
+                        await _resource_inspect_one(
+                            target_node, pairs[0][1], requested
+                        ),
+                        indent=2,
+                    )
         else:
-            pairs = [(n, s) for n in discovered_nodes for s in names]
+            # No server named: sweep. Nodes first (explicit, else every
+            # configured one), then each node's servers FROM THE LIVE NODE -
+            # see _live_servers_on for why the offline dump is not usable here.
+            if target_node:
+                nodes = [target_node]
+                envelope["node"] = target_node
+            else:
+                nodes = _all_configured_nodes()
+                if not nodes:
+                    return json.dumps(
+                        {
+                            "status": "error",
+                            "message": (
+                                "No integration nodes are configured "
+                                "(resources/node_config.csv is empty or missing)."
+                            ),
+                        },
+                        indent=2,
+                    )
+                envelope["discovered_targets"] = nodes
+
+            found = await asyncio.gather(*[_live_servers_on(n) for n in nodes])
+            discovered_servers: dict[str, list[str]] = {}
+            for n, (server_names, err) in zip(nodes, found):
+                if err:
+                    # A node that could not be listed must stay visible, or a
+                    # partial sweep reads as a complete one.
+                    discovery_errors.append(
+                        {"node": n, "servers_discovery_error": err}
+                    )
+                    continue
+                discovered_servers[n] = server_names
+                pairs.extend((n, s) for s in server_names)
+
+            envelope["discovered_servers"] = discovered_servers
+            if not pairs:
+                envelope["status"] = "error"
+                envelope["message"] = (
+                    f"No integration servers could be listed on {', '.join(nodes)}."
+                )
+                if discovery_errors:
+                    envelope["node_errors"] = discovery_errors
+                return json.dumps(envelope, indent=2)
 
         results = await asyncio.gather(
             *[_resource_inspect_one(n, s, requested) for n, s in pairs]
         )
-        envelope: dict = {
-            "status": "success",
-            "count": len(results),
-            "servers": list(results),
-        }
-        if target_node:
-            envelope["node"] = target_node
-        else:
-            envelope["discovered_nodes"] = discovered_nodes
+        envelope["count"] = len(results)
+        envelope["servers"] = list(results)
+        if discovery_errors:
+            envelope["node_errors"] = discovery_errors
         if requested:
             envelope["requested_resource_managers"] = requested
         return json.dumps(envelope, indent=2)

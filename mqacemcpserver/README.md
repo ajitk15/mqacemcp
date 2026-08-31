@@ -198,9 +198,36 @@ source for global-cache, JVM, Kafka, MQ-connection and connector settings.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `servers` | `list[str]` | yes | One or more integration server (execution group) names — e.g. `["ACE_DEMO_CONNECTORS"]`. |
+| `servers` | `list[str]` | no | One or more integration server (execution group) names — e.g. `["ACE_DEMO_CONNECTORS"]`. **Omit to sweep every server on the target node(s)**, discovered live. |
 | `resource_managers` | `list[str]` | no | Managers to report. Matched loosely — `"cache"`, `"global cache"`, `"jvm"`, `"heap"`, `"kafka"`, `"mq"`, `"https"` all resolve. Omit for a curated default set. |
 | `node` | `str` | no | Integration node shared by all servers. Omit to discover the hosting node(s) from the offline dump. |
+
+**Target resolution**
+
+| `servers` | `node` | behaviour |
+| --- | --- | --- |
+| named | named | inspect those servers on that node |
+| named | omitted | hosting node(s) from the offline dump, falling back to a live scan for an EG the dump does not list |
+| omitted | named | every server on that node, discovered **live** from `/servers?depth=1` |
+| omitted | omitted | every configured node, each swept live |
+
+**Named EGs are canonicalised before any REST call.** The ACE Admin API is
+case-sensitive, so `servers=["ace_demo_cache"]` would 404. Names resolve first
+against the offline dump (free, no HTTP — this keeps a named-EG lookup at
+exactly one call), then, only for names the dump does not know, against a live
+listing of the candidate node(s). That live fallback is what lets a running EG
+missing from the extract (`ACE_DEMO_RESTAPI` on the shipped estate) be found at
+all. A name that resolves nowhere returns `unknown_servers` plus a
+`did_you_mean` — the same shape `ace_search` uses — instead of a bare
+"Endpoint not found". A partially resolvable call inspects what it can AND
+reports what it could not.
+
+Server discovery is deliberately **live, not from `node_dump.csv`**: the dump is
+a periodic extract and can lag the node (on the shipped estate it lists four
+servers for NODE1 while the node runs five). Discovering from it would silently
+drop an EG from a "list every EG" answer. The dump is still correct for the
+reverse lookup "which node hosts EG X", which is why the `node`-omitted branch
+above still uses it.
 
 **What it does internally**
 - One `fetch_ace` call per server: `path="/servers/{server}/resource-managers?depth=2"`.
@@ -212,6 +239,9 @@ source for global-cache, JVM, Kafka, MQ-connection and connector settings.
 - Each entry is `{name, identifier, className, isDynamic, configured, active}` —
   `configured` is the `server.conf.yaml` value, `active` is what the running
   server is using, so a pending restart shows as a difference between the two.
+- On a sweep, `discovered_servers` maps each node to the EGs found, and a node
+  whose listing failed appears in `node_errors` rather than vanishing — a
+  partial sweep must never read as a complete one.
 - Single server + explicit `node` returns one envelope; anything else returns
   `{status, count, servers:[…], node | discovered_nodes}`.
 - `available_resource_managers` always lists every name, so a follow-up needs
@@ -224,6 +254,10 @@ source for global-cache, JVM, Kafka, MQ-connection and connector settings.
 - "What JVM heap and Kafka settings does ACE_DEMO_MESSAGING run with?"
 - "Show me the MQ connection manager config for EG X"
 - "How is EG X configured?" (no manager named — curated default set)
+- "List all global cache enabled EGs on NODE1" → `servers` omitted, `node="NODE1"`
+- "Which execution groups anywhere have Kafka configured?" → both omitted
+- "Is cache on for ACE_DEMO_RESTAPI?" — an EG absent from the offline extract;
+  resolved live
 
 ---
 
@@ -362,9 +396,13 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 
   6.1 `_nodes_hosting` (only when `node` is omitted) : exact `eg`/`application` lookup in `node_dump.csv` | in: `servers` | out: hosting node names
 
-  6.2 `fetch_ace` : `path="/servers/{server}/resource-managers?depth=2"` → all ~35 managers with `properties` + `active` + `descriptiveProperties` in one response
+  6.2 `_live_servers_on` (only when `servers` is omitted) : `fetch_ace` with `path="/servers?depth=1"` → the node's EG names, read LIVE (never `node_dump.csv`, which can lag) | in: `node` | out: `(names, error)`
 
-  6.3 `_resolve_rm_names` : maps caller terms onto real manager names (exact → alias map → `-manager`/`-connector` suffix → fuzzy against name and stem) | in: `requested`, `available` | out: `(resolved, {unresolved: suggestions})`
+  6.3 `fetch_ace` : `path="/servers/{server}/resource-managers?depth=2"` → all ~35 managers with `properties` + `active` + `descriptiveProperties` in one response
+
+  6.4 `_resolve_named_servers` (when `servers` IS given) : canonicalises EG names — offline dump first (no HTTP), live listing only for names it does not know | in: `names`, `target_node` | out: `([(node, server)], {servers_resolved, discovered_nodes, unknown_servers, did_you_mean, node_errors})`
+
+  6.5 `_resolve_rm_names` : maps caller terms onto real manager names (exact → alias map → `-manager`/`-connector` suffix → fuzzy against name and stem) | in: `requested`, `available` | out: `(resolved, {unresolved: suggestions})`
 
 ### 7. `ace_search` : combined OFFLINE search across configured nodes + BIP dump (no upstream HTTP)
 
@@ -544,6 +582,22 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver
 | 32 | ace_resource_inspect | `test_resource_inspect_default_selection_is_curated` | no manager named ⇒ curated subset only, with every name still in `available_resource_managers` |
 | 33 | ace_resource_inspect | `test_resource_inspect_surfaces_upstream_error` | upstream failure ⇒ `resource_managers_error`, no partial `resource_managers` |
 | 34 | ace_resource_inspect | `test_ace_resource_inspect_discovers_hosting_nodes` | EG named with no node ⇒ `discovered_nodes == ["NODE1","NODE2"]` |
+| 35 | ace_resource_inspect | `test_ace_resource_inspect_empty_servers_triggers_discovery` | `servers=[]` sweeps the estate instead of erroring (the exact failing orchestrator call) |
+| 36 | ace_resource_inspect | `test_resource_inspect_sweeps_live_servers_on_a_node` | `servers` omitted + `node` given ⇒ one `/servers?depth=1`, then one call per discovered EG |
+| 37 | ace_resource_inspect | `test_resource_inspect_sweep_uses_live_not_dump` | an EG absent from `node_dump.csv` (`ACE_DEMO_RESTAPI`) is still swept — discovery is live |
+| 38 | ace_resource_inspect | `test_resource_inspect_sweep_discovers_nodes_when_both_omitted` | both omitted ⇒ `discovered_targets == ["NODE1","NODE2"]` |
+| 39 | ace_resource_inspect | `test_resource_inspect_sweep_reports_discovery_failure` | one unreachable node ⇒ `node_errors`, the other node's results still returned |
+| 40 | ace_resource_inspect | `test_resource_inspect_sweep_all_nodes_failing_is_an_error` | every node failing ⇒ `status: "error"`, not an empty success |
+| 41 | ace_resource_inspect | `test_resource_inspect_named_server_still_skips_discovery` | naming a server issues NO `/servers` call — a targeted lookup never becomes a sweep |
+| 42 | ace_resource_inspect | `test_fixture_live_only_eg_is_really_absent_from_the_dump` | guards the premise: `ACE_DEMO_RESTAPI` is live but not in `node_dump.csv` |
+| 43 | ace_resource_inspect | `test_resource_inspect_live_only_server_falls_back_to_discovery` | an EG the dump lacks resolves via a live listing instead of erroring |
+| 44 | ace_resource_inspect | `test_resource_inspect_live_only_server_without_a_node` | same EG with no node scans the estate and finds its host |
+| 45 | ace_resource_inspect | `test_resource_inspect_canonicalises_case_from_the_dump` | `ace_demo_cache` → `ACE_DEMO_CACHE` with NO discovery call |
+| 46 | ace_resource_inspect | `test_resource_inspect_canonicalises_case_from_the_live_node` | lowercase live-only EG corrected against the live listing |
+| 47 | ace_resource_inspect | `test_resource_inspect_typo_returns_did_you_mean` | a typo suggests and fires NO doomed resource-managers call |
+| 48 | ace_resource_inspect | `test_resource_inspect_nonsense_name_omits_empty_suggestions` | no close match ⇒ `did_you_mean` absent, never an empty list |
+| 49 | ace_resource_inspect | `test_resource_inspect_partial_resolution_reports_both` | good + bad name ⇒ good one inspected AND bad one reported (never silently dropped) |
+| 50 | ace_resource_inspect | `test_resource_inspect_dedups_two_spellings_of_one_server` | two spellings of one EG issue a single call |
 
 ### Test conventions
 
