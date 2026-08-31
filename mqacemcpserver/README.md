@@ -239,6 +239,10 @@ above still uses it.
 - Each entry is `{name, identifier, className, isDynamic, configured, active}` —
   `configured` is the `server.conf.yaml` value, `active` is what the running
   server is using, so a pending restart shows as a difference between the two.
+- An empty `resource_managers` always carries a `selection_note` saying WHY.
+  On its own the empty list reads as "this server has no resource managers",
+  which would be flatly wrong — the note names the terms that missed and
+  states how many managers really are present.
 - On a sweep, `discovered_servers` maps each node to the EGs found, and a node
   whose listing failed appears in `node_errors` rather than vanishing — a
   partial sweep must never read as a complete one.
@@ -604,6 +608,9 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver
 | 54 | ace_resource_inspect | `test_resolve_rm_mixes_known_unknown_and_suggestible` | one call mixing all three outcomes reports each in the right place |
 | 55 | ace_resource_inspect | `test_resource_inspect_unknown_manager_omits_empty_did_you_mean` | envelope level: `unknown_resource_managers` is a list, no empty `did_you_mean` |
 | 56 | ace_resource_inspect | `test_resource_inspect_unknown_manager_keeps_real_suggestions` | a near-miss manager name still auto-resolves into `resource_managers` |
+| 57 | ace_resource_inspect | `test_resource_inspect_empty_result_explains_itself` | empty `resource_managers` carries a note naming the missed terms and the real manager count |
+| 58 | ace_resource_inspect | `test_resource_inspect_partial_match_keeps_no_stale_note` | a partial match is unambiguous, so it gets NO empty-result note |
+| 59 | ace_resource_inspect | `test_resource_inspect_default_set_absent_says_so` | a server with none of the curated defaults is not described as having had them returned |
 
 ### Test conventions
 

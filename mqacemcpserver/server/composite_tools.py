@@ -976,14 +976,37 @@ async def _resource_inspect_one(
             # collide in one response: server-name resolution runs before any
             # per-server call and short-circuits when nothing resolves.
             envelope["did_you_mean"] = hints
+        if not selected:
+            # An empty `resource_managers` is dangerously ambiguous on its
+            # own: it reads as "this server HAS no resource managers", which
+            # would be flatly wrong - this server has
+            # len(available) of them. Say which reading is correct.
+            envelope["selection_note"] = (
+                f"None of the requested names ({', '.join(requested)}) matched "
+                f"a resource manager on this integration server. This is a "
+                f"name-matching miss, NOT an empty server: "
+                f"{len(available)} resource managers are present and listed in "
+                "`available_resource_managers`."
+            )
     else:
         selected = [n for n in _RM_DEFAULT if n in by_name]
         envelope["selected_by"] = "default"
-        envelope["selection_note"] = (
-            "No resource manager was named, so a curated default set was "
-            "returned. Every available name is listed in "
-            "`available_resource_managers`."
-        )
+        if selected:
+            envelope["selection_note"] = (
+                "No resource manager was named, so a curated default set was "
+                "returned. Every available name is listed in "
+                "`available_resource_managers`."
+            )
+        else:
+            # A server carrying none of the curated defaults would otherwise
+            # get the note above, which would misdescribe an empty result.
+            envelope["selection_note"] = (
+                "No resource manager was named, and this integration server "
+                "carries none of the curated default set "
+                f"({', '.join(_RM_DEFAULT)}). Its {len(available)} available "
+                "managers are listed in `available_resource_managers`; name "
+                "one to inspect it."
+            )
 
     entries: list[dict] = []
     for name in selected:

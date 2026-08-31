@@ -1443,6 +1443,9 @@ def test_resource_inspect_unknown_manager_omits_empty_did_you_mean(monkeypatch):
     assert env["unknown_resource_managers"] == ["zzzz"], env
     assert "did_you_mean" not in env, env
     assert env["resource_managers"] == []
+    # An empty list alone reads as "this server has no resource managers".
+    note = env["selection_note"]
+    assert "zzzz" in note and "NOT an empty server" in note, note
 
 
 def test_resource_inspect_unknown_manager_keeps_real_suggestions(monkeypatch):
@@ -1454,3 +1457,52 @@ def test_resource_inspect_unknown_manager_keeps_real_suggestions(monkeypatch):
     # Close enough to auto-resolve, so it lands in resource_managers.
     assert [r["name"] for r in env["resource_managers"]] == ["global-cache"], env
     assert "unknown_resource_managers" not in env
+
+
+def test_resource_inspect_empty_result_explains_itself(monkeypatch):
+    """`resource_managers: []` must never be left to speak for itself.
+
+    The wrong reading - "this integration server has no resource managers" -
+    is a confidently false answer, so the note rules it out explicitly and
+    states how many really are present.
+    """
+    from server.composite_tools import _resource_inspect_one
+
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", ["zzzz", "banana"]))
+
+    assert env["resource_managers"] == []
+    note = env["selection_note"]
+    assert "zzzz" in note and "banana" in note, note
+    assert str(len(env["available_resource_managers"])) in note, note
+
+
+def test_resource_inspect_partial_match_keeps_no_stale_note(monkeypatch):
+    """A partial match is unambiguous, so it gets no empty-result note."""
+    from server.composite_tools import _resource_inspect_one
+
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", ["cache", "zzzz"]))
+
+    assert [r["name"] for r in env["resource_managers"]] == [
+        "global-cache",
+        "xpath-cache",
+    ], env
+    assert env["unknown_resource_managers"] == ["zzzz"]
+    assert "selection_note" not in env, env
+
+
+def test_resource_inspect_default_set_absent_says_so(monkeypatch):
+    """A server carrying none of the curated defaults must not be described
+    as having had "a curated default set returned"."""
+    from server.composite_tools import _resource_inspect_one
+
+    # Only xpath-cache: none of _RM_DEFAULT is present.
+    entries = [("xpath-cache", {"identifier": "ComIbmXPathCache"}, {"mode": True})]
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(entries))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", []))
+
+    assert env["selected_by"] == "default"
+    assert env["resource_managers"] == []
+    assert "carries none of the curated default set" in env["selection_note"], env
+    assert "xpath-cache" in env["available_resource_managers"]
