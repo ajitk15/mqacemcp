@@ -920,20 +920,21 @@ def _resolve(requested):
 
 def test_resolve_rm_cache_returns_both_caches():
     """"cache" is ambiguous on an integration server — answer both, not one."""
-    resolved, unknown = _resolve(["cache"])
+    resolved, unknown, hints = _resolve(["cache"])
     assert resolved == ["global-cache", "xpath-cache"], resolved
-    assert unknown == {}
+    assert unknown == []
+    assert hints == {}
 
 
 def test_resolve_rm_accepts_spacing_and_underscore_spellings():
     for term in ("Global Cache", "global_cache", "GLOBAL-CACHE"):
-        resolved, unknown = _resolve([term])
+        resolved, unknown, _hints = _resolve([term])
         assert resolved == ["global-cache"], (term, resolved)
-        assert unknown == {}
+        assert unknown == [], (term, unknown)
 
 
 def test_resolve_rm_aliases_and_suffix_completion():
-    resolved, _ = _resolve(["jvm", "kafka", "mq", "https"])
+    resolved, _unknown, _hints = _resolve(["jvm", "kafka", "mq", "https"])
     assert resolved == [
         "jvm-manager",
         "kafka-manager",
@@ -943,17 +944,43 @@ def test_resolve_rm_aliases_and_suffix_completion():
 
 
 def test_resolve_rm_dedups_overlapping_terms():
-    resolved, _ = _resolve(["cache", "global-cache", "xpath"])
+    resolved, _unknown, _hints = _resolve(["cache", "global-cache", "xpath"])
     assert resolved == ["global-cache", "xpath-cache"], resolved
 
 
-def test_resolve_rm_unknown_term_suggests_never_errors():
-    resolved, unknown = _resolve(["kafk4"])
-    assert resolved == ["kafka-manager"], resolved  # single close match resolves
+def test_resolve_rm_single_close_match_auto_resolves():
+    """One unambiguous near-match is a typo, not a question."""
+    resolved, unknown, hints = _resolve(["kafk4"])
+    assert resolved == ["kafka-manager"], resolved
+    assert unknown == []
+    assert hints == {}
 
-    resolved, unknown = _resolve(["totally-bogus-thing"])
+
+def test_resolve_rm_unknown_with_suggestions_populates_did_you_mean():
+    """The USEFUL half of the report must not regress into silence."""
+    resolved, unknown, hints = _resolve(["conector"])
     assert resolved == []
-    assert "totally-bogus-thing" in unknown
+    assert unknown == ["conector"]
+    assert {"http-connector", "https-connector"} <= set(hints["conector"]), hints
+
+
+def test_resolve_rm_unknown_without_suggestions_omits_did_you_mean():
+    """No close match ⇒ absent from `did_you_mean`, never mapped to `[]`.
+
+    `{"zzzz": []}` reads as "here are the suggestions: none", which is
+    indistinguishable from a truncation bug to a reader and to the LLM.
+    """
+    resolved, unknown, hints = _resolve(["totally-bogus-thing"])
+    assert resolved == []
+    assert unknown == ["totally-bogus-thing"]
+    assert hints == {}, hints
+
+
+def test_resolve_rm_mixes_known_unknown_and_suggestible():
+    resolved, unknown, hints = _resolve(["kafka", "conector", "zzzz"])
+    assert resolved == ["kafka-manager"], resolved
+    assert unknown == ["conector", "zzzz"], unknown
+    assert list(hints) == ["conector"], hints
 
 
 def _rm_payload(entries):
@@ -1398,3 +1425,32 @@ def test_resource_inspect_dedups_two_spellings_of_one_server(monkeypatch):
     assert paths == [
         "/servers/ACE_DEMO_CACHE/resource-managers?depth=2"
     ], paths
+
+
+def test_resource_inspect_unknown_manager_omits_empty_did_you_mean(monkeypatch):
+    """Envelope level: an unmatchable manager reports plainly, no empty list.
+
+    Mirrors `test_resource_inspect_nonsense_name_omits_empty_suggestions`,
+    which guards the same rule for EG names.
+    """
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    env = asyncio.run(
+        __import__("server.composite_tools", fromlist=["x"])._resource_inspect_one(
+            "NODE1", "EG1", ["zzzz"]
+        )
+    )
+
+    assert env["unknown_resource_managers"] == ["zzzz"], env
+    assert "did_you_mean" not in env, env
+    assert env["resource_managers"] == []
+
+
+def test_resource_inspect_unknown_manager_keeps_real_suggestions(monkeypatch):
+    from server.composite_tools import _resource_inspect_one
+
+    _stub_fetch_ace(monkeypatch, lambda p: _rm_payload(_CACHE_ENTRIES))
+    env = asyncio.run(_resource_inspect_one("NODE1", "EG1", ["glob4l-cache"]))
+
+    # Close enough to auto-resolve, so it lands in resource_managers.
+    assert [r["name"] for r in env["resource_managers"]] == ["global-cache"], env
+    assert "unknown_resource_managers" not in env

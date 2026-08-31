@@ -402,7 +402,7 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 
   6.4 `_resolve_named_servers` (when `servers` IS given) : canonicalises EG names — offline dump first (no HTTP), live listing only for names it does not know | in: `names`, `target_node` | out: `([(node, server)], {servers_resolved, discovered_nodes, unknown_servers, did_you_mean, node_errors})`
 
-  6.5 `_resolve_rm_names` : maps caller terms onto real manager names (exact → alias map → `-manager`/`-connector` suffix → fuzzy against name and stem) | in: `requested`, `available` | out: `(resolved, {unresolved: suggestions})`
+  6.5 `_resolve_rm_names` : maps caller terms onto real manager names (exact → alias map → `-manager`/`-connector` suffix → fuzzy against name and stem) | in: `requested`, `available` | out: `(resolved, unknown, did_you_mean)` — `unknown` is a plain list; `did_you_mean` carries only terms that HAVE a close match, so a term with none is absent rather than mapped to `[]`
 
 ### 7. `ace_search` : combined OFFLINE search across configured nodes + BIP dump (no upstream HTTP)
 
@@ -598,6 +598,12 @@ cd C:\Workspace\hready\mqacemcp\mqacemcpserver
 | 48 | ace_resource_inspect | `test_resource_inspect_nonsense_name_omits_empty_suggestions` | no close match ⇒ `did_you_mean` absent, never an empty list |
 | 49 | ace_resource_inspect | `test_resource_inspect_partial_resolution_reports_both` | good + bad name ⇒ good one inspected AND bad one reported (never silently dropped) |
 | 50 | ace_resource_inspect | `test_resource_inspect_dedups_two_spellings_of_one_server` | two spellings of one EG issue a single call |
+| 51 | ace_resource_inspect | `test_resolve_rm_single_close_match_auto_resolves` | one unambiguous near-match (`kafk4`) resolves rather than becoming an unknown |
+| 52 | ace_resource_inspect | `test_resolve_rm_unknown_with_suggestions_populates_did_you_mean` | `conector` ⇒ `did_you_mean` lists the connector managers |
+| 53 | ace_resource_inspect | `test_resolve_rm_unknown_without_suggestions_omits_did_you_mean` | no close match ⇒ absent from `did_you_mean`, never mapped to `[]` |
+| 54 | ace_resource_inspect | `test_resolve_rm_mixes_known_unknown_and_suggestible` | one call mixing all three outcomes reports each in the right place |
+| 55 | ace_resource_inspect | `test_resource_inspect_unknown_manager_omits_empty_did_you_mean` | envelope level: `unknown_resource_managers` is a list, no empty `did_you_mean` |
+| 56 | ace_resource_inspect | `test_resource_inspect_unknown_manager_keeps_real_suggestions` | a near-miss manager name still auto-resolves into `resource_managers` |
 
 ### Test conventions
 

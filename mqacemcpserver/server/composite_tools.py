@@ -173,14 +173,21 @@ def _normalise_rm(name: str) -> str:
 
 def _resolve_rm_names(
     requested: list[str], available: list[str]
-) -> tuple[list[str], dict[str, list[str]]]:
+) -> tuple[list[str], list[str], dict[str, list[str]]]:
     """Map caller-supplied terms onto real resource-manager names.
 
     Tried in order: exact name, alias map, the `-manager`/`-connector` suffix
-    the ACE naming convention adds, then a fuzzy match. Returns the resolved
-    names (de-duplicated, caller order preserved) plus, for every term that
-    resolved to nothing, its closest suggestions — so an unknown name comes
-    back as a "did you mean" rather than an upstream 404.
+    the ACE naming convention adds, then a fuzzy match — so an unknown name
+    comes back as a "did you mean" rather than an upstream 404.
+
+    Returns `(resolved, unknown, did_you_mean)`, the same shape
+    `_resolve_named_servers` uses for EG names:
+      - `resolved` — real manager names, de-duplicated, caller order kept;
+      - `unknown` — the caller's terms that matched nothing, as a plain list;
+      - `did_you_mean` — `{term: suggestions}` for unknown terms that DO have
+        a close match. A term with no close match is simply absent; mapping it
+        to an empty list reads as a truncation bug to both a human and the
+        orchestrator's LLM.
     """
     by_norm = {_normalise_rm(a): a for a in available}
     # Callers type the stem ("kafka", "jvm"), not the full ACE name, so the
@@ -192,7 +199,8 @@ def _resolve_rm_names(
             if norm.endswith(suffix):
                 by_stem.setdefault(norm[: -len(suffix)], real)
     resolved: list[str] = []
-    unknown: dict[str, list[str]] = {}
+    unknown: list[str] = []
+    did_you_mean: dict[str, list[str]] = {}
 
     for term in requested:
         norm = _normalise_rm(term)
@@ -218,15 +226,18 @@ def _resolve_rm_names(
                 if real not in suggestions:
                     suggestions.append(real)
             if len(suggestions) == 1:
+                # One unambiguous near-match is a typo, not a question.
                 hits = suggestions
             else:
-                unknown[term] = suggestions
+                unknown.append(term)
+                if suggestions:
+                    did_you_mean[term] = suggestions
 
         for h in hits:
             if h not in resolved:
                 resolved.append(h)
 
-    return resolved, unknown
+    return resolved, unknown, did_you_mean
 
 
 # --- Target discovery -------------------------------------------------------
@@ -956,10 +967,15 @@ async def _resource_inspect_one(
     envelope["available_resource_managers"] = available
 
     if requested:
-        selected, unknown = _resolve_rm_names(requested, available)
+        selected, unknown, hints = _resolve_rm_names(requested, available)
         envelope["selected_by"] = "requested"
         if unknown:
             envelope["unknown_resource_managers"] = unknown
+        if hints:
+            # Same key `_resolve_named_servers` uses for EG names. They cannot
+            # collide in one response: server-name resolution runs before any
+            # per-server call and short-circuits when nothing resolves.
+            envelope["did_you_mean"] = hints
     else:
         selected = [n for n in _RM_DEFAULT if n in by_name]
         envelope["selected_by"] = "default"
@@ -1672,7 +1688,8 @@ def register(mcp: FastMCP) -> None:
         Names are matched loosely — "cache", "global cache", "jvm", "heap",
         "kafka", "mq" all resolve. Ambiguous "cache" returns BOTH the global
         cache and the XPath cache. An unrecognised name comes back in
-        `unknown_resource_managers` with suggestions, never as an error.
+        `unknown_resource_managers`, with `did_you_mean` when there is a
+        close match, never as an error.
 
         OMIT `resource_managers` for a general "how is this EG configured"
         question: a curated default set is returned plus every available name
