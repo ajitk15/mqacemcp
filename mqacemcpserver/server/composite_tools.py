@@ -638,6 +638,26 @@ async def _host_overview_one(
     return "\n".join(sections)
 
 
+def _server_entry(child: dict) -> dict:
+    """One integration server, with its LIVE start time lifted out of `active`.
+
+    `active.startupTime` is the current process's start — i.e. the LAST restart
+    of this integration server. It is the only start/restart time this build can
+    produce; the offline dump has none (see ace_helpers._rows_to_results). It is
+    lifted to a flat `startup_time` rather than left nested because a renderer
+    that tabulates these entries drops dict-valued columns, which would hide it
+    entirely. `active` is still passed through whole (`startupEpoch`,
+    `processId`, `lastMessageTime`, trace flags, …).
+    """
+    active = child.get("active") or {}
+    entry: dict = {"name": child.get("name")}
+    if isinstance(active, dict) and active.get("startupTime"):
+        entry["startup_time"] = active["startupTime"]
+    entry["active"] = child.get("active")
+    entry["properties"] = child.get("properties")
+    return entry
+
+
 async def _node_overview_one(node: str) -> dict:
     """Single-node overview envelope (node status + integration servers)."""
     node_task = fetch_ace(node, "", "node", node=node)
@@ -668,12 +688,7 @@ async def _node_overview_one(node: str) -> dict:
     if servers_doc.get("status") == "success":
         children = (servers_doc.get("raw_response") or {}).get("children", [])
         envelope["servers"] = [
-            {
-                "name": c.get("name"),
-                "active": c.get("active"),
-                "properties": c.get("properties"),
-            }
-            for c in children
+            _server_entry(c) for c in children
         ]
     else:
         envelope["servers_error"] = servers_doc.get("message")
@@ -1448,7 +1463,21 @@ def register(mcp: FastMCP) -> None:
 
         For each node it issues the node-status and `/servers?depth=2` calls
         concurrently and builds an envelope: `{status, node, properties,
-        descriptiveProperties, servers: [{name, active, properties}]}`.
+        descriptiveProperties, servers: [{name, startup_time, active,
+        properties}]}`. This is a LIVE Admin REST call, not a cached extract.
+
+        THIS IS THE TOOL FOR "WHEN WAS EG X STARTED / RESTARTED" and "how long
+        has EG Y been up". Each server carries `startup_time` (also
+        `active.startupTime`, with `active.startupEpoch` and `active.processId`
+        alongside) — the start of the currently running process, i.e. that
+        integration server's MOST RECENT RESTART. Compute uptime as now minus
+        that. NEVER answer this from `ace_search`: the offline dump has no event
+        times, only the time its extract job ran.
+
+        LIMIT — there is NO RESTART HISTORY. Only the current process start is
+        available; how many times an EG has restarted, or when it restarted
+        before this one, is not exposed by any tool here (it lives in the ACE
+        syslog / event log). Say so rather than inferring one.
 
         Pass MULTIPLE nodes to overview them all in one call — e.g. "what's on
         NODE1 and NODE2?" → `nodes=["NODE1","NODE2"]`. A single node returns
@@ -1910,6 +1939,14 @@ def register(mcp: FastMCP) -> None:
         `resources/node_dump.csv` (cached BIP messages from the periodic
         extract job) in a single call.
 
+        THIS DUMP HAS NO EVENT TIMES. `extracted_at` on every returned row is
+        WHEN THE EXTRACT JOB RAN — it is identical across the whole file and
+        says nothing about when anything started, stopped, restarted or was
+        deployed. NEVER report it as a start/restart/stop/deployment time. For
+        a live "when was EG X last started / restarted / how long has it been
+        up" question use `ace_node_overview`, whose per-EG `active` block
+        carries the real startup time.
+
         EXECUTION GROUPS ARE MATCHED EXACTLY. When a search string (or the
         `server` argument) names a known integration server, the dump result
         is scoped to rows that genuinely belong to that EG: a structured
@@ -2095,6 +2132,17 @@ def register(mcp: FastMCP) -> None:
                         envelope["did_you_mean"] = near
 
                 envelope["dump_matches"] = merged
+                envelope["data_source"] = (
+                    "offline extract (resources/node_dump.csv)"
+                )
+                envelope["provenance_note"] = (
+                    "`extracted_at` is when the extract job ran, NOT when the "
+                    "event happened. This dump holds BIP status statements "
+                    "with no event or transition times at all — never report "
+                    "`extracted_at` as a start, restart, stop or deployment "
+                    "time. Live start/restart/uptime comes from "
+                    "`ace_node_overview`."
+                )
 
         return json.dumps(envelope, indent=2)
 

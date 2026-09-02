@@ -303,14 +303,23 @@ async def fetch_ace(
 
 
 def _rows_to_results(matches: pd.DataFrame) -> list[dict]:
-    """Shape dump rows into the public {timestamp, host, node, status} dicts."""
+    """Shape dump rows into the public {extracted_at, host, node, status} dicts.
+
+    `extracted_at` is the CSV's `extractedat` column — WHEN THE EXTRACT JOB RAN,
+    never when the thing described in `status` happened. The BIP text carries no
+    event time at all, so nothing here can date a start, restart or deployment.
+    The public key is deliberately not called `timestamp`: a bare `timestamp`
+    sitting beside "…is running." reads as an event time and gets reported as
+    one. Live start/restart times come from the Admin REST API instead (see
+    `ace_node_overview`).
+    """
     results = []
     for _, r in matches.iterrows():
         ts = r["timestamp"]
         ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if pd.notnull(ts) else ""
         results.append(
             {
-                "timestamp": ts_str,
+                "extracted_at": ts_str,
                 "host": r["host"],
                 "node": r["node"],
                 "status": r["status"],
@@ -328,10 +337,13 @@ _DUMP_SEARCH_COLUMNS = ("timestamp", "host", "node", "status")
 
 
 def search_node_dump(search_string: str) -> list[dict]:
-    """Search node_dump.csv (timestamp/host/node/status) and return matching rows.
+    """Search node_dump.csv and return matching {extracted_at, host, node, status} rows.
 
     Unanchored substring match. For "everything belonging to execution group
     X" use server_inventory(), which matches the parsed `eg` column exactly.
+
+    `extracted_at` is the extract job's run time, not an event time — see
+    _rows_to_results.
     """
     df = load_node_dump()
     if df.empty:
@@ -465,9 +477,12 @@ def dump_rows(
 ) -> list[dict]:
     """Dump rows filtered by EXACT eg / application / node.
 
-    Same {timestamp, host, node, status} shape as search_node_dump, but
+    Same {extracted_at, host, node, status} shape as search_node_dump, but
     selected by parsed field equality rather than a substring sweep, so the
     result can never contain a row belonging to another execution group.
+
+    `extracted_at` is the extract job's run time, not an event time — see
+    _rows_to_results.
     """
     df = load_node_dump()
     if df.empty:
