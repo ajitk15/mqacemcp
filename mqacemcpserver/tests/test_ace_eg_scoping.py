@@ -104,7 +104,7 @@ def test_unparseable_rows_are_not_dropped_from_the_frame():
     assert not df.empty
     assert "eg" in df.columns
     # Every source row survives parsing.
-    assert len(df) == len(df["status"])
+    assert len(df) == len(df["resource"])
 
 
 # ---------------------------------------------------------------------------
@@ -185,9 +185,9 @@ def test_ace_search_eg_scope_leaks_no_other_execution_group():
     out = json.loads(_tool("ace_search")(search_strings=[CONNECTORS], scope="dump"))
     assert out["dump_matches"]
     for row in out["dump_matches"]:
-        assert CONNECTORS in row["status"], row
+        assert CONNECTORS in row["resource"], row
         for other in OTHER_EGS:
-            assert other not in row["status"], row
+            assert other not in row["resource"], row
 
 
 def test_ace_search_eg_name_wins_over_loose_terms():
@@ -201,7 +201,7 @@ def test_ace_search_eg_name_wins_over_loose_terms():
     assert out["match_kind"] == "exact-eg"
     assert out["ignored_search_strings"] == ["Application"]
     for row in out["dump_matches"]:
-        assert CONNECTORS in row["status"], row
+        assert CONNECTORS in row["resource"], row
 
 
 def test_ace_search_application_scope_excludes_the_prefix_policy():
@@ -214,7 +214,7 @@ def test_ace_search_application_scope_excludes_the_prefix_policy():
     assert out["match_kind"] == "exact-eg"
     assert [a["name"] for a in out["servers"][0]["applications"]] == ["AmazonS3"]
     for row in out["dump_matches"]:
-        assert "AmazonS31" not in row["status"], row
+        assert "AmazonS31" not in row["resource"], row
 
 
 def test_ace_search_unknown_server_is_not_found_with_suggestions():
@@ -257,3 +257,69 @@ def test_server_explore_intersects_server_and_application():
     # The old code searched for any row mentioning the name; a policy or file
     # named after something must not make its node a "host".
     assert _nodes_hosting(["AmazonS31"]) == []
+
+
+# ---------------------------------------------------------------------------
+# Extract-time provenance — the regression that started this
+# ---------------------------------------------------------------------------
+def test_dump_rows_carry_no_date():
+    """A per-row extract time got reported as an EG's restart time.
+
+    Every row of node_dump.csv carries the SAME extractedat (it is one run), so
+    a date on a row described the file, not the row — and sitting beside
+    "...is running." it read as when the thing started running. Rows now carry
+    only per-row facts; the extract time is envelope metadata.
+    """
+    rows = dump_rows(server=CONNECTORS)
+    assert rows
+    for row in rows:
+        assert set(row) == {"hostname", "node", "resource"}, row
+
+
+def test_ace_search_reports_the_extract_time_once():
+    """CX10 still answerable: the provenance question is about the FILE."""
+    out = json.loads(_tool("ace_search")(search_strings=[CONNECTORS], scope="dump"))
+    assert out["extractedat"] == "2026-06-25 10:30:19"
+    assert "node_dump.csv" in out["data_source"]
+    # The shipped extract is a single instant, so no range is reported.
+    assert "extractedat_range" not in out
+
+
+def test_extract_date_is_not_searchable():
+    """`extractedat` sat in the search haystack, so any part of that date
+    matched all 178 rows. It is excluded now."""
+    out = json.loads(_tool("ace_search")(search_strings=["2026-06"], scope="dump"))
+    assert out["dump_matches"] == []
+
+
+def test_malformed_extract_is_rejected_at_load(tmp_path, monkeypatch):
+    """A botched daily swap must not take the ACE tools down.
+
+    The loader used to accept any parseable CSV, so a dump missing `resource`
+    (or still carrying the old timestamp|host|status headers) sailed through
+    load and surfaced as a KeyError inside whichever tool was called next.
+    Rejecting it here is what lets CsvCache keep serving the last good extract.
+    """
+    from server import ace_helpers
+
+    for header, row in (
+        ("extractedat|hostname|node", "2026-06-25 10:30:19|localhost|NODE1"),
+        ("timestamp|host|status", "2026-06-25 10:30:19|localhost|whatever"),
+    ):
+        bad = tmp_path / "node_dump.csv"
+        bad.write_text(f"{header}\n{row}", encoding="utf-8")
+        monkeypatch.setattr(ace_helpers, "ACE_NODE_DUMP_PATH", bad)
+        assert ace_helpers._load_node_dump_from_disk() is None, header
+
+
+def test_extract_window_survives_a_missing_or_unparseable_date():
+    """`extractedat` is optional metadata — never a reason to fail a call."""
+    import pandas as pd
+    from server import ace_helpers
+
+    for frame in (
+        pd.DataFrame({"hostname": ["h"], "node": ["N"], "resource": ["r"]}),
+        pd.DataFrame({"extractedat": [pd.NaT], "hostname": ["h"],
+                      "node": ["N"], "resource": ["r"]}),
+    ):
+        assert ace_helpers._add_structured_columns(frame.copy()) is not None

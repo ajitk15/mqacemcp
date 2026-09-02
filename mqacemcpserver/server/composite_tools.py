@@ -26,6 +26,7 @@ import re
 from mcp.server.fastmcp import FastMCP
 
 from server.ace_helpers import (
+    dump_extracted_at,
     dump_rows,
     fetch_ace,
     known_servers,
@@ -1633,10 +1634,12 @@ def register(mcp: FastMCP) -> None:
             # Context: last-extract status from node_dump.csv (not a hard verdict).
             dump = search_node_dump(nd)
             if dump:
-                sample = dump[0].get("status", "")
+                sample = dump[0].get("resource", "")
+                window = dump_extracted_at()
+                when = f" (extracted {window[1]})" if window else ""
                 lines.append(
-                    f"ℹ️ Last extract: {len(dump)} node_dump line(s) reference "
-                    f"'{nd}'. Sample: {sample[:120]}"
+                    f"ℹ️ Last extract{when}: {len(dump)} node_dump line(s) "
+                    f"reference '{nd}'. Sample: {sample[:120]}"
                 )
             else:
                 lines.append(
@@ -1939,9 +1942,12 @@ def register(mcp: FastMCP) -> None:
         `resources/node_dump.csv` (cached BIP messages from the periodic
         extract job) in a single call.
 
-        THIS DUMP HAS NO EVENT TIMES. `extracted_at` on every returned row is
-        WHEN THE EXTRACT JOB RAN — it is identical across the whole file and
-        says nothing about when anything started, stopped, restarted or was
+        Dump rows are `{hostname, node, resource}` — `resource` is the raw BIP
+        status line.
+
+        THIS DUMP HAS NO EVENT TIMES. Rows carry NO date at all. The envelope's
+        `extractedat` is WHEN THE EXTRACT JOB RAN, describing the whole file,
+        and says nothing about when anything started, stopped, restarted or was
         deployed. NEVER report it as a start/restart/stop/deployment time. For
         a live "when was EG X last started / restarted / how long has it been
         up" question use `ace_node_overview`, whose per-EG `active` block
@@ -2135,12 +2141,18 @@ def register(mcp: FastMCP) -> None:
                 envelope["data_source"] = (
                     "offline extract (resources/node_dump.csv)"
                 )
+                window = dump_extracted_at()
+                if window:
+                    envelope["extractedat"] = window[1]
+                    if window[0] != window[1]:
+                        envelope["extractedat_range"] = list(window)
                 envelope["provenance_note"] = (
-                    "`extracted_at` is when the extract job ran, NOT when the "
-                    "event happened. This dump holds BIP status statements "
-                    "with no event or transition times at all — never report "
-                    "`extracted_at` as a start, restart, stop or deployment "
-                    "time. Live start/restart/uptime comes from "
+                    "`extractedat` above is WHEN THE EXTRACT JOB RAN — it "
+                    "describes this whole file, not any one row, which is why "
+                    "no row carries a date. This dump holds BIP status "
+                    "statements with no event or transition times at all, so "
+                    "never report `extractedat` as a start, restart, stop or "
+                    "deployment time. Live start/restart/uptime comes from "
                     "`ace_node_overview`."
                 )
 

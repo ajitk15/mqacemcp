@@ -290,6 +290,15 @@ message dump, in one call.
 - `scope="dump"` → calls `search_node_dump(s)` per string over `node_dump.csv`, merged + de-duplicated.
 - `scope="all"` (default) → both sections in one envelope.
 
+**Extract-time provenance.** Dump rows are `{hostname, node, resource}` and carry **no
+date**: `extractedat` holds one value for the whole file, so per-row it described the file
+rather than the row — and next to a `BIP…is running.` line it got read as when the thing
+started running (an EG's restart time, in one real case). Any `scope` touching the dump
+therefore reports it ONCE on the envelope instead: `extractedat` (latest, from
+`dump_extracted_at()`), `extractedat_range` only when a single extract run stamped rows at
+different instants, plus `data_source` and a `provenance_note` restating that this is when
+the job ran. Live start/restart/uptime comes from `ace_node_overview` → `startup_time`.
+
 **Sample user questions it answers in one call**
 - "List all integration nodes" → `search_strings=[""], scope="nodes"`
 - "Find any node matching lodace01.example.com" → `scope="nodes"`
@@ -424,7 +433,7 @@ others live in `server/mq_helpers.py`, `server/ace_helpers.py`,
 
   7.2 `load_node_dump` : cached read of `resources/node_dump.csv` (used here as an "empty / missing" check before searching) | in: none | out: pandas DataFrame
 
-  7.3 `search_node_dump` : case-insensitive substring search across all string columns of `node_dump.csv` | in: `search_string` | out: `list[{timestamp, host, node, status}]`
+  7.3 `search_node_dump` : case-insensitive substring search over `node_dump.csv`'s `hostname`/`node`/`resource` columns (NOT `extractedat` — one value for the whole file, so any part of that date matched every row) | in: `search_string` | out: `list[{hostname, node, resource}]`
 
 ### 8. `get_cert_details` : OFFLINE certificate inventory lookup (no upstream HTTP)
 

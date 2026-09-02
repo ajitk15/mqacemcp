@@ -124,13 +124,13 @@ def _parse_resource(text: str) -> dict:
 
 
 def _add_structured_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Derive the EG/application/flow columns from the free-text `status`."""
-    if "status" not in df.columns:
+    """Derive the EG/application/flow columns from the free-text `resource`."""
+    if "resource" not in df.columns:
         for col in _STRUCTURED_COLUMNS:
             df[col] = ""
         return df
     parsed = pd.DataFrame(
-        [_parse_resource(t) for t in df["status"]],
+        [_parse_resource(t) for t in df["resource"]],
         index=df.index,
         columns=list(_STRUCTURED_COLUMNS),
     ).fillna("")
@@ -149,19 +149,36 @@ def _load_node_dump_from_disk() -> pd.DataFrame | None:
             skipinitialspace=True,
             header=0,
         )
+        # No renaming: every column keeps the name node_dump.csv gives it
+        # (extractedat|hostname|node|resource), so a reader comparing the file
+        # to this code sees the same words. The loader used to rebrand
+        # `extractedat` as `timestamp`, which is how an extract time ended up
+        # being reported as an integration server's restart time.
         df.columns = [c.strip() for c in df.columns]
-        df = df.rename(
-            columns={
-                "extractedat": "timestamp",
-                "hostname": "host",
-                "resource": "status",
-            }
-        )
+
+        # Reject a malformed extract HERE, while CsvCache can still keep the
+        # last good one. Without this the bad columns sail through load and blow
+        # up later as a KeyError inside whichever tool happens to be called —
+        # a botched daily swap would take the ACE tools down instead of just
+        # serving yesterday's data. `extractedat` is NOT required: it is
+        # response-level metadata and dump_extracted_at() reports None for it.
+        required = {"hostname", "node", "resource"}
+        missing = required - set(df.columns)
+        if missing:
+            logger.error(
+                "ACE node dump at %s is missing required column(s) %s; got %s. "
+                "Keeping the previously loaded extract.",
+                ACE_NODE_DUMP_PATH,
+                sorted(missing),
+                sorted(df.columns),
+            )
+            return None
+
         for col in df.columns:
             if df[col].dtype == "object":
                 df[col] = df[col].str.strip()
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        if "extractedat" in df.columns:
+            df["extractedat"] = pd.to_datetime(df["extractedat"], errors="coerce")
         df = _add_structured_columns(df)
         logger.info(
             "ACE node dump loaded: %d rows, %d columns", len(df), len(df.columns)
@@ -179,6 +196,33 @@ _node_dump_cache = CsvCache(
 
 def load_node_dump() -> pd.DataFrame:
     return _node_dump_cache.get()
+
+
+def dump_extracted_at() -> tuple[str, str] | None:
+    """The dump's extract window as (earliest, latest) `%Y-%m-%d %H:%M:%S`.
+
+    Response-level provenance: WHEN THE EXTRACT JOB RAN, never when anything in
+    the dump happened. node_dump.csv normally carries one value for the whole
+    file, in which case both halves are equal; qmgr_dump.csv shows a single run
+    can still stamp rows a second or two apart, so the window is reported rather
+    than one end of it being passed off as the answer.
+
+    Returns None when the dump is empty, has no `extractedat` column, or holds
+    nothing parseable. This is metadata on an already-successful call, so it
+    degrades to None rather than raising.
+    """
+    try:
+        df = load_node_dump()
+        if df.empty or "extractedat" not in df.columns:
+            return None
+        col = pd.to_datetime(df["extractedat"], errors="coerce").dropna()
+        if col.empty:
+            return None
+        fmt = "%Y-%m-%d %H:%M:%S"
+        return col.min().strftime(fmt), col.max().strftime(fmt)
+    except Exception:
+        logger.exception("Could not read the ACE dump extract time")
+        return None
 
 
 def _load_node_config_from_disk() -> pd.DataFrame | None:
@@ -303,29 +347,24 @@ async def fetch_ace(
 
 
 def _rows_to_results(matches: pd.DataFrame) -> list[dict]:
-    """Shape dump rows into the public {extracted_at, host, node, status} dicts.
+    """Shape dump rows into the public {hostname, node, resource} dicts.
 
-    `extracted_at` is the CSV's `extractedat` column — WHEN THE EXTRACT JOB RAN,
-    never when the thing described in `status` happened. The BIP text carries no
-    event time at all, so nothing here can date a start, restart or deployment.
-    The public key is deliberately not called `timestamp`: a bare `timestamp`
-    sitting beside "…is running." reads as an event time and gets reported as
-    one. Live start/restart times come from the Admin REST API instead (see
-    `ace_node_overview`).
+    `extractedat` is deliberately NOT included. It is identical on every row of
+    the file — one extract run — so stamping it onto each row said nothing about
+    that row and invited the one misreading that matters: a date sitting beside
+    "…is running." gets reported as when the thing started running. It is
+    response-level metadata, not a row fact, and callers expose it once via
+    dump_extracted_at(). Live start/restart times come from the Admin REST API
+    (see `ace_node_overview`), never from here.
     """
-    results = []
-    for _, r in matches.iterrows():
-        ts = r["timestamp"]
-        ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if pd.notnull(ts) else ""
-        results.append(
-            {
-                "extracted_at": ts_str,
-                "host": r["host"],
-                "node": r["node"],
-                "status": r["status"],
-            }
-        )
-    return results
+    return [
+        {
+            "hostname": r["hostname"],
+            "node": r["node"],
+            "resource": r["resource"],
+        }
+        for _, r in matches.iterrows()
+    ]
 
 
 # Columns search_node_dump matches against. Pinned deliberately: the frame also
@@ -333,17 +372,21 @@ def _rows_to_results(matches: pd.DataFrame) -> list[dict]:
 # letting the loose substring search see those would widen the haystack for
 # every existing caller. Use server_rows()/server_inventory() for EG-scoped
 # lookups instead.
-_DUMP_SEARCH_COLUMNS = ("timestamp", "host", "node", "status")
+#
+# `extractedat` is excluded on purpose: it holds one value for the whole file,
+# so searching any part of that date matched EVERY row. Callers that want the
+# extract time use dump_extracted_at().
+_DUMP_SEARCH_COLUMNS = ("hostname", "node", "resource")
 
 
 def search_node_dump(search_string: str) -> list[dict]:
-    """Search node_dump.csv and return matching {extracted_at, host, node, status} rows.
+    """Search node_dump.csv and return matching {hostname, node, resource} rows.
 
     Unanchored substring match. For "everything belonging to execution group
     X" use server_inventory(), which matches the parsed `eg` column exactly.
 
-    `extracted_at` is the extract job's run time, not an event time — see
-    _rows_to_results.
+    Rows carry no date: the extract time is one value for the whole file, so it
+    is response-level metadata — see dump_extracted_at().
     """
     df = load_node_dump()
     if df.empty:
@@ -377,7 +420,7 @@ def nodes_on_host(hostname: str) -> list[str]:
     if df.empty:
         return []
     target = hostname.strip().lower()
-    matches = df[df["host"].astype(str).str.strip().str.lower() == target]
+    matches = df[df["hostname"].astype(str).str.strip().str.lower() == target]
     return sorted(
         {str(n).strip() for n in matches["node"] if str(n).strip()}
     )
@@ -477,12 +520,12 @@ def dump_rows(
 ) -> list[dict]:
     """Dump rows filtered by EXACT eg / application / node.
 
-    Same {extracted_at, host, node, status} shape as search_node_dump, but
+    Same {hostname, node, resource} shape as search_node_dump, but
     selected by parsed field equality rather than a substring sweep, so the
     result can never contain a row belonging to another execution group.
 
-    `extracted_at` is the extract job's run time, not an event time — see
-    _rows_to_results.
+    Rows carry no date: the extract time is one value for the whole file, so it
+    is response-level metadata — see dump_extracted_at().
     """
     df = load_node_dump()
     if df.empty:

@@ -116,7 +116,23 @@ When adding a new code path that catches an exception, route it through
 `resources/qmgr_dump.csv`, `resources/node_dump.csv`, `resources/node_config.csv`,
 and `resources/cert_dump.csv` are extracts produced by external jobs. Tools that
 read them say "OFFLINE" in their docstring — the freshness depends on the CSV's
-`extractedat`/`timestamp` columns (or the extract's run time), not on a live system.
+`extractedat` column (or the extract's run time), not on a live system.
+
+**Loaders must not rename columns.** Keep each column's name exactly as the CSV
+has it, all the way through to tool output. The ACE loader used to rebrand
+`extractedat` as `timestamp`; a bare `timestamp` beside a `BIP…is running.` line
+got reported to a client as an integration server's restart time. Note the two
+ACE files genuinely disagree — `node_config.csv` has `host`, `node_dump.csv` has
+`hostname` — so each frame mirrors its own file and a global rename is wrong.
+Loaders must also **validate their required columns and return `None`** when any
+are missing, so `CsvCache` keeps the last good extract instead of letting a bad
+daily swap surface as a `KeyError` inside whichever tool runs next.
+
+**`extractedat` is response-level, never per-row.** It holds one value for the
+whole file, so stamping it on each row says nothing about that row and invites
+exactly the misreading above. Expose it once on the envelope (ACE:
+`ace_helpers.dump_extracted_at()`), and don't put it in the search columns — any
+part of that date otherwise matches every row. MQ never emits it at all.
 
 These are replaced by a daily extract job, so the loaders **must not** cache
 load-once-forever. Every `load_*` goes through `server/csv_cache.py:CsvCache`,
