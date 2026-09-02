@@ -261,7 +261,8 @@ def preview(text, limit=12):
 
 EXPECTED_TOOLS = {
     "mq_queue_inspect", "mq_channel_inspect", "mq_connection_verify", "mq_host_overview",
-    "ace_node_overview", "ace_connection_verify", "ace_server_explore", "ace_search",
+    "ace_node_overview", "ace_connection_verify", "ace_server_explore",
+    "ace_resource_inspect", "ace_search",
     "get_cert_details",
 }
 
