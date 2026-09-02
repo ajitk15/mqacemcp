@@ -391,3 +391,47 @@ def test_a_real_eg_is_never_mistaken_for_an_application():
     out = _run(_tool("ace_resource_inspect")(servers=["ACE_DEMO_CONNECTOR"]))
     assert "is_application_not_server" not in out
     assert CONNECTORS in out["did_you_mean"]["ACE_DEMO_CONNECTOR"]
+
+
+# ---------------------------------------------------------------------------
+# ace_search node scoping
+# ---------------------------------------------------------------------------
+GROUP_APP = "ACE_MQ_group_messages"
+
+
+def test_ace_search_node_filters_the_dump():
+    """"... on NODE1" had nowhere to go: ace_search took server/application
+    but no node, so the whole question could not be expressed."""
+    both = json.loads(_tool("ace_search")(search_strings=[GROUP_APP], scope="dump"))
+    assert {r["node"] for r in both["dump_matches"]} == {"NODE1", "NODE2"}
+
+    for node in ("NODE1", "NODE2"):
+        out = json.loads(
+            _tool("ace_search")(search_strings=[GROUP_APP], scope="dump", node=node)
+        )
+        assert out["node"] == node
+        assert {r["node"] for r in out["dump_matches"]} == {node}
+        assert len(out["dump_matches"]) < len(both["dump_matches"])
+
+
+def test_ace_search_moves_a_node_name_out_of_the_server_argument():
+    """The commonest misuse, and the cause of a lost answer: with no `node`
+    parameter the only slot for "NODE1" was `server`, which returned
+    not_found. The intent is unambiguous, so honour it and say so."""
+    out = json.loads(
+        _tool("ace_search")(search_strings=[GROUP_APP], scope="dump", server="NODE1")
+    )
+    assert out["status"] == "success"
+    assert out["node"] == "NODE1"
+    assert "server" not in out
+    assert "NODE" in out["corrected_arguments"]
+    assert {r["node"] for r in out["dump_matches"]} == {"NODE1"}
+
+
+def test_a_real_eg_in_the_server_argument_is_not_rewritten():
+    out = json.loads(
+        _tool("ace_search")(search_strings=[CONNECTORS], scope="dump", server=CONNECTORS)
+    )
+    assert out["server"] == CONNECTORS
+    assert "corrected_arguments" not in out
+    assert "node" not in out

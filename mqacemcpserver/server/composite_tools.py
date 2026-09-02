@@ -257,6 +257,14 @@ def _all_configured_nodes() -> list[str]:
     return _as_str_list(df["node"].tolist())
 
 
+def _is_configured_node(name: str) -> bool:
+    """True when `name` is an integration NODE in the offline node config."""
+    if not name:
+        return False
+    target = name.strip().lower()
+    return any(n.strip().lower() == target for n in _all_configured_nodes())
+
+
 def _nodes_hosting(names: list[str]) -> list[str]:
     """Integration nodes that actually HOST any of `names` (server or app).
 
@@ -2062,6 +2070,7 @@ def register(mcp: FastMCP) -> None:
         scope: str | None = None,
         server: str | None = None,
         application: str | None = None,
+        node: str | None = None,
     ) -> str:
         """IBM ACE: Combined OFFLINE search across configured nodes and the BIP-message dump.
 
@@ -2109,8 +2118,12 @@ def register(mcp: FastMCP) -> None:
                 - `"dump"` searches only `node_dump.csv`.
                 - `"all"` or `None` searches both.
             server: Optional integration server (execution group), matched
-                EXACTLY. Use when the EG is already known.
+                EXACTLY. Use when the EG is already known. This is an EG name,
+                NEVER a node name — pass a node as `node`.
             application: Optional application name, matched EXACTLY.
+            node: Optional integration NODE name (e.g. "NODE1"), matched
+                EXACTLY, restricting dump matches to that node. Use this for
+                "... on NODE1" — do NOT put a node name in `server`.
         """
         s = (scope or "all").lower()
         if s not in {"all", "nodes", "dump"}:
@@ -2135,6 +2148,20 @@ def register(mcp: FastMCP) -> None:
 
         named_server = (server or "").strip()
         named_app = (application or "").strip()
+        named_node = (node or "").strip()
+
+        # A NODE name arriving in `server` is the commonest misuse of this
+        # tool — "everything about X on NODE1" has to put NODE1 somewhere, and
+        # before `node` existed the only slot was `server`. That returned
+        # not_found and lost the answer entirely. Move it to where it belongs
+        # rather than failing on a request whose intent is unambiguous.
+        if named_server and _is_configured_node(named_server):
+            if not named_node:
+                named_node = named_server
+            envelope_hint = named_server
+            named_server = ""
+        else:
+            envelope_hint = ""
 
         # An explicitly named EG must exist. Never fall through to a substring
         # sweep here: that is how rows from other EGs used to leak in.
@@ -2180,6 +2207,14 @@ def register(mcp: FastMCP) -> None:
             envelope["server"] = named_server
         if named_app:
             envelope["application"] = named_app
+        if named_node:
+            envelope["node"] = named_node
+        if envelope_hint:
+            envelope["corrected_arguments"] = (
+                f"'{envelope_hint}' is an integration NODE, not an execution "
+                "group, so it was applied as `node` rather than `server`. "
+                "Pass a node as `node=` next time."
+            )
         if ignored:
             envelope["ignored_search_strings"] = ignored
             envelope["ignored_reason"] = (
@@ -2241,7 +2276,7 @@ def register(mcp: FastMCP) -> None:
                 if eg_queries:
                     inventories = []
                     for eg in eg_queries:
-                        inv = server_inventory(eg)
+                        inv = server_inventory(eg, named_node or None)
                         if inv:
                             if named_app:
                                 inv = dict(inv)
@@ -2252,15 +2287,24 @@ def register(mcp: FastMCP) -> None:
                                 ]
                                 inv["application_count"] = len(inv["applications"])
                             inventories.append(inv)
-                        _add(dump_rows(server=eg, application=named_app or None))
+                        _add(dump_rows(server=eg, application=named_app or None,
+                                      node=named_node or None))
                     envelope["servers"] = inventories
                     envelope["match_kind"] = "exact-eg"
                 elif named_app:
-                    _add(dump_rows(application=named_app))
+                    _add(dump_rows(application=named_app,
+                                   node=named_node or None))
                     envelope["match_kind"] = "exact-application"
                 else:
                     for q in text_queries:
-                        _add(search_node_dump(q))
+                        rows = search_node_dump(q)
+                        if named_node:
+                            rows = [
+                                r for r in rows
+                                if str(r.get("node", "")).strip().lower()
+                                == named_node.lower()
+                            ]
+                        _add(rows)
                     envelope["match_kind"] = "substring"
                     # A near-miss on an EG name is the classic cause of a
                     # confusingly wide result; surface the correction.
