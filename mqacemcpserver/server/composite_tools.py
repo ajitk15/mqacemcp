@@ -38,6 +38,7 @@ from server.ace_helpers import (
     resolve_server_name,
     search_node_dump,
     server_inventory,
+    servers_hosting_application,
     suggest_servers,
 )
 from server.cert_helpers import load_cert_dump, search_certs
@@ -871,6 +872,35 @@ async def _live_servers_on(node: str) -> tuple[list[str], str | None]:
     return sorted(names), None
 
 
+def _unresolved_servers_message(
+    names: list[str], target_node: str, extra: dict
+) -> str:
+    """Why no EG resolved — naming the hosting EG when the name is an app."""
+    apps = extra.get("is_application_not_server") or {}
+    where = (
+        f"integration node {target_node}"
+        if target_node
+        else "any configured integration node"
+    )
+    if apps:
+        parts = [
+            f"'{name}' is an APPLICATION deployed on "
+            f"{', '.join(info['hosted_on_servers'])}"
+            + (f" (nodes {', '.join(info['nodes'])})" if info["nodes"] else "")
+            for name, info in apps.items()
+        ]
+        rest = [n for n in names if n not in apps]
+        msg = (
+            "; ".join(parts)
+            + ". Execution-group settings belong to that execution group — "
+            "ask again against it."
+        )
+        if rest:
+            msg += f" Still unresolved on {where}: {', '.join(rest)}."
+        return msg
+    return f"Could not find {', '.join(names)} on {where}."
+
+
 async def _resolve_named_servers(
     names: list[str], target_node: str
 ) -> tuple[list[tuple[str, str]], dict]:
@@ -938,6 +968,33 @@ async def _resolve_named_servers(
             extra["node_errors"] = node_errors
         if still_unknown:
             extra["unknown_servers"] = still_unknown
+            # A "not found" is only half an answer. The commonest reason a name
+            # is not an EG is that it is an APPLICATION — users say "EG
+            # ACE_Salesforce_Leads" for something deployed ON an EG. The dump
+            # already knows the mapping, and a single-call client cannot look it
+            # up itself, so hand it over instead of dead-ending on "no such
+            # execution group". Fuzzy `did_you_mean` never covers this: an
+            # application name is not a misspelt EG name.
+            app_hosts = {
+                name: hosts
+                for name in still_unknown
+                if (hosts := servers_hosting_application(name))
+            }
+            if app_hosts:
+                extra["is_application_not_server"] = {
+                    name: {
+                        "hosted_on_servers": hosts,
+                        "nodes": nodes_hosting_application(name),
+                    }
+                    for name, hosts in app_hosts.items()
+                }
+                extra["application_note"] = (
+                    "These names are APPLICATIONS, not execution groups. They "
+                    "are deployed on the execution group(s) shown. EG-level "
+                    "settings (jvmDebugPort, trace, heap, resource managers) "
+                    "belong to that execution group — re-read the question "
+                    "against it rather than reporting the name as absent."
+                )
             # Suggest from the dump AND the live listing, so a live-only EG
             # can be offered as a correction too. Same `did_you_mean` shape
             # ace_search already returns for an unknown EG. Names with no
@@ -1709,6 +1766,38 @@ def register(mcp: FastMCP) -> None:
                 indent=2,
             )
 
+        # An APPLICATION passed as `servers` cannot be caught downstream:
+        # `_nodes_hosting` matches the application column too, so the hosting
+        # nodes resolve and the call proceeds to
+        # `/servers/<app>/applications`, which 404s. Catch it up front and
+        # return the mapping — a single-call client cannot look it up itself.
+        app_only = {
+            name: hosts
+            for name in names
+            if resolve_server_name(name) is None
+            and (hosts := servers_hosting_application(name))
+        }
+        if app_only:
+            err: dict = {
+                "status": "error",
+                "servers": names,
+                "is_application_not_server": {
+                    name: {
+                        "hosted_on_servers": hosts,
+                        "nodes": nodes_hosting_application(name),
+                    }
+                    for name, hosts in app_only.items()
+                },
+                "application_note": (
+                    "These names are APPLICATIONS, not execution groups. To "
+                    "list what an application contains, call this tool with "
+                    "the hosting execution group in `servers` and the "
+                    "application name in `application`."
+                ),
+            }
+            err["message"] = _unresolved_servers_message(names, "", err)
+            return json.dumps(err, indent=2)
+
         target_node = (node or "").strip()
         discovered_nodes: list[str] = []
         if not target_node:
@@ -1832,7 +1921,46 @@ def register(mcp: FastMCP) -> None:
         requested = _as_str_list(resource_managers)
         target_node = (node or "").strip()
 
+        # "does debug enabled for EG ACE_Salesforce_Leads" — that name is an
+        # APPLICATION, and the setting asked about (jvmDebugPort, trace, heap,
+        # any resource manager) lives on the EG hosting it. Substitute the
+        # hosting EG and answer the question that was meant, rather than
+        # refusing a name that is merely at the wrong level of the hierarchy;
+        # a single-call client gets no second turn to look the mapping up.
+        # `substituted_applications` keeps the correction visible so the answer
+        # can say whose settings these actually are.
+        app_substitutions: dict[str, list[str]] = {}
+        if names:
+            rewritten: list[str] = []
+            for name in names:
+                hosts = (
+                    servers_hosting_application(name)
+                    if resolve_server_name(name) is None
+                    else []
+                )
+                if hosts:
+                    app_substitutions[name] = hosts
+                    rewritten.extend(hosts)
+                else:
+                    rewritten.append(name)
+            names = list(dict.fromkeys(rewritten))
+
         envelope: dict = {"status": "success"}
+        if app_substitutions:
+            envelope["substituted_applications"] = {
+                app: {
+                    "hosted_on_servers": hosts,
+                    "nodes": nodes_hosting_application(app),
+                }
+                for app, hosts in app_substitutions.items()
+            }
+            envelope["substitution_note"] = (
+                "The name(s) above are APPLICATIONS, not execution groups. "
+                "Resource-manager and EG-level settings (jvmDebugPort, trace, "
+                "heap) belong to the hosting execution group, so the results "
+                "below are for that EG. Say so when answering: name the "
+                "application, the EG whose settings these are, and the value."
+            )
         discovery_errors: list[dict] = []
         pairs: list[tuple[str, str]] = []
 
@@ -1844,13 +1972,12 @@ def register(mcp: FastMCP) -> None:
             if not pairs:
                 error: dict = {
                     "status": "error",
-                    "message": (
-                        f"Could not find {', '.join(names)} on "
-                        + (
-                            f"integration node {target_node}."
-                            if target_node
-                            else "any configured integration node."
-                        )
+                    # When the name turned out to be an application, say so
+                    # here. `message` is what a client reads first, so a bare
+                    # "could not find" makes it report the thing as absent even
+                    # though the envelope below says exactly where it lives.
+                    "message": _unresolved_servers_message(
+                        names, target_node, extra
                     ),
                     "servers": names,
                 }
@@ -2083,6 +2210,16 @@ def register(mcp: FastMCP) -> None:
                         combined = mask if combined is None else (combined | mask)
                     matches = df[combined]
                 envelope["nodes"] = matches.to_dict(orient="records")
+        if s == "nodes":
+            # node_config.csv is a node->host:port map with no extract column
+            # at all, so a freshness question lands here and comes back empty.
+            # Say where the answer actually is instead of letting the caller
+            # report "not provided".
+            envelope["extract_time_note"] = (
+                "node_config.csv carries no extract time. The ACE extract "
+                "time is on the dump: call again with scope=\"dump\" (or "
+                "\"all\") and read the envelope's `extractedat`."
+            )
 
         if s in {"all", "dump"}:
             if load_node_dump().empty:

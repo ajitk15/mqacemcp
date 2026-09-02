@@ -260,7 +260,7 @@ CX3 — CX3 compares the cached extract, these compare live configuration.
 
 *Expected answer area:* `ACE_Salesforce_Leads` is an **application**, not an EG — it is deployed on integration server `ACE_DEMO_CONNECTORS`. Debug is an EG-level setting: `jvmDebugPort` on `ACE_DEMO_CONNECTORS` is `0`, so debug is **disabled**. A good answer corrects the application/EG confusion, names the hosting EG, cites `jvmDebugPort`, and does not answer "the extract does not show a debug flag".
 
-*Expected tools:* ace_search, ace_node_overview, ace_server_explore
+*Expected tools:* ace_resource_inspect, ace_search, ace_node_overview, ace_server_explore
 *Must mention:* ACE_Salesforce_Leads, ACE_DEMO_CONNECTORS, jvmDebugPort
 
 ---

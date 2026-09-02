@@ -513,6 +513,32 @@ def nodes_hosting_application(application: str) -> list[str]:
     return found
 
 
+def servers_hosting_application(application: str) -> list[str]:
+    """Execution groups that `application` is deployed on, matched exactly.
+
+    Users routinely call an APPLICATION an "EG" — "does debug enabled for EG
+    ACE_Salesforce_Leads", where that name is an application on
+    ACE_DEMO_CONNECTORS. Tools that take EG names use this to turn a dead-end
+    "no such execution group" into the mapping the user actually needed, since
+    the offline dump already knows which EG hosts each application.
+    """
+    df = load_node_dump()
+    if df.empty or not application:
+        return []
+    if "application" not in df.columns or "eg" not in df.columns:
+        return []
+    matches = df[
+        df["application"].astype(str).str.strip().str.lower()
+        == application.strip().lower()
+    ]
+    found: list[str] = []
+    for eg in matches["eg"]:
+        eg = str(eg).strip()
+        if eg and eg not in found:
+            found.append(eg)
+    return found
+
+
 def dump_rows(
     server: str | None = None,
     application: str | None = None,

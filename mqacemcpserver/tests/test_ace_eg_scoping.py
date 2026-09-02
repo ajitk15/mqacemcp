@@ -323,3 +323,71 @@ def test_extract_window_survives_a_missing_or_unparseable_date():
                       "node": ["N"], "resource": ["r"]}),
     ):
         assert ace_helpers._add_structured_columns(frame.copy()) is not None
+
+
+# ---------------------------------------------------------------------------
+# An APPLICATION passed where an EG is expected (CX18)
+# ---------------------------------------------------------------------------
+APP_ON_CONNECTORS = "ACE_Salesforce_Leads"
+
+
+def test_servers_hosting_application_maps_app_to_its_eg():
+    from server.ace_helpers import servers_hosting_application
+
+    assert servers_hosting_application(APP_ON_CONNECTORS) == [CONNECTORS]
+    assert servers_hosting_application("no_such_thing") == []
+    # An EG name is not an application, so this must stay empty.
+    assert servers_hosting_application(CONNECTORS) == []
+
+
+def _run(coro):
+    import asyncio
+
+    return json.loads(asyncio.run(coro))
+
+
+def test_resource_inspect_answers_an_application_against_its_hosting_eg():
+    """CX18: "does debug enabled for EG ACE_Salesforce_Leads".
+
+    That name is an application on ACE_DEMO_CONNECTORS, and the setting asked
+    about is EG-level. The tool used to answer "not found on any configured
+    integration node" — which a single-call client can only relay as "it does
+    not exist", since it cannot chain a second lookup. It now substitutes the
+    hosting EG and answers the question that was meant, keeping the correction
+    visible so the reply can say whose settings these are.
+    """
+    out = _run(
+        _tool("ace_resource_inspect")(
+            servers=[APP_ON_CONNECTORS], resource_managers=["jvm"]
+        )
+    )
+    assert out["status"] == "success"
+    assert out["substituted_applications"][APP_ON_CONNECTORS] == {
+        "hosted_on_servers": [CONNECTORS],
+        "nodes": ["NODE1", "NODE2"],
+    }
+    assert "APPLICATIONS" in out["substitution_note"]
+    # The EG actually inspected is the host, never the application name. The
+    # resource-manager VALUES are live, and conftest pins the allow-list to
+    # lod/loq/lot so localhost is refused here by design — jvmDebugPort itself
+    # is covered by clients/smoke_test_http.py and the chatbot suite.
+    assert {s["server"] for s in out["servers"]} == {CONNECTORS}
+    assert out["servers_resolved"] == [CONNECTORS]
+
+
+def test_server_explore_names_the_hosting_eg_for_an_application():
+    """Same trap, different failure: `_nodes_hosting` matches the application
+    column, so the hosting nodes resolved and the call went on to
+    `/servers/<app>/applications`, which 404s on every node."""
+    out = _run(_tool("ace_server_explore")(servers=[APP_ON_CONNECTORS]))
+    assert out["status"] == "error"
+    assert out["is_application_not_server"][APP_ON_CONNECTORS][
+        "hosted_on_servers"
+    ] == [CONNECTORS]
+
+
+def test_a_real_eg_is_never_mistaken_for_an_application():
+    """The guard must not fire for genuine EG names or near-miss typos."""
+    out = _run(_tool("ace_resource_inspect")(servers=["ACE_DEMO_CONNECTOR"]))
+    assert "is_application_not_server" not in out
+    assert CONNECTORS in out["did_you_mean"]["ACE_DEMO_CONNECTOR"]
